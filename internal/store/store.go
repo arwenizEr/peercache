@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"sync"
 	"sync/atomic"
@@ -140,6 +141,28 @@ func New(opts Options) (*Store, error) {
 	return s, nil
 }
 
+// maxRepresentable is the last instant [time.Time.UnixNano] can express.
+// Beyond it the value silently wraps negative.
+var maxRepresentable = time.Unix(0, math.MaxInt64)
+
+// deadlineNanos returns now+ttl as Unix nanoseconds, or zero — meaning "does
+// not expire" — if that instant cannot be represented.
+//
+// UnixNano is only defined for roughly 1678 to 2262. Without this check a
+// caller asking for the maximum time.Duration, about 292 years, overflows to a
+// negative deadline and the key expires *immediately* — the exact opposite of
+// what was asked for, and silently. Treating an unrepresentably distant
+// deadline as "never" is both the safe direction and what the caller meant.
+func deadlineNanos(now time.Time, ttl time.Duration) int64 {
+	deadline := now.Add(ttl)
+	if deadline.Before(now) || deadline.After(maxRepresentable) {
+		// Before(now) catches time.Time's own wraparound on an absurd
+		// duration; After catches the UnixNano range.
+		return 0
+	}
+	return deadline.UnixNano()
+}
+
 // roundUpPow2 returns the smallest power of two at least as large as n.
 func roundUpPow2(n int) int {
 	if n <= 1 {
@@ -205,8 +228,9 @@ func (s *Store) Exists(key string) bool {
 
 // Set stores val under key for ttl and returns the new version.
 //
-// A non-positive ttl means the key does not expire on its own. val is copied,
-// so the caller may reuse the buffer.
+// A non-positive ttl means the key does not expire on its own, as does a ttl so
+// large that the resulting deadline cannot be represented. val is copied, so
+// the caller may reuse the buffer.
 //
 // Versions increase by one per write and are per key, not global: they exist so
 // that a cached copy elsewhere can be recognised as stale, which only ever
@@ -215,7 +239,7 @@ func (s *Store) Exists(key string) bool {
 func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	var expiresAt int64
 	if ttl > 0 {
-		expiresAt = s.clk.Now().Add(ttl).UnixNano()
+		expiresAt = deadlineNanos(s.clk.Now(), ttl)
 	}
 
 	// Copy before taking the lock: the allocation is the expensive part and

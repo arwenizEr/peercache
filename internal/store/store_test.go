@@ -3,6 +3,7 @@ package store_test
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"testing"
@@ -114,6 +115,43 @@ func TestZeroLengthValueIsNotAbsence(t *testing.T) {
 	}
 	if !s.Exists("empty") {
 		t.Fatal("Exists of a zero-length value reported false")
+	}
+}
+
+// TestUnrepresentableTTLDoesNotExpireImmediately covers an arithmetic overflow
+// that fails in the worst possible direction.
+//
+// time.Time.UnixNano is only defined to about the year 2262. A caller asking
+// for the maximum time.Duration — 292 years — used to produce a deadline that
+// wrapped negative, so the key expired *instantly*. Asking for the longest
+// possible lifetime and getting the shortest is the kind of bug that never
+// looks like an overflow from the outside; it looks like the cache losing data.
+func TestUnrepresentableTTLDoesNotExpireImmediately(t *testing.T) {
+	s, fc := newStore(t)
+
+	// time.Duration itself tops out near 292 years, so anything longer is
+	// not expressible and there is no point testing it. The interesting
+	// range is the top of the duration type, where the *deadline* becomes
+	// unrepresentable even though the duration is fine.
+	ttls := map[string]time.Duration{
+		"maximum duration": time.Duration(math.MaxInt64),
+		"near maximum":     time.Duration(math.MaxInt64) - time.Hour,
+		"representable":    100 * 365 * 24 * time.Hour,
+	}
+	for name, ttl := range ttls {
+		s.Set(name, []byte("v"), ttl)
+		if _, _, ok := s.Get(name); !ok {
+			t.Fatalf("%s (%v) expired immediately", name, ttl)
+		}
+	}
+
+	// A century later they must all still be there: an unrepresentable
+	// deadline means "never", and a representable one is still ahead.
+	fc.Advance(99 * 365 * 24 * time.Hour)
+	for name, ttl := range ttls {
+		if _, _, ok := s.Get(name); !ok {
+			t.Fatalf("%s (%v) expired early", name, ttl)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package l1_test
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"testing"
@@ -120,6 +121,30 @@ func TestDefaultTTLIsClampedToMaxTTL(t *testing.T) {
 	fc.Advance(2 * time.Second)
 	if _, _, ok := c.Get("k"); ok {
 		t.Fatal("a default TTL larger than MaxTTL was honoured")
+	}
+}
+
+// TestUnrepresentableTTLSaturates is the L1 half of the same overflow. Here the
+// answer cannot be "never expires" — every entry must carry a deadline, because
+// it is the only bound on staleness — so the deadline saturates instead.
+func TestUnrepresentableTTLSaturates(t *testing.T) {
+	c, fc := newCache(t, func(o *l1.Options) {
+		// A nonsensical ceiling, which is exactly what provokes the
+		// overflow.
+		o.MaxTTL = time.Duration(math.MaxInt64)
+		o.DefaultTTL = time.Hour
+	})
+
+	if !c.Put("k", []byte("v"), 1, time.Duration(math.MaxInt64)) {
+		t.Fatal("Put rejected the maximum TTL")
+	}
+	if _, _, ok := c.Get("k"); !ok {
+		t.Fatal("an entry with the maximum TTL expired immediately")
+	}
+
+	fc.Advance(200 * 365 * 24 * time.Hour)
+	if _, _, ok := c.Get("k"); !ok {
+		t.Fatal("a saturated deadline expired early")
 	}
 }
 

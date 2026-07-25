@@ -131,7 +131,9 @@ comes from a seed that is printed on failure, and no test sleeps.
 make test          # fast feedback
 make test-race     # the gate: -race -count=2
 make vet lint      # go vet and staticcheck
+make examples      # run every example to completion; they assert what they show
 make bench         # benchmarks, 5 runs
+make fuzz          # fuzz the frame parser
 make bench-l1-eval # re-run the cache-library comparison (nested module)
 make ci            # exactly what the pipeline runs
 ```

@@ -100,6 +100,26 @@ jobs:
       - name: bench
         run: go test ./... -run '^$' -bench . -benchmem -benchtime 100ms -count 1
 
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Short by design: this is a regression gate, not a fuzzing campaign. The
+      # seed corpus runs on every `go test`; this adds a bounded search on top,
+      # and any crasher it finds is committed to testdata/ and becomes a
+      # permanent case.
+      - name: fuzz the frame parser
+        run: |
+          go test ./internal/codec -run '^$' -fuzz FuzzUnframe -fuzztime 60s
+          go test ./internal/codec -run '^$' -fuzz FuzzFrameRoundTrip -fuzztime 60s
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest

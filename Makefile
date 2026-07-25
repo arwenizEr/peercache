@@ -6,7 +6,7 @@ BENCHTIME ?= 1s
 BENCHCOUNT ?= 5
 TIMEOUT ?= 300s
 
-.PHONY: all ci test test-race examples vet lint bench bench-l1-eval bench-save cover tidy tools fmt clean
+.PHONY: all ci test test-race examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
 
 all: fmt vet lint test-race
 
@@ -41,6 +41,15 @@ lint:
 ## with the machine they were measured on; a number without a machine is noise.
 bench:
 	$(GO) test $(PKGS) -run '^$$' -bench . -benchmem -benchtime $(BENCHTIME) -count $(BENCHCOUNT)
+
+## fuzz exercises the frame parser, which is the only code here that interprets
+## bytes it did not write. From M4 those bytes arrive over the network, and
+## "no panic in library paths" needs evidence stronger than a handful of
+## hand-written corrupt inputs.
+FUZZTIME ?= 30s
+fuzz:
+	$(GO) test ./internal/codec -run '^$$' -fuzz FuzzUnframe -fuzztime $(FUZZTIME)
+	$(GO) test ./internal/codec -run '^$$' -fuzz FuzzFrameRoundTrip -fuzztime $(FUZZTIME)
 
 ## bench-l1-eval re-runs the L1 cache-library comparison. It lives in a nested
 ## module so that three losing candidates never enter the shipping dependency

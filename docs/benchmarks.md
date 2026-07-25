@@ -176,6 +176,21 @@ Collapsing is *cheaper* than not collapsing, because 999 of 1000 callers
 allocate nothing. The uncontended cost is a goroutine and a channel, paid so
 that a leader never blocks past its own deadline; see decision 0006.
 
+### Fuzzing
+
+The frame parser is the only code here that interprets bytes it did not write.
+From M4 those bytes arrive over the network, and "no panic in library paths" is
+a claim that needs stronger evidence than a handful of hand-written corrupt
+inputs.
+
+| Fuzz target | Executions | Result |
+|---|---:|---|
+| `FuzzUnframe` | 692,030 in 30s | no crash, no unbounded expansion |
+| `FuzzFrameRoundTrip` | 2,350,582 in 45s | no round-trip mismatch |
+
+CI runs each for 60s as a regression gate. Any crasher found is committed to
+`testdata/` and becomes a permanent case.
+
 ---
 
 ## Method notes

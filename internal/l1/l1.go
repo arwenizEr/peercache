@@ -2,6 +2,7 @@ package l1
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,8 +211,24 @@ func (c *Cache) Put(key string, val []byte, version uint64, ttl time.Duration) b
 	return c.inner.Set(key, entry{
 		val:       stored,
 		version:   version,
-		expiresAt: now + int64(ttl),
+		expiresAt: saturatingDeadline(now, ttl),
 	})
+}
+
+// saturatingDeadline returns now+ttl in Unix nanoseconds, clamped to the
+// largest representable instant rather than wrapping.
+//
+// Unlike the owned store, this tier cannot answer an unrepresentable deadline
+// with "never expires": every L1 entry must have one, because the TTL is the
+// only bound on how stale a non-owned read can be. So it saturates. Wrapping
+// would produce a negative deadline and expire the entry immediately, which is
+// the opposite failure and just as silent.
+func saturatingDeadline(now int64, ttl time.Duration) int64 {
+	deadline := now + int64(ttl)
+	if deadline < now {
+		return math.MaxInt64
+	}
+	return deadline
 }
 
 // Invalidate removes key unconditionally.
