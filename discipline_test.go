@@ -15,9 +15,35 @@ import (
 // The forbidden identifiers are assembled at runtime rather than written as
 // literals, so that this file does not trip its own checks.
 
-// clockPackage is the one directory allowed to call into the time package for
-// the current instant or to block on it.
+// clockPackage is the primary directory allowed to call into the time package
+// for the current instant or to block on it.
 const clockPackage = "internal/clock"
+
+// realTimePackages are the directories exempt from the injected-clock rule.
+//
+// internal/membership is the only exemption and it is a real one, not a
+// convenience. It wraps memberlist, whose probes, timeouts and suspicion timers
+// run on the wall clock inside a third-party library. No injected clock reaches
+// them, so the adapter has to speak the same units — bounding a graceful Leave,
+// for instance, means handing memberlist a real duration.
+//
+// The exemption is narrow on purpose. Everything that *depends* on membership —
+// ownership, the activation guard — takes an injected clock and is tested
+// deterministically against internal/testkit instead.
+var realTimePackages = []string{
+	"internal/clock",
+	"internal/membership",
+}
+
+// exemptFromClockRule reports whether path may use the time package directly.
+func exemptFromClockRule(path string) bool {
+	for _, dir := range realTimePackages {
+		if strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
 
 // walkGoFiles calls fn for every .go file in the repository, with a
 // slash-separated path relative to the root.
@@ -78,7 +104,7 @@ func TestNoDirectTimeAccessOutsideClockPackage(t *testing.T) {
 		"time." + "AfterFunc(",
 	}
 	walkGoFiles(t, func(path, content string) {
-		if path == "discipline_test.go" || strings.HasPrefix(path, clockPackage+"/") {
+		if path == "discipline_test.go" || exemptFromClockRule(path) {
 			return
 		}
 		for _, needle := range forbidden {
@@ -99,7 +125,7 @@ func TestNoContextTimeoutOutsideClockPackage(t *testing.T) {
 		"context." + "WithDeadline(",
 	}
 	walkGoFiles(t, func(path, content string) {
-		if path == "discipline_test.go" || strings.HasPrefix(path, clockPackage+"/") {
+		if path == "discipline_test.go" || exemptFromClockRule(path) {
 			return
 		}
 		for _, needle := range forbidden {

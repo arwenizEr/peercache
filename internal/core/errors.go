@@ -34,6 +34,16 @@ var (
 	// backpressure working as designed, and it is retryable.
 	ErrGroupOverloaded = errors.New("peercache: group mailbox full")
 
+	// ErrActivationPending means this node owns the group but acquired it
+	// too recently to activate safely: the previous owner may not have
+	// noticed the membership change yet, and activating immediately would
+	// widen the window in which one group has two activations.
+	//
+	// It is retryable, and retrying against the same node is correct — the
+	// wait is short and bounded by the configured activation delay. This is
+	// the brief unavailability that narrowing the split-brain window costs.
+	ErrActivationPending = errors.New("peercache: activation deferred after a membership change")
+
 	// ErrStaleEpoch means an operation was attempted under a membership
 	// epoch older than the one the node currently holds. The caller should
 	// re-resolve ownership and retry.

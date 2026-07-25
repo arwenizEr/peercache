@@ -44,6 +44,11 @@ type Options struct {
 	// OnEvent receives lifecycle events. It runs on the emitting group's
 	// goroutine and must not block.
 	OnEvent func(Event)
+
+	// ActivationDelay is how long this node waits, after a membership
+	// change, before activating a group it has just acquired. Zero takes
+	// the default; negative disables deferral.
+	ActivationDelay time.Duration
 }
 
 // Option mutates [Options]. Options are applied in order, so a later option

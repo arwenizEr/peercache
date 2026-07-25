@@ -30,6 +30,16 @@ var (
 	// cluster-wide stall. Retryable, ideally after a backoff.
 	ErrGroupOverloaded = core.ErrGroupOverloaded
 
+	// ErrActivationPending means this node owns the group but acquired it
+	// too recently to activate safely. The previous owner may not have
+	// noticed the membership change yet.
+	//
+	// Retryable, and retrying against the same node is correct: the wait is
+	// bounded by [WithActivationDelay]. This brief unavailability is what
+	// narrowing the double-activation window costs, and it applies only to
+	// groups whose ownership actually moved.
+	ErrActivationPending = core.ErrActivationPending
+
 	// ErrStaleEpoch means the operation was attempted under a membership
 	// epoch older than the one the node now holds. Re-resolve ownership and
 	// retry; do not assume the previous owner is still correct.

@@ -47,4 +47,15 @@ type Stats struct {
 	// one. A healthy ratio under load is what singleflight is for.
 	Loads          int64
 	CollapsedLoads int64
+
+	// RefusedActivations counts group activations the ownership guard
+	// refused, and DeferredActivations the subset postponed because the
+	// group had just been acquired.
+	//
+	// These are correctness metrics rather than performance ones. Deferrals
+	// should spike after a membership change and return to zero; sustained
+	// refusals under stable membership mean callers disagree with this node
+	// about who owns what.
+	RefusedActivations  int64
+	DeferredActivations int64
 }

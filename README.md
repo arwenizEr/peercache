@@ -195,4 +195,10 @@ wall clock against a 50 ms budget.
 
 ## Requirements
 
-Go 1.23 or later.
+Go 1.25 or later.
+
+The floor was 1.23 until M3. Adding memberlist raised it: its transitive graph
+(`x/net`, `x/sys`, `miekg/dns`) has moved past 1.23, and holding those back to
+keep the older floor would mean pinning the modules that receive security
+patches. [`docs/decisions/0013-go-floor-raised-to-1.25.md`](docs/decisions/0013-go-floor-raised-to-1.25.md)
+records the trade.

@@ -1,21 +1,30 @@
 // Package membership answers who is in the cluster right now.
 //
-// It implements [core.MembershipAuthority]. The default implementation is
-// gossip over hashicorp/memberlist and is AP: under a partition each side
-// converges on a view containing only itself, and neither side blocks. Node
-// metadata carries the epoch, so a peer's staleness is visible without an extra
-// round trip.
+// It implements [core.MembershipAuthority] over hashicorp/memberlist, a SWIM
+// gossip implementation. Node metadata carries the epoch, so a peer's staleness
+// is visible without an extra round trip.
 //
-// The consequence is stated plainly rather than hidden: a partition can produce
-// two live views that each believe they own the same group. That window is
-// narrowed by activation delay and detected through epochs. It is not
-// eliminated, and no configuration setting will eliminate it (CLAUDE.md,
-// decision 5).
+// # This is AP, and the consequence is stated rather than hidden
 //
-// The interface exists so that a CP implementation can be substituted later
-// without a rewrite. Nothing above this package may assume a single
-// authoritative epoch.
+// Under a partition each side converges on a view containing only itself, and
+// neither side blocks. Two live views can therefore each believe they own the
+// same group. That window is narrowed by the activation delay in
+// internal/ownership and detected through epochs. It is not eliminated, and no
+// configuration setting will eliminate it (CLAUDE.md, decision 5).
 //
-// Milestone: M3. This package is empty until then. The test harness supplies
-// its own membership implementation for M0; see internal/testkit.
+// Nothing above this package may assume a single authoritative epoch. The
+// interface exists so that a CP implementation can be substituted later without
+// a rewrite, not because one is planned.
+//
+// # Testing
+//
+// Gossip converges in wall-clock time, driven by memberlist's own timers, which
+// no injected clock reaches. So the tests here are integration tests over
+// loopback and are skipped under -short; they poll rather than sleep, but they
+// are honestly real-time.
+//
+// The logic that depends on membership — ownership, the activation guard — is
+// tested deterministically against internal/testkit's in-process authority
+// instead. That split is deliberate: the part with interesting behaviour gets
+// exact tests, and the part that is mostly adaptation gets a slow one.
 package membership

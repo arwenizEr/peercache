@@ -299,6 +299,74 @@ mutate "the Items snapshot aliases group state" \
   'items[key] = val' \
   'TestItemsSnapshotDoesNotAliasGroupState' .
 
+mutate "ownership ignores the node identity" \
+  internal/ownership/table.go \
+  'x := keyHash ^ (nodeSeed * 0x9E3779B97F4A7C15)' \
+  'x := keyHash' \
+  'TestOwnershipIsUniform' ./internal/ownership/
+
+mutate "ownership hashes with a bare XOR" \
+  internal/ownership/table.go \
+  'x := keyHash ^ (nodeSeed * 0x9E3779B97F4A7C15)
+	x ^= x >> 33
+	x *= 0xff51afd7ed558ccd
+	x ^= x >> 33
+	x *= 0xc4ceb9fe1a85ec53
+	x ^= x >> 33
+	return x' \
+  'return keyHash ^ nodeSeed' \
+  'TestOwnershipIsUniform' ./internal/ownership/
+
+mutate "membership order leaks into ownership" \
+  internal/ownership/table.go \
+  'sort.Slice(scored, func(i, j int) bool { return scored[i].node.ID < scored[j].node.ID })' \
+  '' \
+  'TestOwnerIsDeterministicAcrossMemberOrder' ./internal/ownership/
+
+mutate "an unknown membership claims everything" \
+  internal/ownership/guard.go \
+  'if len(snap.nodes) == 0 {
+		// A node that has not learned the membership yet owns nothing.
+		// Answering "yes" here would let a starting pod activate the
+		// entire keyspace for as long as it took to hear from anyone.
+		g.refusals.Add(1)
+		return fmt.Errorf("ownership: membership is unknown: %w", core.ErrNotOwner)
+	}' \
+  'if len(snap.nodes) == 0 {
+		return nil
+	}' \
+  'TestGuardWithNoMembershipOwnsNothing' ./internal/ownership/
+
+mutate "the guard activates groups it does not own" \
+  internal/ownership/guard.go \
+  'if !ok || current.ID != g.self.ID {' \
+  'if false {' \
+  'TestGuardRefusesGroupsItDoesNotOwn' ./internal/ownership/
+
+mutate "newly acquired groups activate immediately" \
+  internal/ownership/guard.go \
+  'if elapsed >= int64(g.activationDelay) {
+		return nil
+	}' \
+  'if true {
+		return nil
+	}' \
+  'TestGuardDefersOnlyNewlyAcquiredGroups' ./internal/ownership/
+
+mutate "the guard compares against the previous view, not the settled one" \
+  internal/ownership/guard.go \
+  'if now-g.changedAt.Load() >= int64(g.activationDelay) {
+		g.settled.Store(g.table.current.Load())
+	}' \
+  'g.settled.Store(g.table.current.Load())' \
+  'TestPartitionedMinorityStopsActivating' ./internal/ownership/
+
+mutate "gossip metadata updates advance the epoch" \
+  internal/membership/gossip.go \
+  'kind, transition = core.ChangeUpdate, false' \
+  'kind, transition = core.ChangeUpdate, true' \
+  'TestEpochDoesNotRunAway' ./internal/membership/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 

@@ -47,6 +47,15 @@ CLAUDE.md fixes the floor at Go 1.23. Pinning an old release to dodge that is a
 maintenance trap that expires the first time anything else in the graph wants a
 newer x/sync.
 
+> **Superseded, M3.** It expired exactly as predicted: memberlist pulls `x/sync`
+> into the graph, and the floor moved to 1.25 regardless — see
+> `0013-go-floor-raised-to-1.25.md`. This reason no longer holds.
+>
+> Reasons 1 and 2 are untouched and are the ones that matter, so the
+> implementation stays. Left in place rather than rewritten: the reasoning was
+> sound on the information available, and a decision log that quietly edits
+> itself is worth less than one that shows where it was overtaken.
+
 ## What this costs
 
 About ninety lines, and the following measured overhead on Machine A:

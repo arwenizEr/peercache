@@ -12,6 +12,7 @@ import (
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/ownership"
 	"github.com/peercache/peercache/internal/store"
 )
 
@@ -95,21 +96,46 @@ func New(opts ...Option) (Cache, error) {
 		return nil, err
 	}
 
+	// Ownership is only meaningful with a membership authority. Without one
+	// this is a single node that owns everything, and a guard that always
+	// says yes is the correct answer rather than a special case.
+	var guard *ownership.Guard
+	var canActivate func(string) error
+	if resolved.Membership != nil {
+		g, err := ownership.NewGuard(ownership.GuardOptions{
+			Self:            resolved.Membership.Self(),
+			Table:           ownership.NewTable(),
+			Clock:           resolved.Clock,
+			ActivationDelay: resolved.ActivationDelay,
+		})
+		if err != nil {
+			return nil, err
+		}
+		guard = g
+		guard.Watch(resolved.Membership)
+		canActivate = guard.CanActivate
+	}
+
 	groups, err := actor.New(actor.Options{
 		Clock:       resolved.Clock,
 		Logger:      resolved.Logger,
 		MailboxSize: resolved.GroupMailboxSize,
 		IdleTimeout: resolved.GroupIdleTimeout,
 		MaxActive:   resolved.MaxActiveGroups,
+		CanActivate: canActivate,
 		OnEvent:     resolved.OnEvent,
 	})
 	if err != nil {
+		if guard != nil {
+			guard.Close()
+		}
 		return nil, err
 	}
 
 	c := &cache{
 		opts:       resolved,
 		groups:     groups,
+		guard:      guard,
 		namespaces: make(map[string]*namespace),
 		done:       make(chan struct{}),
 		stopped:    make(chan struct{}),
@@ -126,6 +152,10 @@ type cache struct {
 	// groups is the actor runtime: the activation directory and every
 	// group's single goroutine.
 	groups *actor.Runtime
+
+	// guard decides whether this node may activate a group. Nil on a single
+	// node with no membership, where the answer is always yes.
+	guard *ownership.Guard
 
 	// ticker drives one sweeper for every namespace. Per-namespace
 	// sweepers would mean a goroutine per namespace for work that is
@@ -252,6 +282,13 @@ func (c *cache) Stats() Stats {
 		AddressableGroups: groups.Addressable,
 		ActiveGroups:      groups.Active,
 	}
+	if c.guard != nil {
+		owned := c.guard.Stats()
+		stats.Epoch = owned.Epoch
+		stats.Members = owned.Members
+		stats.RefusedActivations = groups.RefusedActivations
+		stats.DeferredActivations = owned.Deferrals
+	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
 			continue
@@ -312,6 +349,13 @@ func (c *cache) Close(ctx context.Context) error {
 		close(c.done)
 		c.ticker.Stop()
 		<-c.stopped
+
+		// Stop watching membership before draining groups: a view change
+		// arriving mid-shutdown would be applied to a runtime that is
+		// already closing.
+		if c.guard != nil {
+			c.guard.Close()
+		}
 
 		// Groups first: an activated group holds a goroutine, and its
 		// turns may still be running when Close is called.

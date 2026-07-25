@@ -42,6 +42,17 @@ type Options struct {
 	// MaxActive caps activated groups; zero means [DefaultMaxActive] and a
 	// negative value means unlimited.
 	MaxActive int
+	// CanActivate is consulted before a group is activated, and may refuse.
+	//
+	// M3 supplies the ownership guard here: a node must not activate a group
+	// it does not own, nor one it acquired so recently that the previous
+	// owner may not have noticed. A nil hook permits everything, which is
+	// correct for a single node with no membership.
+	//
+	// It runs while the group's lock is held, so it must not block and must
+	// not call back into the runtime.
+	CanActivate func(groupID string) error
+
 	// OnEvent receives lifecycle events. It is called on the group's turn
 	// goroutine and must not block: anything slow belongs on the far side
 	// of a channel the handler owns.
@@ -98,11 +109,12 @@ type Runtime struct {
 	funcsMu sync.RWMutex
 	funcs   map[string]core.GroupFunc
 
-	turns       atomic.Int64
-	rejections  atomic.Int64
-	escapes     atomic.Int64
-	activations atomic.Int64
-	evictions   atomic.Int64
+	turns              atomic.Int64
+	rejections         atomic.Int64
+	refusedActivations atomic.Int64
+	escapes            atomic.Int64
+	activations        atomic.Int64
+	evictions          atomic.Int64
 
 	wg sync.WaitGroup
 }
@@ -300,6 +312,10 @@ type Counters struct {
 	// Activations and Evictions count lifecycle transitions.
 	Activations int64
 	Evictions   int64
+	// RefusedActivations counts activations the guard refused, whether
+	// because this node does not own the group or because it acquired the
+	// group too recently to activate safely.
+	RefusedActivations int64
 }
 
 // Stats returns a snapshot of the counters.
@@ -310,13 +326,14 @@ func (rt *Runtime) Stats() Counters {
 	rt.mu.Unlock()
 
 	return Counters{
-		Addressable: addressable,
-		Active:      active,
-		Turns:       rt.turns.Load(),
-		Rejections:  rt.rejections.Load(),
-		Escapes:     rt.escapes.Load(),
-		Activations: rt.activations.Load(),
-		Evictions:   rt.evictions.Load(),
+		Addressable:        addressable,
+		Active:             active,
+		Turns:              rt.turns.Load(),
+		Rejections:         rt.rejections.Load(),
+		Escapes:            rt.escapes.Load(),
+		Activations:        rt.activations.Load(),
+		Evictions:          rt.evictions.Load(),
+		RefusedActivations: rt.refusedActivations.Load(),
 	}
 }
 

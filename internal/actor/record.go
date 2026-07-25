@@ -129,6 +129,17 @@ func (r *record) enqueue(ctx context.Context, run func(core.GroupState) (any, er
 // activateLocked gives the group a mailbox and a goroutine. Callers must hold
 // r.mu and must have established that r.act is nil.
 func (r *record) activateLocked() error {
+	// Ownership is checked before anything is allocated. A node that does
+	// not own this group must not create a mailbox for it, let alone a
+	// goroutine — and refusing here, rather than after the turn runs, is
+	// what keeps a wrongly-addressed call from mutating state.
+	if r.rt.opts.CanActivate != nil {
+		if err := r.rt.opts.CanActivate(r.id); err != nil {
+			r.rt.refusedActivations.Add(1)
+			return err
+		}
+	}
+
 	a := &activation{
 		mailbox: make(chan request, r.rt.opts.MailboxSize),
 		quit:    make(chan struct{}),

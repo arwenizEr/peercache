@@ -58,6 +58,25 @@ func WithMembership(m MembershipAuthority) Option {
 	return func(o *core.Options) { o.Membership = m }
 }
 
+// WithActivationDelay sets how long this node waits, after a membership change,
+// before activating a group it has just acquired. The default is 3 seconds.
+//
+// The delay gives the previous owner time to notice the change, narrowing the
+// window in which one group has two activations. It is paid only by groups
+// whose ownership actually moved: a group this node has held all along
+// activates immediately, because it cannot be active anywhere else.
+//
+// Calls for a deferred group return [ErrActivationPending], which is retryable
+// against the same node. This is the brief, visible unavailability that
+// narrowing the split-brain window costs. A negative value disables deferral
+// entirely, which is only sane on a single node.
+//
+// It narrows the window; it does not close it. Membership is gossip based and
+// therefore AP, and no setting here changes that.
+func WithActivationDelay(d time.Duration) Option {
+	return func(o *core.Options) { o.ActivationDelay = d }
+}
+
 // WithGroupMailboxSize bounds how many requests may queue for one group before
 // further calls are refused with [ErrGroupOverloaded]. The default is 64.
 //
