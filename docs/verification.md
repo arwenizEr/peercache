@@ -83,24 +83,49 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all eleven invariants:
+Latest run, all eighteen invariants:
 
 ```
-caught   Set no longer copies the caller's buffer  -- by TestSetCopiesTheCallersBuffer
-caught   Get copies instead of aliasing            -- by TestGetReturnsTheStoredSlice
-caught   read-path expiry disabled                 -- by TestExpiryIsObservedOnRead
-caught   shard selection collapses to one shard    -- by TestKeysSpreadAcrossShards
-caught   TTL deadline overflow reintroduced        -- by TestUnrepresentableTTLDoesNotExpireImmediately
-caught   L1 accepts an older version               -- by TestOlderVersionIsRejected
-caught   L1 stops clamping TTL to MaxTTL           -- by TestEveryEntryIsTTLBounded
-caught   L1 write stripe removed                   -- by TestConcurrentPutsNeverLeaveAnOlderVersion
-caught   frame parser accepts an unknown code      -- by TestUnframeRejectsCorruptInput
-caught   namespaces share one store                -- by TestNamespacesAreIsolated
-caught   singleflight bypassed                     -- by TestGetOrLoadCollapsesConcurrentMisses
+=== store ===
+caught   Set no longer copies the caller's buffer   -- TestSetCopiesTheCallersBuffer
+caught   Get copies instead of aliasing             -- TestGetReturnsTheStoredSlice
+caught   read-path expiry disabled                  -- TestExpiryIsObservedOnRead
+caught   shard selection collapses to one shard     -- TestKeysSpreadAcrossShards
+caught   TTL deadline overflow reintroduced         -- TestUnrepresentableTTLDoesNotExpireImmediately
+caught   store version stops incrementing           -- TestVersionsIncrementPerKey
 
-caught: 11   vacuous: 0   skipped: 0
+=== L1 ===
+caught   L1 accepts an older version                -- TestOlderVersionIsRejected
+caught   L1 stops clamping TTL to MaxTTL            -- TestEveryEntryIsTTLBounded
+caught   L1 write stripe removed                    -- TestConcurrentPutsNeverLeaveAnOlderVersion
+caught   invalidation ignores the resident version  -- TestInvalidateOlderThanKeepsNewerCopies
+
+=== codec ===
+caught   frame parser accepts an unknown code       -- TestUnframeRejectsCorruptInput
+
+=== singleflight ===
+caught   loader panic is no longer contained        -- TestPanickingLoaderBecomesAnError
+caught   completed flights are never released       -- TestSequentialCallsDoNotCollapse
+
+=== clock ===
+caught   drops the creation-order tie-break         -- TestFakeEqualDeadlinesFireInCreationOrder
+
+=== namespace ===
+caught   namespaces share one store                 -- TestNamespacesAreIsolated
+caught   singleflight bypassed                      -- TestGetOrLoadCollapsesConcurrentMisses
+caught   namespace skips the context check          -- TestCancelledContextIsReportedFirst
+caught   loader runs without the namespace deadline -- TestLoaderTimeoutIsTheNamespacesNotTheCallers
+
+caught: 18   vacuous: 0   skipped: 0
 tree clean
 ```
+
+The eighteen are chosen to be the invariants whose quiet failure would be worst:
+the aliasing contract, every rule that bounds staleness, both halves of the
+version discipline, the panic containment that keeps application bugs local, and
+the deadline rules. Not everything is audited — the p99 criterion is mutated by
+hand because a single run costs a minute, and the reference-model and fuzz tests
+audit themselves by construction.
 
 It is deliberately **not** run by CI. It rewrites source files, and a mutation
 left behind by a crashed run would cost far more than the coverage it buys. Run

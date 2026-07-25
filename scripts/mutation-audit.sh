@@ -153,6 +153,61 @@ mutate "singleflight bypassed" \
 	result := n.flight.Do(ctx, key, func(loadCtx context.Context) ([]byte, time.Duration, error) {' \
   'TestGetOrLoadCollapsesConcurrentMisses' .
 
+mutate "store version stops incrementing" \
+  internal/store/store.go \
+  'version := sh.entries[key].version + 1' \
+  'version := uint64(1)' \
+  'TestVersionsIncrementPerKey' ./internal/store/
+
+mutate "L1 invalidation ignores the resident version" \
+  internal/l1/l1.go \
+  'if !ok || e.version >= version {
+		return false
+	}' \
+  'if !ok {
+		return false
+	}' \
+  'TestInvalidateOlderThanKeepsNewerCopies' ./internal/l1/
+
+mutate "loader panic is no longer contained" \
+  internal/singleflight/singleflight.go \
+  'if r := recover(); r != nil {
+				recovered = true
+				c.err = fmt.Errorf("%w: %v", core.ErrLoaderPanic, r)
+			}' \
+  '_ = recovered' \
+  'TestPanickingLoaderBecomesAnError' ./internal/singleflight/
+
+mutate "completed flights are never released" \
+  internal/singleflight/singleflight.go \
+  'g.mu.Lock()
+		delete(g.calls, key)
+		g.mu.Unlock()' \
+  '' \
+  'TestSequentialCallsDoNotCollapse' ./internal/singleflight/
+
+mutate "fake clock drops the creation-order tie-break" \
+  internal/clock/fake.go \
+  'return h[i].seq < h[j].seq' \
+  'return false' \
+  'TestFakeEqualDeadlinesFireInCreationOrder' ./internal/clock/
+
+mutate "namespace skips the context check" \
+  namespace.go \
+  'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}' \
+  'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {' \
+  'TestCancelledContextIsReportedFirst' .
+
+mutate "loader runs without the namespace deadline" \
+  namespace.go \
+  'loadCtx, cancel := clock.WithTimeout(loadCtx, n.cache.opts.Clock, n.opts.LoaderTimeout)
+		defer cancel()' \
+  '' \
+  'TestLoaderTimeoutIsTheNamespacesNotTheCallers' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 
