@@ -106,10 +106,30 @@ func TestDeactivationPreservesPendingTimers(t *testing.T) {
 
 	// A group with a pending timer is exempt from idle deactivation:
 	// deactivating would stop its clock timer and nothing would ever wake it.
+	activationsBefore := rt.Stats().Activations
 	fc.Advance(time.Minute * 2)
+
+	// Round-trip through the mailbox before asserting. Advancing only
+	// *delivers* the idle-timer tick; the turn goroutine acts on it
+	// afterwards, so reading Stats immediately would sample the moment
+	// before deactivation and pass whether or not the exemption exists.
+	// A completed turn proves the goroutine has been round the loop.
+	if _, err := rt.Do(context.Background(), "g", func(core.GroupState) (any, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
 	if got := rt.Stats().Active; got != 1 {
 		t.Fatalf("Stats().Active = %d; a group with a pending timer was idle-deactivated "+
 			"and its timer would never fire", got)
+	}
+	// Activations is the assertion that survives a reactivation: if the group
+	// had deactivated, the Do above would have revived it and the count would
+	// have moved.
+	if got := rt.Stats().Activations; got != activationsBefore {
+		t.Fatalf("the group was deactivated and reactivated (%d activations, was %d); "+
+			"a pending timer must prevent idle deactivation", got, activationsBefore)
 	}
 
 	// Force it out anyway, as the LRU cap would.
@@ -241,7 +261,19 @@ func TestReschedulingATimerReplacesIt(t *testing.T) {
 	}
 
 	fc.Advance(2 * time.Minute)
-	waitFor(t, "the timer to fire", func() bool { return fired.Load() >= 1 })
+
+	// Every timer due in that window was enqueued during the advance, so a
+	// request posted now sits behind all of them. Waiting for it to complete
+	// drains them deterministically — asserting on a count that other
+	// goroutines are still incrementing would pass whenever this goroutine
+	// happened to look first, which is exactly how this test was previously
+	// unable to detect duplicate timers.
+	if _, err := rt.Do(context.Background(), "g", func(core.GroupState) (any, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("the timer fired %d times after five schedules of one name, want 1", got)
 	}

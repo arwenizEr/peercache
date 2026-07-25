@@ -47,10 +47,15 @@ func NewTable() *Table {
 
 // Update replaces the membership view.
 //
-// nodes is copied and sorted by ID, so the table's answers do not depend on the
-// order membership happened to report them in. Two nodes given the same members
-// and epoch will agree on every key — which is the whole point, and would be
-// quietly false if iteration order leaked into the result.
+// nodes is copied and sorted by ID. The sort is *not* what makes two nodes
+// agree — taking the maximum score is order-independent, so [Table.Owner]
+// returns the same answer whatever order the members arrive in, sorted or not.
+// What the sort actually buys is a deterministic tie-break when two members
+// score identically on a key, and a stable ranking for [Table.Replicas].
+//
+// Recorded precisely because the mutation audit caught this comment claiming
+// more than the code does: removing the sort left every ownership test passing,
+// as it should have.
 func (t *Table) Update(nodes []core.Node, epoch core.Epoch) {
 	scored := make([]scoredNode, 0, len(nodes))
 	for _, n := range nodes {

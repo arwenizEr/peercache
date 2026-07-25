@@ -317,11 +317,23 @@ mutate "ownership hashes with a bare XOR" \
   'return keyHash ^ nodeSeed' \
   'TestOwnershipIsUniform' ./internal/ownership/
 
-mutate "membership order leaks into ownership" \
+# Note: removing the sort in Update is deliberately NOT audited. Owner takes the
+# maximum score, which is order-independent, so the sort changes nothing an
+# ownership test can observe. Auditing it produced a vacuous result and led to
+# the over-claiming comment on Update being corrected instead.
+mutate "the replica ranking is unsorted" \
   internal/ownership/table.go \
-  'sort.Slice(scored, func(i, j int) bool { return scored[i].node.ID < scored[j].node.ID })' \
+  'sort.Slice(ranked, func(i, j int) bool {
+		si, sj := mix(keyHash, ranked[i].seed), mix(keyHash, ranked[j].seed)
+		if si != sj {
+			return si > sj
+		}
+		// Deterministic tie-break, so two nodes never disagree because
+		// their sorts were unstable in different ways.
+		return ranked[i].node.ID < ranked[j].node.ID
+	})' \
   '' \
-  'TestOwnerIsDeterministicAcrossMemberOrder' ./internal/ownership/
+  'TestReplicasAreARankedPrefix' ./internal/ownership/
 
 mutate "an unknown membership claims everything" \
   internal/ownership/guard.go \
