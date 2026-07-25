@@ -354,7 +354,7 @@ not a number worth optimising.
 ### Activation guard
 
 ```
-BenchmarkCanActivate           460 ns/op       136 B/op    3 allocs/op
+BenchmarkCanActivate           445 ns/op       136 B/op    3 allocs/op
 ```
 
 Six keys in seven are not this node's in a 7-node cluster, so this benchmark is
@@ -362,6 +362,14 @@ dominated by the `ErrNotOwner` path, and the allocation is the formatted error
 message. The guard is consulted once per activation rather than once per
 operation, so this is not on a hot path. Open question 24 records what would
 change that.
+
+Re-measured after the stale-epoch check was added, and unchanged within noise
+(460 ns before, 445 ns after). That is not evidence the check is free: it sits
+*after* the ownership test, so six iterations in seven return before reaching
+it. Two integer comparisons on the remaining seventh are below what this
+benchmark can resolve, which is the honest statement — a targeted benchmark of
+the owned path would be needed to say more, and there is nothing yet worth
+saying.
 
 ---
 
