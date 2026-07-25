@@ -32,7 +32,7 @@ caller while it is open.
 
 Ownership is answered by rendezvous hashing over the current view, and every
 answer is stamped with the epoch it was computed under. On top of that, a
-`Guard` sits in front of activation and answers one of three things:
+`Guard` sits in front of activation and answers one of four things:
 
 - **nil** — activate.
 - **`ErrNotOwner`** — this node does not own the key. Terminal here; the caller
