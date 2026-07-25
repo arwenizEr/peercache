@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -155,15 +156,26 @@ func TestMutualTLSRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMutualTLSRejectsAnUnknownCA is the assertion that makes the positive case
-// mean something.
+// TestMutualTLSRejectsAnImpostorCA is the assertion that makes the positive case
+// mean something: it isolates *server-side verification of the client
+// certificate*.
 //
-// The intruder presents a well-formed certificate for the right node name,
-// signed by a CA the cluster does not trust. If this connection succeeded, the
-// mTLS configuration would be encryption without authentication.
-func TestMutualTLSRejectsAnUnknownCA(t *testing.T) {
-	ca := newCA(t, "peercache-test-ca")
-	rogue := newCA(t, "rogue-ca")
+// Getting this test to test that took a mutation to discover. The first version
+// used a rogue CA with its own name, and it passed even with the server
+// downgraded to RequireAnyClientCert — because the failure was happening
+// somewhere else entirely. In TLS 1.3 the server's CertificateRequest advertises
+// the subject names of its ClientCAs, and Go's client will not send a
+// certificate that cannot chain to one of them. The handshake died with "client
+// didn't provide a certificate" before the server ever had an opinion.
+//
+// So the impostor CA here carries the *same subject name* as the real one and a
+// different key. The client matches on the advertised name and sends its
+// certificate; the server then has to reject it on the signature. That is also
+// the realistic attack, since a CA's distinguished name is not a secret.
+func TestMutualTLSRejectsAnImpostorCA(t *testing.T) {
+	const caName = "peercache-test-ca"
+	ca := newCA(t, caName)
+	rogue := newCA(t, caName) // same name, different key
 
 	b := newPeer(t, "node-b", ca.issue(t, "node-b"))
 
@@ -197,12 +209,58 @@ func TestMutualTLSRejectsAnUnknownCA(t *testing.T) {
 
 	_, err = c.Invoke(ctx, transport.MethodGet, []byte("let me in"))
 	if err == nil {
-		t.Fatal("a peer holding a certificate from an untrusted CA was served; mutual TLS is " +
-			"not verifying the client certificate, which makes it encryption without " +
-			"authentication")
+		t.Fatal("a peer holding a certificate from an impostor CA was served; the server is " +
+			"not verifying the client certificate it was sent, which makes mutual TLS " +
+			"encryption without authentication")
 	}
 	if !errors.Is(err, core.ErrNodeUnreachable) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("the rejected peer got %v; want a transport-level failure", err)
+	}
+	if calls, _, _, _, _ := b.handler.snapshot(); calls != 0 {
+		t.Fatalf("the handler ran %d times for an unauthenticated peer, want 0", calls)
+	}
+}
+
+// TestAClientWithNoAcceptableCertificateSendsNone pins the behaviour that made
+// the test above vacuous, so that it is documented rather than merely observed.
+//
+// A client whose certificate chains to a CA the server does not advertise sends
+// no certificate at all, and the connection fails on the server's requirement
+// that one be present. This is a second, independent barrier — useful, but not
+// the same barrier as verification, and not a substitute for it.
+func TestAClientWithNoAcceptableCertificateSendsNone(t *testing.T) {
+	ca := newCA(t, "peercache-test-ca")
+	unrelated := newCA(t, "some-other-org-ca")
+
+	b := newPeer(t, "node-b", ca.issue(t, "node-b"))
+
+	clientTLS := unrelated.issue(t, "node-a")
+	clientTLS.CAFile = ca.caFile() // trusts the server, but cannot prove itself
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+
+	tr, err := transport.New(transport.Options{
+		Self: core.Node{ID: "node-a", Addr: l.Addr().String()},
+		TLS:  clientTLS,
+	})
+	if err != nil {
+		t.Fatalf("transport.New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	c, err := tr.Dial(b.node)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := c.Invoke(ctx, transport.MethodGet, []byte("k")); err == nil {
+		t.Fatal("a client that never sent a certificate was served")
 	}
 	if calls, _, _, _, _ := b.handler.snapshot(); calls != 0 {
 		t.Fatalf("the handler ran %d times for an unauthenticated peer, want 0", calls)
@@ -265,6 +323,44 @@ func TestPlaintextAndTLSDoNotInteroperate(t *testing.T) {
 	if _, err := dial(t, plain, secure).Invoke(ctx, transport.MethodGet, []byte("k")); err == nil {
 		t.Fatal("a plaintext client reached a TLS server; a half-configured cluster must fail " +
 			"loudly rather than run partly unencrypted")
+	}
+}
+
+// TestTLSFloorIsEnforced proves the MinVersion setting is load-bearing rather
+// than decorative.
+//
+// It is checked with a raw handshake rather than through the transport, because
+// two peers built from this package both prefer TLS 1.3 and would negotiate it
+// whatever the floor said — lowering MinVersion changes nothing observable
+// between them. A client that *cannot* speak 1.3 is the only thing that can
+// tell the difference, and it is also the thing the floor exists to turn away.
+func TestTLSFloorIsEnforced(t *testing.T) {
+	ca := newCA(t, "peercache-test-ca")
+	b := newPeer(t, "node-b", ca.issue(t, "node-b"))
+
+	clientTLS := ca.issue(t, "node-a")
+	cert, err := tls.LoadX509KeyPair(clientTLS.CertFile, clientTLS.KeyFile)
+	if err != nil {
+		t.Fatalf("loading the client key pair: %v", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca.pemDER) {
+		t.Fatal("the CA bundle contains no certificate")
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", b.node.Addr, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		ServerName:   "node-b",
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
+	})
+	if err == nil {
+		state := conn.ConnectionState()
+		_ = conn.Close()
+		t.Fatalf("a TLS 1.2 client completed a handshake (negotiated version 0x%04x); the "+
+			"1.3 floor is not being enforced", state.Version)
 	}
 }
 
