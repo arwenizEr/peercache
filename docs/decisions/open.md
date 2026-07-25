@@ -251,7 +251,30 @@ library.
 
 ---
 
-## 17. Deliberately deferred, per SPEC.md section 5
+## 17. Configured options that do nothing yet — M1, tracked
+
+Three namespace options are accepted and validated at construction, and are not
+consulted by any data path:
+
+| Option | Inert until | Why it cannot act sooner |
+|---|---|---|
+| `WithPartitioner` | M3 | Grouping decides which node owns a key. One node, no ownership, nothing to decide. |
+| `WithReplicationFactor` | M5 | There is nowhere to put a replica. |
+| `WithCodec` | M4 | SPEC.md section 3.1 defines a `[]byte` API; there is nothing to encode. See question 12. |
+
+**Picked:** accept and validate them now. An unregistered codec or an
+out-of-range replication factor fails at startup, which is the point of naming
+them in configuration, and changing a partitioner later moves keys between
+owners — a decision better made before there is data.
+
+**The risk being managed:** an option that silently does nothing is a lie by
+omission. `TestPartitionerHasNoEffectYet` pins the current behaviour so that
+wiring it up in M3 is a deliberate change to a failing assertion rather than a
+silent one, and the examples say plainly that these are inert.
+
+---
+
+## 18. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 

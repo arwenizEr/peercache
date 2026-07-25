@@ -2,6 +2,7 @@ package peercache_test
 
 import (
 	"context"
+	"math"
 	"runtime"
 	"sort"
 	"testing"
@@ -36,8 +37,15 @@ type percentiles struct {
 
 func summarise(samples []time.Duration) percentiles {
 	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	// Nearest-rank: the p-th percentile is the smallest sample at or above
+	// which p of the data lies, which for a zero-indexed sorted slice is
+	// ceil(q*n) - 1. Using floor(q*n) instead — the obvious version, and the
+	// one this had — shifts every figure one sample high.
 	at := func(q float64) time.Duration {
-		idx := int(float64(len(samples)) * q)
+		idx := int(math.Ceil(q*float64(len(samples)))) - 1
+		if idx < 0 {
+			idx = 0
+		}
 		if idx >= len(samples) {
 			idx = len(samples) - 1
 		}
@@ -172,6 +180,77 @@ func TestLocalGetP99AtOneMillionKeys(t *testing.T) {
 	if got.p99 >= acceptanceP99Budget {
 		t.Fatalf("p99 %v exceeds the %v budget at %d keys",
 			got.p99, acceptanceP99Budget, acceptanceKeys)
+	}
+}
+
+// TestBothMeasurementPathsWork exercises measurePerOp and measureBatched
+// regardless of which one this platform's clock selects.
+//
+// Without it, the per-operation path is dead code on Windows and runs for the
+// very first time inside CI on Linux — where a bug in it fails the acceptance
+// criterion and looks like a performance regression. A measurement harness that
+// is only exercised on the platform where it is not used is not a harness.
+func TestBothMeasurementPathsWork(t *testing.T) {
+	const keys = 2000
+
+	c, _ := newCache(t)
+	ns := c.Namespace("measure")
+	ctx := context.Background()
+
+	value := make([]byte, acceptanceValueSize)
+	ks := make([]string, keys)
+	for i := range ks {
+		ks[i] = key(i)
+		if err := ns.Set(ctx, ks[i], value, 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	order := shuffledIndices(keys)
+
+	for name, measure := range map[string]func(*testing.T, peercache.Namespace, context.Context, []string, []int) percentiles{
+		"per operation": measurePerOp,
+		"batched":       measureBatched,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, ns, ctx, ks, order)
+
+			// The distribution must at least be ordered. On a coarse
+			// clock every figure may legitimately be zero, so this
+			// asserts consistency rather than magnitude.
+			if got.p50 > got.p90 || got.p90 > got.p99 || got.p99 > got.p999 || got.p999 > got.max {
+				t.Fatalf("percentiles are not monotonic: %+v", got)
+			}
+			if got.max < 0 {
+				t.Fatalf("negative duration in %+v", got)
+			}
+		})
+	}
+}
+
+// TestSummariseOrdersCorrectly pins the percentile arithmetic itself. The
+// acceptance criterion is only as trustworthy as this function.
+func TestSummariseOrdersCorrectly(t *testing.T) {
+	samples := make([]time.Duration, 1000)
+	for i := range samples {
+		// Deliberately reverse order, so a missing sort shows up.
+		samples[i] = time.Duration(1000-i) * time.Nanosecond
+	}
+
+	got := summarise(samples)
+	want := percentiles{
+		p50:  500 * time.Nanosecond,
+		p90:  900 * time.Nanosecond,
+		p99:  990 * time.Nanosecond,
+		p999: 999 * time.Nanosecond,
+		max:  1000 * time.Nanosecond,
+	}
+	if got != want {
+		t.Fatalf("summarise = %+v, want %+v", got, want)
+	}
+
+	single := summarise([]time.Duration{7 * time.Nanosecond})
+	if single.p50 != 7*time.Nanosecond || single.max != 7*time.Nanosecond {
+		t.Fatalf("single-sample summarise = %+v", single)
 	}
 }
 

@@ -97,8 +97,12 @@ func basics(ctx context.Context, cache peercache.Cache) error {
 
 func batches(ctx context.Context, cache peercache.Cache) error {
 	counters := cache.Namespace("counters",
-		// Keys sharing a prefix will share an owner once the cluster
-		// exists, so they can be updated in a single actor turn.
+		// Configured now, inert until M3. Grouping decides which node
+		// owns a key, and on a single node with no ownership there is
+		// nothing for it to decide. It is set here because the
+		// configuration is validated at startup and because changing it
+		// later moves keys between owners, which is a decision worth
+		// making before there is data.
 		peercache.WithPartitioner(peercache.PartitionByPrefix("/")),
 	)
 

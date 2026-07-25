@@ -1,10 +1,14 @@
-// Command m0 demonstrates the API surface fixed by milestone M0.
+// Command m0 demonstrates the skeleton and lifecycle fixed by milestone M0:
+// construction, option validation, registration, and shutdown.
 //
 // Nothing distributed happens here, and nothing is meant to. M0 exists so that
-// every later milestone is provable: the interfaces from SPEC.md section 3 are
-// defined and compiling, configuration is validated at construction, and the
-// data-path methods report ErrNotImplemented until the milestone that fills
-// them in.
+// every later milestone is provable — the interfaces from SPEC.md section 3 are
+// defined and compiling, and configuration is validated at startup rather than
+// on the first request.
+//
+// The namespace data path was M0 scaffolding and is now real; see
+// ./examples/m1 for it. What remains here is what M0 itself delivered and what
+// is still true: everything below the data path.
 //
 // Run it with:
 //
@@ -45,6 +49,8 @@ func run() error {
 	// A namespace is a keyspace with its own loader, partitioner,
 	// replication factor and L1 TTL.
 	sessions := cache.Namespace("sessions",
+		// Grouping decides ownership, so it has no observable effect
+		// until there is a cluster to own anything (M3).
 		peercache.WithPartitioner(peercache.PartitionByPrefix("/")),
 		peercache.WithReplicationFactor(2),
 		peercache.WithL1TTL(2*time.Second),
@@ -54,10 +60,10 @@ func run() error {
 	)
 
 	ctx := context.Background()
-	if _, err := sessions.Get(ctx, "user:123/cart"); !errors.Is(err, peercache.ErrNotImplemented) {
-		return fmt.Errorf("expected ErrNotImplemented from Get, got %w", err)
+	if err := sessions.Set(ctx, "user:123/cart", []byte("3"), time.Minute); err != nil {
+		return fmt.Errorf("set: %w", err)
 	}
-	fmt.Println("namespace Get: not implemented until M1, as documented")
+	fmt.Println("namespace constructed and usable; its data path is M1's subject")
 
 	// Registered functions are how computation moves to the data. Closures
 	// never cross the network; an RPC carries the name and argument bytes.

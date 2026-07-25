@@ -6,12 +6,20 @@ BENCHTIME ?= 1s
 BENCHCOUNT ?= 5
 TIMEOUT ?= 300s
 
-.PHONY: all ci test test-race vet lint bench bench-l1-eval bench-save cover tidy tools fmt clean
+.PHONY: all ci test test-race examples vet lint bench bench-l1-eval bench-save cover tidy tools fmt clean
 
 all: fmt vet lint test-race
 
 ## ci runs exactly what the pipeline runs, so a green local run means a green CI run.
-ci: vet lint test test-race bench
+ci: vet lint test test-race examples bench
+
+## examples runs every example to completion. Compiling them is not enough:
+## each one asserts the behaviour it demonstrates, and an example that is only
+## compiled is documentation that can quietly start lying. M1 broke the M0
+## example and nothing noticed.
+examples:
+	$(GO) run ./examples/m0
+	$(GO) run ./examples/m1
 
 ## test runs the suite without the race detector, which is the fast feedback loop.
 test:

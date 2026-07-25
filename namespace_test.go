@@ -499,6 +499,41 @@ func TestCallerCancellationDoesNotAbortTheLoad(t *testing.T) {
 	}
 }
 
+// TestPartitionerHasNoEffectYet pins an uncomfortable fact rather than leaving
+// it implicit: WithPartitioner is accepted and validated, and nothing on any
+// data path calls it.
+//
+// Grouping decides which node owns a key. On a single node with no ownership
+// there is nothing for it to decide, so M1 cannot honestly do anything with it.
+// Asserting the current behaviour means the day M3 wires it up, this test
+// changes deliberately instead of a reviewer wondering whether it ever worked.
+func TestPartitionerHasNoEffectYet(t *testing.T) {
+	c, _ := newCache(t)
+	ctx := context.Background()
+
+	// A partitioner that maps every key to one group, which would be
+	// dramatic if it did anything.
+	collapsing := c.Namespace("collapsing",
+		peercache.WithPartitioner(peercache.PartitionByFunc(func(string) string { return "everything" })))
+
+	if err := collapsing.Set(ctx, "a", []byte("first"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := collapsing.Set(ctx, "b", []byte("second"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Keys remain independent: grouping does not merge them.
+	a, err := collapsing.Get(ctx, "a")
+	if err != nil || string(a) != "first" {
+		t.Fatalf("Get(a) = %q %v", a, err)
+	}
+	b, err := collapsing.Get(ctx, "b")
+	if err != nil || string(b) != "second" {
+		t.Fatalf("Get(b) = %q %v", b, err)
+	}
+}
+
 func TestNamespaceOptionValidationSurfaces(t *testing.T) {
 	c, _ := newCache(t)
 	tests := map[string]peercache.NamespaceOption{
