@@ -75,6 +75,29 @@ nobody will trust at three in the morning.
 
 ---
 
+## A test that proved nothing
+
+Not every mutation confirms a test. `TestGetOrLoadRechecksAfterWinningTheFlight`
+was written to cover the in-flight store re-check, looked reasonable, and
+**passed with the re-check deleted**.
+
+Its callers hit the outer store lookup and returned before ever reaching the
+flight, so the code under test never ran. The window the re-check closes is the
+gap between two adjacent statements, and nothing in the test could land a
+goroutine inside it.
+
+The test was renamed to `TestGetOrLoadServesFromTheStoreAfterALoad`, which is
+what it actually asserts, and the untested optimisation is recorded in
+`docs/decisions/open.md` question 20 rather than covered by a comment claiming
+otherwise.
+
+This is the strongest argument in this file for the method. Four fixes in M1
+were verified by mutation; three held and one turned out to be guarded by a test
+that could not fail. Without running the mutation, all four would have looked
+identical.
+
+---
+
 ## Method
 
 - Mutations are applied by hand, one at a time, and reverted immediately.

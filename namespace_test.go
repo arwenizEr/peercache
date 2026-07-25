@@ -416,6 +416,54 @@ func TestGetOrLoadCollapsesConcurrentMisses(t *testing.T) {
 	}
 }
 
+// TestGetOrLoadServesFromTheStoreAfterALoad asserts the observable property:
+// once a key is loaded, later callers are served from the store and the loader
+// is not consulted again.
+//
+// It deliberately does NOT claim to cover the re-check inside the flight. An
+// earlier version of this test did claim that, and was vacuous — it passed with
+// the re-check deleted, because these callers hit the outer store lookup and
+// never reach the flight at all. See docs/decisions/open.md question 20.
+func TestGetOrLoadServesFromTheStoreAfterALoad(t *testing.T) {
+	const followers = 100
+
+	var invocations atomic.Int64
+	c, _ := newCache(t)
+	ns := c.Namespace("profiles", peercache.WithLoader(
+		func(_ context.Context, k string) ([]byte, time.Duration, error) {
+			invocations.Add(1)
+			return []byte("loaded:" + k), time.Minute, nil
+		}))
+	ctx := context.Background()
+
+	// One load populates the key and the flight is released.
+	if _, err := ns.GetOrLoad(ctx, "hot"); err != nil {
+		t.Fatalf("GetOrLoad: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < followers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := ns.GetOrLoad(ctx, "hot")
+			if err != nil {
+				t.Errorf("GetOrLoad: %v", err)
+				return
+			}
+			if string(got) != "loaded:hot" {
+				t.Errorf("GetOrLoad = %q", got)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := invocations.Load(); got != 1 {
+		t.Fatalf("the loader ran %d times; %d calls after a completed load should all "+
+			"have been served from the store", got, followers)
+	}
+}
+
 // TestGetOrLoadPanicIsContained checks that a bug in application code becomes
 // an error for the callers of that key rather than a panic in a thousand
 // unrelated goroutines.

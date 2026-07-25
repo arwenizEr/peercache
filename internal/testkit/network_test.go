@@ -204,6 +204,100 @@ func TestNetworkPartitionIsolatesOmittedNodes(t *testing.T) {
 	}
 }
 
+// TestFaultRulesResolveMostSpecificFirst covers a semantic change made during
+// review and never tested: a rate or delay of zero is *stored* rather than
+// deleted, so it overrides a broader wildcard rule.
+//
+// Before the change, SetDropRate(from, to, 0) deleted the edge's entry and the
+// call fell through to the wildcard — so "lose everything except this one link"
+// was impossible to express, and asking for it silently did the opposite. That
+// is the sort of fault-injection bug that makes a later milestone's chaos test
+// prove something other than what it claims.
+func TestFaultRulesResolveMostSpecificFirst(t *testing.T) {
+	c := testkit.NewCluster(t, testkit.WithNodes(3))
+
+	// Lose everything...
+	c.Net.SetDropRate(testkit.Wildcard, testkit.Wildcard, 1)
+	// ...except this one link. Both directions: rules are directional, and
+	// exempting only the request means the handler runs and the *reply* is
+	// lost, which on a background context waits forever rather than failing.
+	c.Net.SetDropRate("n0", "n1", 0)
+	c.Net.SetDropRate("n1", "n0", 0)
+
+	exempt := dial(t, c, "n0", "n1")
+	if _, err := exempt.Invoke(context.Background(), "ping", nil); err != nil {
+		t.Fatalf("the exempted link was dropped anyway: %v", err)
+	}
+
+	// Any other edge is still lost, which looks like silence until the
+	// caller's deadline.
+	blocked := dial(t, c, "n0", "n2")
+	ctx, cancel := clock.WithTimeout(context.Background(), c.Clock, time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := blocked.Invoke(ctx, "ping", nil)
+		errCh <- err
+	}()
+	c.Advance(time.Second)
+	if err := <-errCh; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a non-exempt edge = %v, want DeadlineExceeded", err)
+	}
+
+	// A negative rate removes the rule entirely, so the edge falls back to
+	// the wildcard and is lost again.
+	c.Net.SetDropRate("n0", "n1", -1)
+	c.Net.SetDropRate("n1", "n0", -1)
+	ctx2, cancel2 := clock.WithTimeout(context.Background(), c.Clock, time.Second)
+	defer cancel2()
+
+	errCh2 := make(chan error, 1)
+	go func() {
+		_, err := exempt.Invoke(ctx2, "ping", nil)
+		errCh2 <- err
+	}()
+	c.Advance(time.Second)
+	if err := <-errCh2; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("removing the exemption did not restore the wildcard: %v", err)
+	}
+}
+
+// TestZeroDelayOverridesAWildcardDelay is the same rule for latency: a
+// per-edge zero must beat a global delay, or "everything is slow except this
+// link" cannot be expressed either.
+func TestZeroDelayOverridesAWildcardDelay(t *testing.T) {
+	c := testkit.NewCluster(t, testkit.WithNodes(3))
+
+	c.Net.SetDelay(testkit.Wildcard, testkit.Wildcard, time.Hour)
+	c.Net.SetDelay("n0", "n1", 0)
+
+	// The exempted edge is delivered inline, with no clock advance at all.
+	fast := dial(t, c, "n0", "n1")
+	if _, err := fast.Invoke(context.Background(), "ping", nil); err != nil {
+		t.Fatalf("the zero-delay edge did not deliver inline: %v", err)
+	}
+
+	// The wildcard still applies elsewhere: the call is in flight and needs
+	// an advance.
+	slow := dial(t, c, "n0", "n2")
+	replies := make(chan error, 1)
+	go func() {
+		_, err := slow.Invoke(context.Background(), "ping", nil)
+		replies <- err
+	}()
+	c.Clock.BlockUntil(1)
+	select {
+	case err := <-replies:
+		t.Fatalf("a wildcard-delayed edge delivered without an advance: %v", err)
+	default:
+	}
+	c.Advance(time.Hour)
+	if err := <-replies; err != nil {
+		t.Fatalf("Invoke after the advance: %v", err)
+	}
+}
+
 func TestNetworkIsolateAndRejoin(t *testing.T) {
 	c := testkit.NewCluster(t, testkit.WithNodes(2))
 	client := dial(t, c, "n0", "n1")

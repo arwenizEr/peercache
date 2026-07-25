@@ -299,7 +299,38 @@ needs a real ordering it has to carry the owner's epoch alongside the version.
 
 ---
 
-## 19. Deliberately deferred, per SPEC.md section 5
+## 20. One optimisation has no deterministic test — M1, known and unresolved
+
+`Namespace.GetOrLoad` re-checks the store *after* winning the singleflight, in
+case a previous load populated the key between the outer lookup and the flight.
+
+**It has no test that would fail if it were deleted.** That is not for lack of
+trying: the window is the gap between two adjacent statements, so hitting it
+requires pausing a goroutine between them, and there is no hook to do that. A
+test was written that appeared to cover it and was found to be vacuous by
+mutation — it passed with the re-check removed, because its callers hit the
+outer lookup and never reached the flight.
+
+**Picked:** keep the optimisation, delete the false test, record this.
+
+The optimisation is cheap and obviously correct by inspection — a store lookup
+that returns the value already there. What it is not is *verified*, and a
+comment claiming a test covers it would have been worse than this paragraph.
+
+**What would resolve it:** a test hook that blocks a caller between the store
+lookup and `flight.Do`. That is real machinery for a marginal optimisation, so
+it is not worth building today. If M4 ever makes redundant loads expensive
+enough to matter — a load then costs a network round trip, not a local map
+read — build the hook and test it properly, or remove the optimisation.
+
+**The general lesson**, which cost the most to learn here: a passing test is not
+evidence. Every test written to cover a specific fix should be run once against
+the un-fixed code. Three fixes in this milestone were verified that way and
+held; this one was not, and did not.
+
+---
+
+## 21. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
