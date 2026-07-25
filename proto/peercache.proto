@@ -1,0 +1,145 @@
+// Package peercache.v1 describes the peer-to-peer wire format.
+//
+// This file is normative documentation, not the source of generated Go. There
+// is no protoc step in this build and no .pb.go in the tree. See
+// docs/decisions/0014-grpc-without-protobuf.md for the argument; the short
+// version is that CLAUDE.md fixes every pod to the same binary, which removes
+// the cross-language and mixed-schema benefits protobuf exists to provide,
+// while internal/codec already supplies a fuzzed, framed, registered codec for
+// exactly these bodies.
+//
+// What is real: the service below is served by gRPC, over the method names
+// spelled here, with request and response bodies encoded by internal/codec.
+// This file exists so the wire format can be read and reviewed in one place
+// rather than reconstructed from Go structs. It is kept in step with
+// internal/transport/method.go; the pairing is asserted by
+// TestProtoMatchesMethodConstants.
+syntax = "proto3";
+
+package peercache.v1;
+
+option go_package = "github.com/peercache/peercache/proto;peercachev1";
+
+// Peer is the single service every pod both serves and dials.
+//
+// Every method is unary. Streaming is deliberately absent: M6's resumable
+// partition transfer is the first thing that will want it, and adding a
+// streaming method later does not reshape the unary ones. See
+// docs/decisions/open.md question 1.
+service Peer {
+  // Get reads one key from the namespace's owned store on this node.
+  rpc Get(GetRequest) returns (GetResponse);
+
+  // Set writes one key. The owner assigns the version.
+  rpc Set(SetRequest) returns (SetResponse);
+
+  // Delete removes one key. Removing an absent key is not an error.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // BatchGet reads many keys from one namespace in one round trip. The
+  // caller has already grouped keys by owner, so every key here belongs to
+  // the node being asked.
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+
+  // Call runs a registered group function on the group's owner, inside a
+  // single actor turn. This is the primary API: computation moves to the
+  // data rather than the data moving to the caller.
+  rpc Call(CallRequest) returns (CallResponse);
+
+  // Invalidate tells a peer that a key it may be caching is stale. It is a
+  // latency optimisation and nothing more — correctness never depends on
+  // one of these arriving. See CLAUDE.md non-negotiable 6.
+  rpc Invalidate(InvalidateRequest) returns (InvalidateResponse);
+}
+
+// Stamp is an owner-issued (epoch, version) pair.
+//
+// Version alone is NOT a cluster-wide monotonic counter: a key's version
+// restarts at 1 when its store entry is reclaimed, so a version can decrease
+// over a key's lifetime. See docs/decisions/open.md question 18. Comparison is
+// therefore lexicographic on (epoch, version), and even that is only an
+// optimisation — the L1 TTL is the real staleness bound.
+message Stamp {
+  uint64 epoch = 1;
+  uint64 version = 2;
+}
+
+message GetRequest {
+  string namespace = 1;
+  string key = 2;
+  // epoch is the membership epoch the caller resolved ownership under. The
+  // owner refuses the call if it is stale. See ownership.Guard.CanActivateAt.
+  uint64 epoch = 3;
+}
+
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  Stamp stamp = 3;
+  // ttl_remaining_ns bounds how long the caller may cache this value in its
+  // non-owned tier. Zero means the owner set no TTL, in which case the
+  // caller applies its own L1 maximum. The caller always clamps.
+  int64 ttl_remaining_ns = 4;
+}
+
+message SetRequest {
+  string namespace = 1;
+  string key = 2;
+  bytes value = 3;
+  int64 ttl_ns = 4;
+  uint64 epoch = 5;
+}
+
+message SetResponse {
+  Stamp stamp = 1;
+}
+
+message DeleteRequest {
+  string namespace = 1;
+  string key = 2;
+  uint64 epoch = 3;
+}
+
+message DeleteResponse {}
+
+message BatchGetRequest {
+  string namespace = 1;
+  repeated string keys = 2;
+  uint64 epoch = 3;
+}
+
+message BatchGetResponse {
+  // entries is sparse: a key that was absent on the owner has no entry.
+  // Callers must not assume index alignment with the request.
+  repeated BatchEntry entries = 1;
+}
+
+message BatchEntry {
+  string key = 1;
+  bytes value = 2;
+  Stamp stamp = 3;
+  int64 ttl_remaining_ns = 4;
+}
+
+message CallRequest {
+  string group = 1;
+  // func_name selects a function registered at startup. Closures never
+  // cross the network; see CLAUDE.md non-negotiable 3.
+  string func_name = 2;
+  bytes args = 3;
+  uint64 epoch = 4;
+}
+
+message CallResponse {
+  bytes result = 1;
+}
+
+message InvalidateRequest {
+  string namespace = 1;
+  repeated string keys = 2;
+  // stamp is the owner's stamp *after* the change. A receiver drops a
+  // cached copy only if what it holds is older.
+  Stamp stamp = 3;
+}
+
+message InvalidateResponse {}

@@ -21,11 +21,17 @@ const clockPackage = "internal/clock"
 
 // realTimePackages are the directories exempt from the injected-clock rule.
 //
-// internal/membership is the only exemption and it is a real one, not a
-// convenience. It wraps memberlist, whose probes, timeouts and suspicion timers
-// run on the wall clock inside a third-party library. No injected clock reaches
-// them, so the adapter has to speak the same units — bounding a graceful Leave,
-// for instance, means handing memberlist a real duration.
+// Both exemptions are real, not conveniences. Each wraps a third-party library
+// whose timers run on the wall clock and which no injected clock reaches, so
+// the adapter has to speak the same units.
+//
+// internal/membership wraps memberlist, whose probes, timeouts and suspicion
+// timers are its own — bounding a graceful Leave means handing memberlist a
+// real duration.
+//
+// internal/transport wraps gRPC, whose keepalive pings, dial backoff and
+// deadline propagation are likewise internal. A fake clock cannot make gRPC
+// believe a connection has been idle.
 //
 // The exemption is narrow on purpose. Everything that *depends* on membership —
 // ownership, the activation guard — takes an injected clock and is tested
@@ -33,6 +39,7 @@ const clockPackage = "internal/clock"
 var realTimePackages = []string{
 	"internal/clock",
 	"internal/membership",
+	"internal/transport",
 }
 
 // realTimeFiles are individual files exempt from the same rule, for the same
