@@ -54,6 +54,18 @@ type Gossip struct {
 	// later would race.
 	localAddr string
 
+	// stopConsume is closed by Close to release the event goroutine, and
+	// consumeDone is closed by that goroutine on its way out.
+	//
+	// Both are needed. memberlist never closes the channel it delivers
+	// events on, not even on Shutdown, so a goroutine ranging over it waits
+	// forever — one leaked goroutine per node, which is what happened here
+	// until an end-to-end test dumped the stacks. Waiting on consumeDone
+	// rather than merely signalling makes the exit path proven rather than
+	// assumed: when Close returns, the goroutine is gone.
+	stopConsume chan struct{}
+	consumeDone chan struct{}
+
 	mu       sync.Mutex
 	watchers []chan core.MembershipChange
 	closed   bool
@@ -90,9 +102,11 @@ func New(opts Options) (*Gossip, error) {
 	}
 
 	g := &Gossip{
-		self:    opts.Self.Clone(),
-		logger:  opts.Logger,
-		members: make(map[string]core.Node),
+		self:        opts.Self.Clone(),
+		logger:      opts.Logger,
+		members:     make(map[string]core.Node),
+		stopConsume: make(chan struct{}),
+		consumeDone: make(chan struct{}),
 	}
 	g.meta.Store(&nodeMeta{})
 
@@ -154,7 +168,19 @@ func New(opts Options) (*Gossip, error) {
 // function did exactly that and reached epoch 222 in a two-node test that ran
 // for a fraction of a second.
 func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
-	for event := range events {
+	defer close(g.consumeDone)
+	for {
+		var event memberlist.NodeEvent
+		select {
+		case <-g.stopConsume:
+			return
+		case ev, open := <-events:
+			if !open {
+				return
+			}
+			event = ev
+		}
+
 		var (
 			kind       core.ChangeKind
 			transition bool
@@ -309,6 +335,13 @@ func (g *Gossip) Close() error {
 	g.mu.Unlock()
 
 	err := g.list.Shutdown()
+
+	// Stop the event goroutine and wait for it, before closing the watcher
+	// channels it publishes to. Shutdown does not release it: memberlist
+	// leaves its event channel open.
+	close(g.stopConsume)
+	<-g.consumeDone
+
 	for _, ch := range watchers {
 		close(ch)
 	}

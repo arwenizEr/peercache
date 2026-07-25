@@ -379,6 +379,13 @@ mutate "gossip metadata updates advance the epoch" \
   'kind, transition = core.ChangeUpdate, true' \
   'TestEpochDoesNotRunAway' ./internal/membership/
 
+mutate "the gossip event goroutine is never released" \
+  internal/membership/gossip.go \
+  'close(g.stopConsume)
+	<-g.consumeDone' \
+  '_ = g.consumeDone' \
+  'TestCloseLeavesNoGoroutines' ./internal/membership/
+
 # The two below are wiring mutations rather than logic mutations. Every M3
 # invariant above holds inside internal/ownership whether or not the library
 # ever calls it; these check that peercache.New connects the guard to the

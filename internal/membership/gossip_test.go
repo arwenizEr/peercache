@@ -285,3 +285,71 @@ func TestGossipCloseIsIdempotent(t *testing.T) {
 		t.Fatal("Watch after Close returned an open channel")
 	}
 }
+
+// TestCloseLeavesNoGoroutines is the test that should have existed from the
+// start of M3.
+//
+// memberlist never closes the channel it delivers node events on, not even from
+// Shutdown, so the goroutine that ranged over it waited forever: one leaked
+// goroutine per node, for the life of the process. Nothing caught it, because
+// every membership test constructs a node, asserts something and exits, and a
+// goroutine that leaks after the assertion is invisible to the assertion.
+//
+// What found it was a two-node end-to-end test in the root package, running in
+// the same binary as the M1 p99 acceptance test. Under -count=2 the leaked
+// goroutines from the first iteration pushed the second iteration's p99 from
+// 0.5µs to 1.5µs and broke a budget that had nothing to do with membership.
+func TestCloseLeavesNoGoroutines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: binds loopback sockets")
+	}
+
+	// Settle first: earlier tests in this package may still be tearing down,
+	// and a baseline taken mid-teardown would make this test pass for the
+	// wrong reason.
+	settle(t)
+	before := runtime.NumGoroutine()
+
+	const nodes = 4
+	gossips := make([]*membership.Gossip, 0, nodes)
+	for i := 0; i < nodes; i++ {
+		id := fmt.Sprintf("leak-%d", i)
+		g, err := membership.New(membership.Options{
+			Self:   core.Node{ID: id},
+			Config: localConfig(id),
+		})
+		if err != nil {
+			t.Fatalf("membership.New(%s): %v", id, err)
+		}
+		gossips = append(gossips, g)
+	}
+	for _, g := range gossips {
+		if err := g.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+
+	// Close waits for its own goroutine, so the count must come back on its
+	// own. It is still polled rather than read immediately, because
+	// memberlist's internal goroutines are not ours and unwind on their own
+	// schedule; what is asserted is that the count returns, not that it
+	// returns instantly.
+	awaitReal(t, "the goroutine count to return to baseline", 30*time.Second, func() bool {
+		return runtime.NumGoroutine() <= before
+	})
+}
+
+// settle yields until the goroutine count stops changing, so that a baseline is
+// taken at rest rather than mid-teardown.
+func settle(t *testing.T) {
+	t.Helper()
+	stable, last := 0, -1
+	for stable < 1000 {
+		if n := runtime.NumGoroutine(); n == last {
+			stable++
+		} else {
+			stable, last = 0, n
+		}
+		runtime.Gosched()
+	}
+}
