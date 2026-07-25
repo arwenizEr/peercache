@@ -52,6 +52,7 @@ FUZZTIME ?= 30s
 fuzz:
 	$(GO) test ./internal/codec -run '^$$' -fuzz FuzzUnframe -fuzztime $(FUZZTIME)
 	$(GO) test ./internal/codec -run '^$$' -fuzz FuzzFrameRoundTrip -fuzztime $(FUZZTIME)
+	$(GO) test ./internal/wire -run '^$$' -fuzz FuzzDecode -fuzztime $(FUZZTIME)
 
 ## bench-l1-eval re-runs the L1 cache-library comparison. It lives in a nested
 ## module so that three losing candidates never enter the shipping dependency

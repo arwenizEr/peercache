@@ -122,6 +122,10 @@ jobs:
           go test ./internal/codec -run '^$' -fuzz FuzzUnframe -fuzztime 60s
           go test ./internal/codec -run '^$' -fuzz FuzzFrameRoundTrip -fuzztime 60s
 
+      - name: fuzz the message decoder
+        run: |
+          go test ./internal/wire -run '^$' -fuzz FuzzDecode -fuzztime 60s
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest
