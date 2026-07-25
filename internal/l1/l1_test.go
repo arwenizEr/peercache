@@ -261,6 +261,59 @@ func TestConcurrentPutsNeverLeaveAnOlderVersion(t *testing.T) {
 	}
 }
 
+// TestExpiryDeleteDoesNotDropAFreshPut drives a reader observing an expired
+// entry against a writer replacing it.
+//
+// Get notices the deadline has passed and removes the entry. Between noticing
+// and removing, a Put may have installed a fresh value — and deleting that
+// turns a hit into an avoidable network round trip to the owner. The delete is
+// therefore done under the key's stripe and re-checks the deadline; this is the
+// test that the re-check is load-bearing rather than decorative.
+func TestExpiryDeleteDoesNotDropAFreshPut(t *testing.T) {
+	const rounds = 300
+
+	c, fc := newCache(t)
+	value := []byte("fresh")
+
+	for round := 0; round < rounds; round++ {
+		k := fmt.Sprintf("k:%d", round)
+
+		// An entry that is already expired, so every Get takes the
+		// expiry-delete path.
+		c.Put(k, []byte("stale"), 1, time.Second)
+		fc.Advance(2 * time.Second)
+
+		var wg sync.WaitGroup
+		var start sync.WaitGroup
+		start.Add(1)
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			start.Wait()
+			c.Get(k) // observes the expiry, deletes under the stripe
+		}()
+		go func() {
+			defer wg.Done()
+			start.Wait()
+			c.Put(k, value, 2, time.Hour) // installs a fresh, live entry
+		}()
+		start.Done()
+		wg.Wait()
+
+		// Whatever the interleaving, the fresh entry must survive: the
+		// Put either landed before the delete, in which case the
+		// re-check sees a live entry and leaves it, or after it.
+		got, version, ok := c.Get(k)
+		if !ok {
+			t.Fatalf("round %d: the fresh entry was deleted by an expiry sweep", round)
+		}
+		if version != 2 || string(got) != "fresh" {
+			t.Fatalf("round %d: got %q v%d, want \"fresh\" v2", round, got, version)
+		}
+	}
+}
+
 func TestInvalidate(t *testing.T) {
 	c, _ := newCache(t)
 	c.Put("k", []byte("v"), 1, time.Second)
