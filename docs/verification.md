@@ -75,6 +75,49 @@ nobody will trust at three in the morning.
 
 ---
 
+## M3 — what running the audit twice exposed
+
+Two consecutive runs of the same script against the same tree disagreed:
+`caught: 32  vacuous: 3`, then `caught: 33  vacuous: 2`. A mutation audit that
+is not deterministic is not evidence, so the disagreement was the finding.
+
+**Two tests were flaky, in the same way.** Both asserted state immediately after
+`fc.Advance(...)`. Advancing a fake clock only *delivers* a tick; the turn
+goroutine acts on it afterwards, so reading `Stats()` on the next line samples
+whichever moment the scheduler happened to pick. Under the unmutated code they
+passed every time, because the state they sampled was correct either way. Under
+the mutation they passed roughly a third of the time.
+
+`TestReschedulingATimerReplacesIt` was fixed by round-tripping a call through
+the mailbox, which proves the goroutine has been round its loop.
+
+`TestDeactivationPreservesPendingTimers` needed more than that, and the reason
+is worth recording. A round trip does not order *after* the idle tick: the turn
+loop selects between a ready mailbox and a ready idle timer, and Go leaves that
+choice unspecified. So the fix was to stop trying to observe an absence. The
+runtime now counts idle deactivations it declines because a timer was pending —
+`Stats().TimerHeldOpen` — and the test waits for that counter, or for
+`Active == 0`, whichever comes first. Both outcomes are positive signals, so the
+test resolves deterministically and reports rather than timing out.
+
+The general shape: **"X did not happen" is not observable by sampling.** A group
+that has not deactivated looks exactly like a group that is about to. Count the
+decision instead of looking for its absence.
+
+**One mutation was wrong, and the code comment was wronger.** "Membership order
+leaks into ownership" mutated away the sort in `Table.Update` and expected
+`TestOwnerIsDeterministicAcrossMemberOrder` to fail. It did not, correctly:
+`owner()` takes a maximum, which is order-independent, so nodes agree whatever
+order members arrive in. The sort buys a deterministic tie-break and a stable
+`Replicas` ranking, nothing more — but the doc comment on `Update` claimed the
+sort was what made two nodes agree.
+
+The mutation was aimed at production code, found a false statement in a comment,
+and was replaced by one that targets what the sort actually does. Comments are
+not tested by anything else.
+
+---
+
 ## Automated audit
 
 `scripts/mutation-audit.sh` applies each mutation below, runs only the test that
@@ -83,7 +126,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all twenty-seven invariants:
+Latest run, all thirty-seven invariants:
 
 ```
 === store ===
@@ -127,16 +170,44 @@ caught   pending timers no longer block idle exit   -- TestDeactivationPreserves
 caught   the active-group cap is ignored            -- TestActiveCapEvictsLeastRecentlyActivated
 caught   rescheduling a name accumulates timers     -- TestReschedulingATimerReplacesIt
 
-caught: 27   vacuous: 0   skipped: 0
+=== ownership ===
+caught   ownership ignores the key                  -- TestOwnershipIsUniform
+caught   node identity no longer decorrelates       -- TestOwnershipIsUniform
+caught   an empty membership owns everything        -- TestEmptyMembershipOwnsNothing
+caught   the epoch stops advancing                  -- TestUpdateAdvancesTheEpoch
+caught   zero nodes enter the view                  -- TestUpdateIgnoresZeroNodes
+caught   the replica ranking is unsorted            -- TestReplicasAreARankedPrefix
+caught   an unknown membership claims everything    -- TestGuardWithNoMembershipOwnsNothing
+caught   the guard activates groups it does not own -- TestGuardRefusesGroupsItDoesNotOwn
+caught   newly acquired groups activate immediately -- TestGuardDefersOnlyNewlyAcquiredGroups
+caught   compares the previous view, not the settled -- TestPartitionedMinorityStopsActivating
+
+=== membership and wiring ===
+caught   gossip metadata updates advance the epoch  -- TestEpochDoesNotRunAway
+caught   the guard is built but never consulted     -- TestTwoNodesAgreeOnOwnership
+caught   the guard never learns the membership      -- TestJoiningNodeDefersNewlyAcquiredGroups
+
+caught: 37   vacuous: 0   skipped: 0
 tree clean
 ```
 
-The eighteen are chosen to be the invariants whose quiet failure would be worst:
+They are chosen to be the invariants whose quiet failure would be worst:
 the aliasing contract, every rule that bounds staleness, both halves of the
 version discipline, the panic containment that keeps application bugs local, and
 the deadline rules. Not everything is audited — the p99 criterion is mutated by
 hand because a single run costs a minute, and the reference-model and fuzz tests
 audit themselves by construction.
+
+The last two are a different kind of mutation, added in M3, and worth calling
+out. Every other entry breaks logic inside a package and is caught by that
+package's own tests. Those two break *wiring* — they leave `internal/ownership`
+untouched and correct, and only stop `peercache.New` from connecting it to the
+membership authority or to activation. Nothing in `internal/ownership` notices,
+because from its point of view nothing is wrong.
+
+They are the reason `cluster_test.go` exists. Before it, thirteen ownership
+invariants were verified inside a package the library could have stopped calling
+without a single test failing.
 
 It is deliberately **not** run by CI. It rewrites source files, and a mutation
 left behind by a crashed run would cost far more than the coverage it buys. Run

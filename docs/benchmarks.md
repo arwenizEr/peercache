@@ -260,6 +260,111 @@ CI runs each for 60s as a regression gate. Any crasher found is committed to
 
 ---
 
+## M3 — membership and ownership
+
+Measured on Machine A. Medians of five.
+
+### Acceptance: distribution and movement
+
+SPEC.md §4 (M3) requires that keys distribute evenly and that removing a node
+moves only that node's share. Both are asserted in
+`internal/ownership/table_test.go` rather than merely measured.
+
+| Property | Setup | Result | Budget |
+|---|---|---:|---|
+| Uniformity | 100,000 keys, 7 nodes | max deviation **1.44%** | 5% |
+| Movement on removal | 7 → 6 nodes, 100,000 keys | **14.27%** moved | 14.29% ideal |
+| Keys traded between survivors | same | **0** | 0 |
+| Movement on addition | 7 → 8 nodes | only keys taken *from* others | no reshuffle |
+
+The zero is the number that matters. A modulo hash would move roughly 6/7 of the
+keyspace for the same change; rendezvous hashing moves the departed node's share
+and nothing else, which is what makes a rolling deploy survivable.
+
+The three-node example reproduces it end to end: 1020 of 3000 keys changed owner
+when `pod-2` left, which is exactly the set `pod-2` held, and 0 keys moved
+between `pod-0` and `pod-1`.
+
+### Acceptance: a partitioned minority stops activating
+
+`TestPartitionedMinorityStopsActivating` splits a five-node cluster 3/2 and
+probes 500 keys from the minority side. Inside the activation window the
+minority deferred **160 of 500**; after the window closed it resumed and served
+**256 of 500**. Both numbers are the point: it stops, and it starts again.
+
+### Ownership lookup
+
+`Owner` runs on every activation and, from M4, on every routed call. It is
+allocation-free at every size.
+
+```
+BenchmarkOwner/nodes=3          16.1 ns/op      0 B/op   0 allocs/op
+BenchmarkOwner/nodes=7          48.9 ns/op      0 B/op   0 allocs/op
+BenchmarkOwner/nodes=16         85.2 ns/op      0 B/op   0 allocs/op
+BenchmarkOwner/nodes=64        246.2 ns/op      0 B/op   0 allocs/op
+BenchmarkOwner/nodes=256       767.2 ns/op      0 B/op   0 allocs/op
+BenchmarkOwnerParallel          12.5 ns/op      0 B/op   0 allocs/op
+BenchmarkOwnerDuringUpdate      75.6 ns/op      0 B/op   0 allocs/op
+```
+
+Three things to read off this.
+
+**It is linear in members, at about 3 ns each.** That is inherent: the owner is
+the maximum score over the whole view, so every member is scored. At the cluster
+sizes SPEC.md targets this is tens of nanoseconds and irrelevant; at 256 nodes it
+is 768 ns and would start to matter. Recorded as open question 23 rather than
+optimised speculatively.
+
+**The parallel number is lower than the serial one**, 12.5 ns against 48.9 ns at
+7 nodes, because `RunParallel` spreads the work across 20 logical cores. What
+matters is that it does not *degrade* under contention: the read is an atomic
+pointer load against an immutable snapshot, so there is no shared cache line
+being written and nothing to serialise on. A `RWMutex` here would show the
+opposite shape.
+
+**Lookups during continuous membership churn cost 75.6 ns**, against 48.9 ns
+quiescent — a 55% penalty from cache pressure as the writer publishes new
+snapshots, not from blocking. Readers never wait for the writer. The `51-58 B/op`
+the benchmark reports is the writer goroutine's allocation being attributed to
+the reader's iterations; the reader itself allocates nothing, which is why the
+allocation *count* stays at zero.
+
+### Membership change and replica ranking
+
+Paid once per gossip event and once per M5 replica resolution respectively, not
+per request.
+
+```
+BenchmarkUpdate/nodes=7        754 ns/op       504 B/op    5 allocs/op
+BenchmarkUpdate/nodes=256    21,247 ns/op    13,720 B/op    5 allocs/op
+BenchmarkReplicas/nodes=7      840 ns/op       600 B/op    5 allocs/op
+BenchmarkReplicas/nodes=64   9,333 ns/op     3,448 B/op    5 allocs/op
+```
+
+`Replicas` sorts the entire view per call — 9.3 µs at 64 nodes, seventeen times
+what `Owner` costs at the same size. That is the price of a full ranking rather
+than a maximum, and it is the reason M3's hot path takes the head directly
+instead of calling `Replicas(key, 1)`. M5 will need a partial selection rather
+than a full sort if replica resolution ends up on a request path.
+
+`Update` allocates a fresh snapshot every time by design; it is what lets readers
+run without a lock. Twenty microseconds per membership change at 256 nodes is
+not a number worth optimising.
+
+### Activation guard
+
+```
+BenchmarkCanActivate           460 ns/op       136 B/op    3 allocs/op
+```
+
+Six keys in seven are not this node's in a 7-node cluster, so this benchmark is
+dominated by the `ErrNotOwner` path, and the allocation is the formatted error
+message. The guard is consulted once per activation rather than once per
+operation, so this is not on a hot path. Open question 24 records what would
+change that.
+
+---
+
 ## Method notes
 
 - `-count 5` is the minimum for a median worth quoting. Single-run numbers are

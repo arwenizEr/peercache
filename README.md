@@ -76,7 +76,7 @@ the next begins.
 | M0 | Test harness and skeleton | **complete** |
 | M1 | Single-node core | **complete** |
 | M2 | Group actor runtime | **complete** |
-| M3 | Membership and ownership | not started |
+| M3 | Membership and ownership | **complete** |
 | M4 | Transport and remote routing | not started |
 | M5 | Replication and failure handling | not started |
 | M6 | Rebalancing and Kubernetes lifecycle | not started |

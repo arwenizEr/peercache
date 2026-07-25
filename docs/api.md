@@ -21,15 +21,20 @@ and output-checked by `go test`:
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
 
-End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle) and
-`go run ./examples/m1` (the local data path). Both assert what they demonstrate
-and are run by CI.
+End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle),
+`./examples/m1` (the local data path), `./examples/m2` (the group actor runtime)
+and `./examples/m3` (a real three-node cluster over loopback gossip). Each one
+asserts what it demonstrates and all are run by CI.
 
-**Milestone status:** M0, M1 and M2 complete. Namespaces are fully functional on
-a single node, and groups run as virtual actors with a single goroutine each,
+**Milestone status:** M0 through M3 complete. Namespaces are fully functional on
+a single node; groups run as virtual actors with a single goroutine each,
 bounded mailboxes, idle deactivation, an active cap, per-group timers and
-lifecycle events. Nothing is distributed until M3, so every operation currently
-executes locally.
+lifecycle events; and nodes form a gossip cluster in which every node computes
+the same owner for a key without coordinating.
+
+What is *not* yet true: there is no transport between nodes. A call for a group
+this node does not own returns `ErrNotOwner` rather than being forwarded. M4
+adds the network hop and the router that makes ownership invisible to callers.
 
 ---
 
@@ -393,6 +398,53 @@ by this project, not by the spec; see `docs/decisions/open.md`.
 `Watch` returns one channel per call, buffered, with non-blocking sends. A
 watcher that stops reading loses changes rather than stalling membership.
 
+### Ownership
+
+Supply a `MembershipAuthority` with `WithMembership` and the cache derives
+ownership from it: rendezvous hashing over the current view, stamped with the
+view's epoch. Without one, the node is a cluster of one and owns everything,
+which is the correct answer rather than a special case.
+
+`github.com/peercache/peercache/internal/membership` provides a gossip-backed
+implementation over hashicorp/memberlist.
+
+```go
+gossip, err := membership.New(membership.Options{
+    Self:     Node{ID: "pod-0"},
+    BindAddr: "0.0.0.0:7946",
+})
+cache, err := peercache.New(
+    peercache.WithMembership(gossip),
+    peercache.WithActivationDelay(3 * time.Second),
+)
+```
+
+Ownership is recomputed on every membership change, and every node reaches the
+same conclusion from the same view without coordinating. Removing a node moves
+only that node's keys; the survivors do not trade keys with each other.
+
+### `WithActivationDelay`
+
+After a membership change, a node defers activating groups it has *just*
+acquired, for this long, and returns `ErrActivationPending` for them meanwhile.
+Groups it already held are unaffected — the deferral is confined to the part of
+the keyspace that actually moved.
+
+The default is 3 seconds. It is a guess about how long the previous owner takes
+to notice it lost the group, and it narrows the double-activation window without
+closing it: membership is gossip based and eventually consistent, so there is no
+delay that makes two owners impossible. A negative value disables deferral
+entirely, which is only sane on a single node.
+
+Note the limit precisely: the guard runs on *activation*. A group that is
+already active on a node that has just lost it keeps running there until it goes
+idle. Graceful handoff is M6. See `docs/decisions/0012-the-activation-guard.md`.
+
+`Stats().DeferredActivations` and `Stats().RefusedActivations` count these
+decisions. A spike in deferrals after a change that returns to zero is healthy;
+sustained refusals under stable membership mean callers disagree with this node
+about who owns what.
+
 ---
 
 ## Errors
@@ -407,6 +459,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrGroupOverloaded` | Mailbox full; rejected rather than queued. | yes, after backoff |
 | `ErrStaleEpoch` | Attempted under an older membership epoch. | yes, after re-resolving |
 | `ErrNotOwner` | This node does not own the key's group. | yes, after re-resolving |
+| `ErrActivationPending` | This node owns the group but acquired it within `WithActivationDelay`. | yes, here, shortly |
 | `ErrStateEscaped` | A `GroupState` was used outside its turn. | no — it is a bug |
 | `ErrNoLoader` | `GetOrLoad` without `WithLoader`. | no |
 | `ErrLoaderPanic` | A registered loader panicked. | no — it is a bug |
@@ -419,6 +472,14 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 
 `ErrGroupOverloaded` is backpressure working as designed. Blocking indefinitely
 would convert one slow group into a cluster-wide stall.
+
+`ErrNotOwner` and `ErrActivationPending` are both about ownership and they are
+retryable in opposite directions. `ErrNotOwner` means *go somewhere else* —
+re-resolve and ask the owner. `ErrActivationPending` means *ask again here* —
+this node is the owner and is deliberately waiting for the previous one to
+notice. Treating them as one error would send a caller away from the node that
+is about to be able to serve it. Until M4's router exists, both are surfaced to
+the caller directly.
 
 An expired context is reported ahead of anything else: an expired deadline is
 the caller's answer, whatever the callee would otherwise have said.

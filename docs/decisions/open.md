@@ -116,7 +116,7 @@ timings and the harness should probably default to matching them.
 
 ---
 
-## 8. `activationDelay` interacts with join delay — M3, not yet decided
+## 8. `activationDelay` interacts with join delay — M3, resolved
 
 SPEC.md section 4 (M3) requires a node to wait `activationDelay` after a
 membership change before activating groups it newly owns. The harness's
@@ -125,6 +125,19 @@ and the two will need to be reasoned about together.
 
 Recording it now because getting them confused is the sort of mistake that
 produces a test proving the wrong property.
+
+**Resolved in M3.** They are independent and never composed. `JoinDelay` belongs
+to `internal/testkit` and controls when a simulated node is admitted to a
+simulated view; `ActivationDelay` belongs to `ownership.Guard` and is measured
+from the moment the local view changed, whatever caused it. The guard never
+reads the harness, and the harness never activates anything.
+
+The confusion this note anticipated did nearly happen, in a different form: the
+first end-to-end cluster test set `ActivationDelay` to 100ms and observed no
+deferral at all, because waiting for both nodes to *report* convergence took
+longer than the window. The window has to outlast detection to be observable at
+all, which is the real relationship between the two delays and the reason
+`DefaultActivationDelay` is seconds rather than milliseconds.
 
 ---
 
@@ -330,7 +343,85 @@ held; this one was not, and did not.
 
 ---
 
-## 21. Deliberately deferred, per SPEC.md section 5
+## 21. A node that loses a group keeps serving it — M3, an M6 constraint
+
+The guard runs on activation, not on every turn. Once a group is active, the
+runtime does not re-check ownership, so a node that loses a group to a
+membership change carries on serving the copy it already has until the group
+goes idle and deactivates.
+
+**Picked:** leave it. The alternative available in M3 — checking ownership per
+turn — would put a table lookup on the hot path to fix half a problem, because
+stopping the losing node does not by itself get the state to the winning node.
+
+**What resolves it:** M6's graceful handoff, which stops the group on the old
+owner *and* moves its state. Until then the honest description is that ownership
+changes are eventually consistent for already-active groups, and the activation
+guard narrows the window in which a *new* activation is the second one, not the
+window in which an *old* one is still running.
+
+This is the largest gap between what M3 does and what a reader might assume it
+does, which is why it is stated in `internal/ownership/doc.go` as well.
+
+---
+
+## 22. `DeferredActivations` counts events, not deferred groups — M3, wrong shape
+
+`Stats().DeferredActivations` and `RefusedActivations` are monotonic counters
+incremented once per refused call. A caller that retries in a tight loop
+inflates them without bound: the M3 example, polling during a one-second window,
+drove the deferral count past 1.7 million across three nodes. The number
+describes the client's retry policy, not the cluster's health.
+
+**Picked:** keep the counters, and do not publish them in the example. They are
+still useful as a "did this ever happen" signal and as a rate once M7 exports
+them properly.
+
+**What would resolve it:** a gauge — the number of groups currently deferred —
+alongside the counter, which is what an operator actually wants to alert on. It
+needs the guard to track deferred keys rather than just count decisions, which
+is a small map and a real cost on the activation path. Deferred to M7, where the
+metrics surface is designed rather than accumulated.
+
+---
+
+## 23. Ownership lookup is linear in cluster size — M3, bounded and measured
+
+Rendezvous hashing scores every member on every lookup, by construction: the
+owner is the maximum. `BenchmarkOwner` on Machine A measures 16ns at 3 nodes,
+49ns at 7, 85ns at 16, 246ns at 64 and 768ns at 256 — about 3ns per member,
+allocation-free.
+
+**Picked:** accept it. SPEC.md targets clusters in the tens of nodes, where the
+cost is tens of nanoseconds and is dwarfed by the network hop M4 adds behind it.
+
+**What would force a change:** a cluster in the hundreds, where 768ns per
+resolution starts to matter against a sub-microsecond local read. The fix is
+known — highest-random-weight with a skip list, or consistent hashing with
+virtual nodes — and both trade the "a departure moves only the departed node's
+keys" property or the memory for it. Not worth paying before the size demands
+it.
+
+---
+
+## 24. `CanActivate` allocates on the refusal path — M3, accepted
+
+`BenchmarkCanActivate` reports 136 B/op and 3 allocs/op over a 7-node cluster,
+where six keys in seven are not this node's. The allocation is the formatted
+`ErrNotOwner`, which names the group and the node that does own it.
+
+**Picked:** keep the message. The guard is consulted once per *activation*, not
+once per operation, so this is not a hot path; and an ownership error that does
+not say who owns it instead is an error that costs an engineer more than the
+allocation costs the process.
+
+**What would force a change:** M4 routing a request per call through the same
+check. If that happens, the fix is to return a sentinel and attach the detail at
+the boundary that logs it, not to make the message worse.
+
+---
+
+## 25. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
