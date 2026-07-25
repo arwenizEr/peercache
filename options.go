@@ -102,9 +102,54 @@ func WithL1TTL(d time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.L1TTL = d }
 }
 
+// WithCompression compresses stored values of at least threshold bytes using
+// the named compressor. "lz4" is registered by default.
+//
+// Compression is off unless this is set. A decompress on every read would put a
+// compression codec on the hot path of a cache whose entire premise is
+// sub-microsecond local reads, and most cached values are far too small to
+// benefit. The threshold exists because compressing a forty-byte counter costs
+// more than it saves.
+//
+// SPEC.md section 3.1 does not define this option; section 4 (M1) requires
+// compression above a configurable threshold, and this is that knob. See
+// docs/decisions/0008-compression-is-opt-in.md.
+func WithCompression(name string, threshold int) NamespaceOption {
+	return func(o *core.NamespaceOptions) {
+		o.Compressor = name
+		o.CompressionThreshold = threshold
+	}
+}
+
+// WithLoaderTimeout bounds one invocation of the namespace's loader. The
+// default is 30 seconds.
+//
+// This cannot be the calling context's deadline. Concurrent misses collapse
+// into a single load, so taking whichever caller arrived first as the bound
+// would let a caller with five milliseconds left abort a load that a thousand
+// callers with a second left were depending on.
+func WithLoaderTimeout(d time.Duration) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.LoaderTimeout = d }
+}
+
+// WithShards sets the number of independently locked partitions in this
+// namespace's store, rounded up to a power of two. Zero takes the default of
+// 256.
+//
+// The default is well above any realistic core count, so contention comes from
+// key collisions rather than from the shard map. Lower it only for a namespace
+// known to hold very few keys, where 256 mostly-empty maps are pure overhead.
+func WithShards(n int) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.Shards = n }
+}
+
 // Loader reconstructs a namespace value that is not resident
-// (SPEC.md section 3.1). Returning a zero ttl means the namespace default
-// applies.
+// (SPEC.md section 3.1).
+//
+// The returned ttl is applied exactly as [Namespace.Set] would apply it: a
+// non-positive value means the loaded value does not expire on its own. A
+// loader that returns zero is asking for a value reconstructed once and never
+// refreshed, which is occasionally what is wanted and more often an oversight.
 type Loader = core.Loader
 
 // Partitioner maps a cache key to the group key that decides its owner

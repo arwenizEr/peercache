@@ -6,7 +6,7 @@ BENCHTIME ?= 1s
 BENCHCOUNT ?= 5
 TIMEOUT ?= 300s
 
-.PHONY: all ci test test-race vet lint bench bench-save cover tidy tools fmt clean
+.PHONY: all ci test test-race vet lint bench bench-l1-eval bench-save cover tidy tools fmt clean
 
 all: fmt vet lint test-race
 
@@ -33,6 +33,13 @@ lint:
 ## with the machine they were measured on; a number without a machine is noise.
 bench:
 	$(GO) test $(PKGS) -run '^$$' -bench . -benchmem -benchtime $(BENCHTIME) -count $(BENCHCOUNT)
+
+## bench-l1-eval re-runs the L1 cache-library comparison. It lives in a nested
+## module so that three losing candidates never enter the shipping dependency
+## graph, which also means `go test ./...` never sees it.
+bench-l1-eval:
+	cd internal/l1/eval && $(GO) test -run TestReport -v
+	cd internal/l1/eval && $(GO) test -run '^$$' -bench . -benchmem -count $(BENCHCOUNT)
 
 ## bench-save writes the raw output for comparison with benchstat.
 bench-save:

@@ -210,7 +210,20 @@ func (f *Fake) Advance(d time.Duration) {
 		if t.period > 0 {
 			// Re-arm before firing so that a callback which stops the
 			// ticker actually removes the next tick.
-			t.deadline = t.deadline.Add(t.period)
+			//
+			// Missed ticks are collapsed rather than replayed: the
+			// next deadline is the first one strictly after the end
+			// of this advance. A real ticker drops ticks its receiver
+			// did not drain, and the receiver cannot drain during a
+			// synchronous advance, so replaying them would deliver at
+			// most one value anyway — while doing O(elapsed/period)
+			// work to get there. Advancing an hour past a one-second
+			// ticker is 3,600 wasted iterations; advancing a century
+			// is three billion, which is the difference between a
+			// test and a hang.
+			elapsed := target.Sub(t.deadline)
+			periods := elapsed/t.period + 1
+			t.deadline = t.deadline.Add(periods * t.period)
 			t.seq = f.nextSeqLocked()
 			heap.Push(&f.pending, t)
 		} else {

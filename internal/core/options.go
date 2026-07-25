@@ -76,6 +76,32 @@ type NamespaceOptions struct {
 	// correctness bound, not a tuning knob: CLAUDE.md decision 6 makes it
 	// the only thing standing between a stale read and an unbounded one.
 	L1TTL time.Duration
+
+	// Compressor names the compressor applied to stored values at or above
+	// CompressionThreshold bytes. Empty means values are stored verbatim,
+	// which is the default: a decompress on every read would put a
+	// compression codec on the hot path of a cache whose premise is
+	// sub-microsecond local reads.
+	//
+	// SPEC.md section 3.1 does not define a compression option; section 4
+	// (M1) requires compression above a configurable threshold. This is
+	// that knob. See docs/decisions/0008-compression-is-opt-in.md.
+	Compressor string
+	// CompressionThreshold is the size at or above which compression is
+	// attempted. Ignored when Compressor is empty.
+	CompressionThreshold int
+
+	// LoaderTimeout bounds one invocation of the loader.
+	//
+	// It cannot be the calling context's deadline: concurrent misses
+	// collapse into one load, and taking whichever caller arrived first as
+	// the bound would let a caller with five milliseconds left abort a load
+	// that a thousand callers with a second left were depending on.
+	LoaderTimeout time.Duration
+
+	// Shards is the number of independently locked partitions in this
+	// namespace's store. Zero takes the store's default.
+	Shards int
 }
 
 // NamespaceOption mutates [NamespaceOptions].
@@ -89,6 +115,10 @@ const (
 	DefaultL1TTL = 5 * time.Second
 	// MaxReplicationFactor is the ceiling from SPEC.md section 3.1.
 	MaxReplicationFactor = 3
+	// DefaultLoaderTimeout bounds one loader invocation. Generous, because
+	// a loader usually talks to a database; finite, because a load that
+	// never returns holds a goroutine and every caller waiting on that key.
+	DefaultLoaderTimeout = 30 * time.Second
 )
 
 // DefaultNamespaceOptions returns the configuration used when no namespace
@@ -98,6 +128,7 @@ func DefaultNamespaceOptions() NamespaceOptions {
 		Partitioner:       PartitionByKey(),
 		ReplicationFactor: DefaultReplicationFactor,
 		L1TTL:             DefaultL1TTL,
+		LoaderTimeout:     DefaultLoaderTimeout,
 	}
 }
 
@@ -112,6 +143,17 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.L1TTL <= 0 {
 		return fmt.Errorf("peercache: L1 TTL must be positive, got %v: %w", o.L1TTL, ErrInvalidOption)
+	}
+	if o.LoaderTimeout <= 0 {
+		return fmt.Errorf("peercache: loader timeout must be positive, got %v: %w",
+			o.LoaderTimeout, ErrInvalidOption)
+	}
+	if o.CompressionThreshold < 0 {
+		return fmt.Errorf("peercache: compression threshold %d must not be negative: %w",
+			o.CompressionThreshold, ErrInvalidOption)
+	}
+	if o.Shards < 0 {
+		return fmt.Errorf("peercache: shard count %d must not be negative: %w", o.Shards, ErrInvalidOption)
 	}
 	return nil
 }

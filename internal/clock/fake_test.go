@@ -233,6 +233,42 @@ func TestFakeTickerRepeatsAndDrops(t *testing.T) {
 	}
 }
 
+// TestFakeTickerCollapsesMissedTicks is what makes a long advance affordable in
+// the presence of a background ticker. Replaying every missed tick would make
+// advancing a century past a one-second ticker three billion iterations of work
+// to deliver a single value into a one-slot buffer.
+func TestFakeTickerCollapsesMissedTicks(t *testing.T) {
+	fc := newFake(t)
+	tk := fc.NewTicker(time.Second)
+	defer tk.Stop()
+
+	// A century, which under a replaying implementation would exceed the
+	// runaway-callback guard and report misuse.
+	fc.Advance(100 * 365 * 24 * time.Hour)
+
+	select {
+	case at := <-tk.C():
+		if want := clock.Epoch.Add(time.Second); !at.Equal(want) {
+			t.Fatalf("tick delivered %v, want the first deadline %v", at, want)
+		}
+	default:
+		t.Fatal("no tick was delivered across a century")
+	}
+	select {
+	case extra := <-tk.C():
+		t.Fatalf("a second tick %v was queued; missed ticks must be collapsed", extra)
+	default:
+	}
+
+	// The ticker must still be armed and on its original phase.
+	fc.Advance(time.Second)
+	select {
+	case <-tk.C():
+	default:
+		t.Fatal("the ticker stopped after a long advance")
+	}
+}
+
 func TestFakeTickerStopEndsIt(t *testing.T) {
 	fc := newFake(t)
 	tk := fc.NewTicker(time.Second)

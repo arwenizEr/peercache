@@ -51,6 +51,9 @@ type GroupFunc func(ctx context.Context, s GroupState, arg []byte) ([]byte, erro
 // GetOrLoad, so that it exists by name on every pod and the owner can execute
 // it locally. Concurrent misses for one key collapse into a single invocation
 // via singleflight.
+//
+// The returned ttl is applied exactly as Set would apply it: a non-positive
+// value means the loaded value does not expire on its own.
 type Loader func(ctx context.Context, key string) (val []byte, ttl time.Duration, err error)
 
 // Partitioner maps a cache key to the group key that decides its owner

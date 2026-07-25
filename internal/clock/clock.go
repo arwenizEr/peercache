@@ -78,6 +78,11 @@ type Timer interface {
 // As with the real ticker, a tick is dropped rather than queued if the receiver
 // has not drained the previous one. Ticker ownership implies a Stop; an
 // unstopped ticker on a [Fake] is a leak that [Fake.Pending] will report.
+//
+// On a [Fake], a single advance spanning many periods delivers one tick and
+// schedules the next for the first period after the advance. That matches what
+// a real ticker does when its receiver is not draining — which it cannot be,
+// during a synchronous advance — and it keeps a long advance cheap.
 type Ticker interface {
 	// C is the channel on which ticks are delivered.
 	C() <-chan time.Time

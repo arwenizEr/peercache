@@ -1,0 +1,378 @@
+package store
+
+import (
+	"fmt"
+	"math/bits"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/cespare/xxhash/v2"
+
+	"github.com/peercache/peercache/internal/clock"
+	"github.com/peercache/peercache/internal/core"
+)
+
+// Defaults for [Options].
+const (
+	// DefaultShards is the shard count from SPEC.md section 4 (M1). It is
+	// well above any realistic core count, so lock contention comes from
+	// key collisions rather than from the shard map itself.
+	DefaultShards = 256
+	// MaxShards bounds the fan-out. Beyond this the per-shard maps get
+	// small enough that their overhead dominates.
+	MaxShards = 1 << 16
+	// DefaultSweepInterval is how often the background sweeper wakes.
+	DefaultSweepInterval = time.Second
+	// DefaultSweepShardsPerTick bounds the work one sweep does. With the
+	// default shard count and interval the whole keyspace is visited every
+	// 32 seconds, and no single tick ever walks more than 1/32 of it.
+	DefaultSweepShardsPerTick = 8
+)
+
+// Options configures a [Store].
+type Options struct {
+	// Shards is the number of independently locked partitions. It is
+	// rounded up to a power of two so that shard selection is a mask
+	// rather than a division. Defaults to [DefaultShards].
+	Shards int
+	// Clock is the time source used for expiry. Required.
+	Clock clock.Clock
+	// SweepInterval is how often the background sweeper runs. A
+	// non-positive value disables it, which is what tests that drive
+	// [Store.Sweep] directly should use.
+	SweepInterval time.Duration
+	// SweepShardsPerTick is how many shards one sweep visits.
+	SweepShardsPerTick int
+}
+
+// entry is one stored value.
+//
+// expiresAt is Unix nanoseconds rather than a [time.Time] deliberately: it
+// saves sixteen bytes per entry, which is sixteen megabytes at a million keys,
+// and reduces the expiry check to an integer comparison. Zero means the key
+// does not expire on its own.
+type entry struct {
+	val       []byte
+	expiresAt int64
+	version   uint64
+}
+
+// shard is one independently locked partition.
+//
+// Counters live per shard rather than on the Store so that a read on one shard
+// does not invalidate another core's cache line. Each shard is separately
+// allocated, so they do not share one.
+type shard struct {
+	mu      sync.RWMutex
+	entries map[string]entry
+
+	hits    atomic.Int64
+	misses  atomic.Int64
+	sets    atomic.Int64
+	deletes atomic.Int64
+	expired atomic.Int64
+}
+
+// Store is the owned, in-memory, sharded key/value store.
+//
+// It is safe for concurrent use. Every method except [Store.Close] may be
+// called from any goroutine at any time.
+type Store struct {
+	shards []*shard
+	mask   uint64
+	clk    clock.Clock
+
+	sweepPerTick int
+	// cursor is the next shard the sweeper will visit. It is only touched
+	// by Sweep, which may be called concurrently, so it is atomic.
+	cursor atomic.Uint64
+
+	closeOnce sync.Once
+	done      chan struct{}
+	stopped   chan struct{}
+	ticker    clock.Ticker
+}
+
+// New returns a [Store].
+//
+// If the options enable the background sweeper, New starts one goroutine that
+// runs until [Store.Close]. A Store whose Close is never called leaks that
+// goroutine and, on a fake clock, an armed ticker.
+func New(opts Options) (*Store, error) {
+	if opts.Clock == nil {
+		return nil, fmt.Errorf("store: a clock is required: %w", core.ErrInvalidOption)
+	}
+	if opts.Shards == 0 {
+		opts.Shards = DefaultShards
+	}
+	if opts.Shards < 1 {
+		return nil, fmt.Errorf("store: shard count %d must be positive: %w", opts.Shards, core.ErrInvalidOption)
+	}
+	if opts.Shards > MaxShards {
+		return nil, fmt.Errorf("store: shard count %d exceeds the %d limit: %w",
+			opts.Shards, MaxShards, core.ErrInvalidOption)
+	}
+	if opts.SweepShardsPerTick <= 0 {
+		opts.SweepShardsPerTick = DefaultSweepShardsPerTick
+	}
+
+	count := roundUpPow2(opts.Shards)
+	s := &Store{
+		shards:       make([]*shard, count),
+		mask:         uint64(count - 1),
+		clk:          opts.Clock,
+		sweepPerTick: opts.SweepShardsPerTick,
+		done:         make(chan struct{}),
+		stopped:      make(chan struct{}),
+	}
+	for i := range s.shards {
+		s.shards[i] = &shard{entries: make(map[string]entry)}
+	}
+
+	if opts.SweepInterval > 0 {
+		s.ticker = opts.Clock.NewTicker(opts.SweepInterval)
+		go s.sweepLoop()
+	} else {
+		// Nothing to wait for; unblock Close immediately.
+		close(s.stopped)
+	}
+	return s, nil
+}
+
+// roundUpPow2 returns the smallest power of two at least as large as n.
+func roundUpPow2(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	if n&(n-1) == 0 {
+		return n
+	}
+	return 1 << bits.Len(uint(n-1))
+}
+
+// Shards returns the number of shards, after rounding up to a power of two.
+func (s *Store) Shards() int { return len(s.shards) }
+
+// shardFor selects the shard holding key.
+func (s *Store) shardFor(key string) *shard {
+	return s.shards[xxhash.Sum64String(key)&s.mask]
+}
+
+// Get returns the value and version stored under key.
+//
+// The returned slice is the stored one. Modifying it corrupts the store for
+// every subsequent reader; copy it if you need to keep or change it.
+//
+// An expired key reports absent even if the sweeper has not reached it yet.
+// Reads are the authority on expiry; the sweeper only reclaims memory.
+func (s *Store) Get(key string) ([]byte, uint64, bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, ok := sh.entries[key]
+	sh.mu.RUnlock()
+
+	if !ok {
+		sh.misses.Add(1)
+		return nil, 0, false
+	}
+	// The clock is only read for keys that actually have a deadline, so a
+	// namespace that never sets a TTL never pays for one.
+	if e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt {
+		sh.misses.Add(1)
+		return nil, 0, false
+	}
+	sh.hits.Add(1)
+	return e.val, e.version, true
+}
+
+// Exists reports whether key is present and unexpired, without returning the
+// value.
+//
+// It is not a race-free precondition for anything. Between Exists and the
+// operation it was meant to guard, the key may expire or be deleted.
+func (s *Store) Exists(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, ok := sh.entries[key]
+	sh.mu.RUnlock()
+
+	if !ok {
+		return false
+	}
+	return e.expiresAt == 0 || s.clk.Now().UnixNano() < e.expiresAt
+}
+
+// Set stores val under key for ttl and returns the new version.
+//
+// A non-positive ttl means the key does not expire on its own. val is copied,
+// so the caller may reuse the buffer.
+//
+// Versions increase by one per write and are per key, not global: they exist so
+// that a cached copy elsewhere can be recognised as stale, which only ever
+// compares two versions of the same key. A global counter would add contention
+// for a total order nobody reads.
+func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
+	var expiresAt int64
+	if ttl > 0 {
+		expiresAt = s.clk.Now().Add(ttl).UnixNano()
+	}
+
+	// Copy before taking the lock: the allocation is the expensive part and
+	// it does not need to be serialised.
+	stored := make([]byte, len(val))
+	copy(stored, val)
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	version := sh.entries[key].version + 1
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	sh.mu.Unlock()
+
+	sh.sets.Add(1)
+	return version
+}
+
+// Delete removes key and reports whether it was present and unexpired.
+//
+// Deleting an absent key is not an error: the caller's postcondition already
+// holds. The boolean distinguishes the two for callers that care, such as
+// metrics.
+func (s *Store) Delete(key string) bool {
+	sh := s.shardFor(key)
+
+	sh.mu.Lock()
+	e, ok := sh.entries[key]
+	if ok {
+		delete(sh.entries, key)
+	}
+	sh.mu.Unlock()
+
+	sh.deletes.Add(1)
+	if !ok {
+		return false
+	}
+	if e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt {
+		// It was already gone as far as any reader was concerned, so
+		// report it as absent even though bytes were reclaimed.
+		return false
+	}
+	return true
+}
+
+// Len returns the number of stored entries.
+//
+// The count includes entries that have expired but not yet been swept, because
+// counting exactly would mean walking every shard under a read lock and
+// consulting the clock per entry. Use it for capacity reporting, not for
+// assertions about visibility.
+func (s *Store) Len() int {
+	total := 0
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		total += len(sh.entries)
+		sh.mu.RUnlock()
+	}
+	return total
+}
+
+// Counters is a snapshot of a store's activity.
+type Counters struct {
+	// Hits and Misses count reads that found and did not find a live value.
+	// An expired key counts as a miss, which is what a caller experienced.
+	Hits   int64
+	Misses int64
+	// Sets and Deletes count write operations, including deletes of absent
+	// keys.
+	Sets    int64
+	Deletes int64
+	// Expired counts entries reclaimed by the sweeper. It does not count
+	// expired keys observed by a reader, because those are still resident.
+	Expired int64
+	// Entries is [Store.Len] at the time of the snapshot.
+	Entries int64
+}
+
+// Stats returns a snapshot of the counters.
+//
+// The fields are read independently, so the snapshot is not a consistent
+// instant. Counters are for trends, and a lock that made them consistent would
+// cost more than the information is worth.
+func (s *Store) Stats() Counters {
+	var c Counters
+	for _, sh := range s.shards {
+		c.Hits += sh.hits.Load()
+		c.Misses += sh.misses.Load()
+		c.Sets += sh.sets.Load()
+		c.Deletes += sh.deletes.Load()
+		c.Expired += sh.expired.Load()
+
+		sh.mu.RLock()
+		c.Entries += int64(len(sh.entries))
+		sh.mu.RUnlock()
+	}
+	return c
+}
+
+// Sweep visits the next n shards in rotation and removes expired entries,
+// returning how many it removed.
+//
+// It is exported so that a test can drive expiry deterministically instead of
+// advancing a clock and hoping the sweeper goroutine has been scheduled.
+func (s *Store) Sweep(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > len(s.shards) {
+		n = len(s.shards)
+	}
+	now := s.clk.Now().UnixNano()
+	removed := 0
+
+	start := s.cursor.Add(uint64(n)) - uint64(n)
+	for i := 0; i < n; i++ {
+		sh := s.shards[(start+uint64(i))&s.mask]
+		fromShard := 0
+		sh.mu.Lock()
+		for key, e := range sh.entries {
+			if e.expiresAt != 0 && now >= e.expiresAt {
+				delete(sh.entries, key)
+				fromShard++
+			}
+		}
+		sh.mu.Unlock()
+		if fromShard > 0 {
+			sh.expired.Add(int64(fromShard))
+			removed += fromShard
+		}
+	}
+	return removed
+}
+
+// sweepLoop runs the background sweeper until Close.
+func (s *Store) sweepLoop() {
+	defer close(s.stopped)
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.ticker.C():
+			s.Sweep(s.sweepPerTick)
+		}
+	}
+}
+
+// Close stops the background sweeper and waits for it to exit.
+//
+// It is idempotent. Data is not written anywhere, because there is nowhere to
+// write it: this store is memory only by design.
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		if s.ticker != nil {
+			s.ticker.Stop()
+		}
+	})
+	<-s.stopped
+	return nil
+}

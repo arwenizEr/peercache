@@ -33,7 +33,18 @@ type Stats struct {
 	ActiveGroups int64
 
 	// Hits and Misses count namespace reads served from local memory and
-	// not, respectively.
+	// not, respectively. An expired key counts as a miss, because that is
+	// what the caller experienced.
 	Hits   int64
 	Misses int64
+
+	// InflightLoads is the number of callers currently waiting on a loader.
+	// It is the observable evidence that concurrent misses are collapsing
+	// rather than stampeding.
+	InflightLoads int64
+	// Loads counts loader invocations; CollapsedLoads counts GetOrLoad
+	// calls that attached to a load already in flight instead of starting
+	// one. A healthy ratio under load is what singleflight is for.
+	Loads          int64
+	CollapsedLoads int64
 }

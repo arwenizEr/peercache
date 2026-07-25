@@ -80,9 +80,11 @@ type Group interface {
 // corruption.
 type GroupState = core.GroupState
 
-// noopGroup is the M0 placeholder implementation of [Group].
+// noopGroup is the placeholder implementation of [Group] until M2 builds the
+// actor runtime. Registration and lifecycle are real; every operation that
+// would touch group state reports [ErrNotImplemented].
 type noopGroup struct {
-	cache *noopCache
+	cache *cache
 	id    string
 }
 

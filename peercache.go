@@ -2,9 +2,16 @@ package peercache
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/peercache/peercache/internal/clock"
+	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/store"
 )
 
 // Cache is the top-level handle: one per process, constructed at startup and
@@ -13,9 +20,9 @@ import (
 // A Cache is safe for concurrent use. Namespace and Group return handles, not
 // data, and are cheap enough to call on a hot path.
 type Cache interface {
-	// Namespace returns a handle to a named keyspace, creating its
-	// configuration on first use. Calling it again with different options
-	// does not reconfigure an existing namespace; the first call wins.
+	// Namespace returns a handle to a named keyspace, creating it on first
+	// use. Calling it again with different options does not reconfigure an
+	// existing namespace; the first call wins.
 	Namespace(name string, opts ...NamespaceOption) Namespace
 
 	// Group returns a handle to the group with the given id. A group is
@@ -56,14 +63,25 @@ type Cache interface {
 // it.
 type GroupFunc = core.GroupFunc
 
+// sweepInterval is how often the cache's single sweeper wakes to reclaim
+// expired entries. Expiry itself is enforced on read, so this interval affects
+// memory, not correctness.
+const sweepInterval = time.Second
+
+// sweepShardsPerTick bounds the work one sweep does per namespace. With 256
+// shards and a one-second interval a namespace is fully visited every 32
+// seconds, and no single tick walks more than a thirty-second of it.
+const sweepShardsPerTick = 8
+
 // New constructs a [Cache].
 //
 // Options are validated once, here, so that a misconfiguration surfaces at
 // startup rather than on the first request. [WithNodeID] is required.
 //
-// M0 status: the returned Cache is a no-op whose data-path methods report
-// [ErrNotImplemented]. Construction, option validation and Close are real, so
-// that the test harness has something to build on.
+// The returned Cache owns one background goroutine, released by [Cache.Close].
+//
+// M1 status: namespaces are fully functional locally. Groups arrive in M2 and
+// report [ErrNotImplemented] until then; nothing is distributed until M3.
 func New(opts ...Option) (Cache, error) {
 	resolved := core.DefaultOptions()
 	for _, opt := range opts {
@@ -75,34 +93,51 @@ func New(opts ...Option) (Cache, error) {
 	if err := resolved.Validate(); err != nil {
 		return nil, err
 	}
-	return &noopCache{opts: resolved}, nil
+
+	c := &cache{
+		opts:       resolved,
+		namespaces: make(map[string]*namespace),
+		done:       make(chan struct{}),
+		stopped:    make(chan struct{}),
+		ticker:     resolved.Clock.NewTicker(sweepInterval),
+	}
+	go c.sweepLoop()
+	return c, nil
 }
 
-// noopCache is the M0 placeholder implementation of [Cache].
-//
-// It exists so that every interface in SPEC.md section 3 compiles and can be
-// wired into the test harness before any distributed logic exists. Every method
-// that would touch data reports [ErrNotImplemented]; every method that concerns
-// lifecycle or configuration behaves correctly, because the harness depends on
-// those and a lie there would be load-bearing.
-type noopCache struct {
+// cache is the M1 implementation of [Cache].
+type cache struct {
 	opts core.Options
 
-	mu         sync.Mutex
-	closed     bool
+	// ticker drives one sweeper for every namespace. Per-namespace
+	// sweepers would mean a goroutine per namespace for work that is
+	// entirely incremental and has no reason to be concurrent.
+	ticker  clock.Ticker
+	done    chan struct{}
+	stopped chan struct{}
+
+	closeOnce sync.Once
+
+	// closed is atomic rather than guarded by mu because every namespace
+	// operation consults it. Taking even a read lock on a process-wide
+	// RWMutex per Get puts an atomic read-modify-write on a single shared
+	// cache line in front of the whole data path, which is measurable
+	// against a sub-microsecond budget and would get worse with every core.
+	closed atomic.Bool
+
+	mu         sync.RWMutex
 	funcs      map[string]GroupFunc
-	namespaces map[string]*noopNamespace
+	namespaces map[string]*namespace
+	// order preserves namespace creation order so that sweeping and stats
+	// are deterministic rather than map-iteration order.
+	order []string
 }
 
-func (c *noopCache) Namespace(name string, opts ...NamespaceOption) Namespace {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// The first call wins, as documented. Returning a reconfigured handle
-	// on a later call would mean two callers holding handles to one
-	// namespace with different replication factors and different staleness
-	// bounds, which is a data-loss bug wearing a convenience-feature
-	// costume.
-	if ns, ok := c.namespaces[name]; ok {
+func (c *cache) Namespace(name string, opts ...NamespaceOption) Namespace {
+	c.mu.RLock()
+	ns, ok := c.namespaces[name]
+	c.mu.RUnlock()
+	if ok {
 		return ns
 	}
 
@@ -113,29 +148,78 @@ func (c *noopCache) Namespace(name string, opts ...NamespaceOption) Namespace {
 		}
 		opt(&resolved)
 	}
-	// Namespace cannot return an error, and returning a handle that
-	// silently ignores a bad option would hide the misconfiguration until
-	// production. Instead the error is captured and reported by every
-	// operation on the handle.
-	ns := &noopNamespace{cache: c, name: name, opts: resolved, err: resolved.Validate()}
-	if c.namespaces == nil {
-		c.namespaces = make(map[string]*noopNamespace)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Re-check: two goroutines may have raced past the read lock. The first
+	// call wins, as documented — two handles to one namespace with
+	// different staleness bounds would be a data-loss bug wearing a
+	// convenience-feature costume.
+	if ns, ok := c.namespaces[name]; ok {
+		return ns
 	}
+	if c.closed.Load() {
+		return &namespace{cache: c, name: name, opts: resolved, err: ErrClosed}
+	}
+
+	ns = c.newNamespaceLocked(name, resolved)
 	c.namespaces[name] = ns
+	c.order = append(c.order, name)
 	return ns
 }
 
-func (c *noopCache) Group(id string) Group {
+// newNamespaceLocked builds a namespace, capturing any configuration failure on
+// the handle rather than losing it. Callers must hold mu.
+func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *namespace {
+	ns := &namespace{cache: c, name: name, opts: opts}
+
+	if err := opts.Validate(); err != nil {
+		ns.err = err
+		return ns
+	}
+	if opts.Codec != "" {
+		// Validated here rather than in core, which cannot import codec
+		// without a cycle. Catching an unregistered codec at startup is
+		// the whole point of naming it in configuration.
+		if _, err := codec.Get(opts.Codec); err != nil {
+			ns.err = err
+			return ns
+		}
+	}
+	if opts.Compressor != "" {
+		framer, err := codec.NewFramer(opts.Compressor, opts.CompressionThreshold)
+		if err != nil {
+			ns.err = err
+			return ns
+		}
+		ns.framer = framer
+	}
+
+	st, err := store.New(store.Options{
+		Shards: opts.Shards,
+		Clock:  c.opts.Clock,
+		// Sweeping is driven by the cache's single sweeper.
+		SweepInterval: 0,
+	})
+	if err != nil {
+		ns.err = err
+		return ns
+	}
+	ns.store = st
+	return ns
+}
+
+func (c *cache) Group(id string) Group {
 	return &noopGroup{cache: c, id: id}
 }
 
-func (c *noopCache) RegisterGroupFunc(name string, fn GroupFunc) error {
+func (c *cache) RegisterGroupFunc(name string, fn GroupFunc) error {
 	if name == "" || fn == nil {
 		return ErrInvalidOption
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrClosed
 	}
 	if _, dup := c.funcs[name]; dup {
@@ -148,39 +232,109 @@ func (c *noopCache) RegisterGroupFunc(name string, fn GroupFunc) error {
 	return nil
 }
 
-func (c *noopCache) Stats() Stats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return Stats{
+func (c *cache) Stats() Stats {
+	c.mu.RLock()
+	namespaces := make([]*namespace, 0, len(c.order))
+	for _, name := range c.order {
+		namespaces = append(namespaces, c.namespaces[name])
+	}
+	c.mu.RUnlock()
+
+	stats := Stats{
 		Self:    Node{ID: c.opts.NodeID, Addr: c.opts.BindAddr},
 		Members: 1,
 	}
+	for _, ns := range namespaces {
+		if ns.store == nil {
+			continue
+		}
+		counters := ns.store.Stats()
+		stats.OwnedKeys += counters.Entries
+		stats.Hits += counters.Hits
+		stats.Misses += counters.Misses
+		stats.InflightLoads += ns.flight.Inflight()
+		stats.Loads += ns.flight.Loads()
+		stats.CollapsedLoads += ns.flight.Collapsed()
+	}
+	return stats
 }
 
-func (c *noopCache) Close(context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	return nil
+// sweepLoop reclaims expired entries across every namespace until Close.
+func (c *cache) sweepLoop() {
+	defer close(c.stopped)
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-c.ticker.C():
+			c.sweepOnce()
+		}
+	}
 }
 
-// isClosed reports whether Close has run. Handles consult it so that operations
-// after Close report [ErrClosed] rather than [ErrNotImplemented], which keeps
-// the lifecycle distinguishable from the scaffolding.
-func (c *noopCache) isClosed() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.closed
+// sweepOnce advances each namespace's sweep cursor by one batch.
+func (c *cache) sweepOnce() {
+	c.mu.RLock()
+	namespaces := make([]*namespace, 0, len(c.order))
+	for _, name := range c.order {
+		namespaces = append(namespaces, c.namespaces[name])
+	}
+	c.mu.RUnlock()
+
+	for _, ns := range namespaces {
+		if ns.store != nil {
+			ns.store.Sweep(sweepShardsPerTick)
+		}
+	}
 }
 
-// hasFunc reports whether a group function is registered under name. Group
-// handles ask through this rather than reaching into the cache's lock
-// themselves.
-func (c *noopCache) hasFunc(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *cache) Close(ctx context.Context) error {
+	var closeErr error
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		// Set under mu so that a namespace creation racing with Close
+		// either completes before the flag is visible or observes it.
+		c.closed.Store(true)
+		namespaces := make([]*namespace, 0, len(c.order))
+		for _, name := range c.order {
+			namespaces = append(namespaces, c.namespaces[name])
+		}
+		c.mu.Unlock()
+
+		close(c.done)
+		c.ticker.Stop()
+		<-c.stopped
+
+		for _, ns := range namespaces {
+			if ns.store == nil {
+				continue
+			}
+			if err := ns.store.Close(); err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("closing namespace %q: %w", ns.name, err))
+			}
+		}
+	})
+	// The context is accepted for the graceful-drain semantics that arrive
+	// in M6. There is nothing to drain on a single node with no ownership
+	// to transfer, so an expired context changes nothing here — but it is
+	// still reported, because silently succeeding on an expired deadline
+	// would train callers to ignore it.
+	if err := ctx.Err(); err != nil {
+		return errors.Join(closeErr, err)
+	}
+	return closeErr
+}
+
+// isClosed reports whether Close has run. It is on the hot path of every
+// namespace operation, so it must not take a lock.
+func (c *cache) isClosed() bool { return c.closed.Load() }
+
+// hasFunc reports whether a group function is registered under name.
+func (c *cache) hasFunc(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	_, ok := c.funcs[name]
 	return ok
 }
 
-var _ Cache = (*noopCache)(nil)
+var _ Cache = (*cache)(nil)

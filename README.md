@@ -74,7 +74,7 @@ the next begins.
 | | Milestone | Status |
 |---|---|---|
 | M0 | Test harness and skeleton | **complete** |
-| M1 | Single-node core | not started |
+| M1 | Single-node core | **complete** |
 | M2 | Group actor runtime | not started |
 | M3 | Membership and ownership | not started |
 | M4 | Transport and remote routing | not started |
@@ -102,16 +102,18 @@ internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
   testkit/        In-process cluster harness with fault injection
-  ownership/      Rendezvous hashing, ring epochs           (M3)
-  membership/     Gossip membership over memberlist          (M3)
-  store/          Owned and replica stores, shard maps       (M1)
+  store/          Sharded owned store, TTL, versions          (M1)
   l1/             Non-owned cache, TTL and version discipline (M1)
-  actor/          Group activation, mailbox, lifecycle       (M2)
-  transport/      gRPC client and server                     (M4)
-  replication/    Replica fan-out, promotion, catch-up       (M5)
-  rebalance/      Move planning and streaming transfer       (M6)
-  codec/          Codec registry, compression                (M1)
-  metrics/        Prometheus and OTel emitters               (M7)
+  l1/eval/        Cache-library comparison (nested module)    (M1)
+  codec/          Codec registry, LZ4 framing                 (M1)
+  singleflight/   Collapses concurrent loads of one key       (M1)
+  actor/          Group activation, mailbox, lifecycle        (M2)
+  ownership/      Rendezvous hashing, ring epochs             (M3)
+  membership/     Gossip membership over memberlist           (M3)
+  transport/      gRPC client and server                      (M4)
+  replication/    Replica fan-out, promotion, catch-up        (M5)
+  rebalance/      Move planning and streaming transfer        (M6)
+  metrics/        Prometheus and OTel emitters                (M7)
 
 proto/            gRPC service definitions                   (M4)
 examples/         One runnable example per milestone
@@ -130,6 +132,7 @@ make test          # fast feedback
 make test-race     # the gate: -race -count=2
 make vet lint      # go vet and staticcheck
 make bench         # benchmarks, 5 runs
+make bench-l1-eval # re-run the cache-library comparison (nested module)
 make ci            # exactly what the pipeline runs
 ```
 

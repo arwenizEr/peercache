@@ -63,6 +63,17 @@ var (
 	// one name. Registration is startup-only and must be deterministic.
 	ErrDuplicateRegistration = errors.New("peercache: group function already registered")
 
+	// ErrLoaderPanic means a registered loader panicked. The panic is
+	// contained and converted rather than propagated: a loader is
+	// application code, and a bug in it must not become a panic in every
+	// unrelated goroutine that happened to be waiting for the same key.
+	ErrLoaderPanic = errors.New("peercache: loader panicked")
+
+	// ErrLoaderFailed means a load could not complete for a reason that is
+	// not the loader's own error, such as the loader exiting without
+	// returning.
+	ErrLoaderFailed = errors.New("peercache: loader did not complete")
+
 	// ErrInvalidOption means a supplied option is outside its documented
 	// range or contradicts another. Configuration is validated once, at
 	// construction, so this never surfaces on a data path.

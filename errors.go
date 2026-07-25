@@ -60,6 +60,18 @@ var (
 	// be deterministic across pods.
 	ErrDuplicateRegistration = core.ErrDuplicateRegistration
 
+	// ErrLoaderPanic means a registered loader panicked. The panic is
+	// contained and converted rather than propagated, because a bug in
+	// application code must not become a panic in every unrelated goroutine
+	// that happened to be waiting for the same key. Every concurrent caller
+	// receives this error.
+	ErrLoaderPanic = core.ErrLoaderPanic
+
+	// ErrLoaderFailed means a load could not complete for a reason that is
+	// not an error the loader returned — for instance a loader that exited
+	// without returning.
+	ErrLoaderFailed = core.ErrLoaderFailed
+
 	// ErrInvalidOption means a supplied option is outside its documented
 	// range or contradicts another. Configuration is validated once, at
 	// construction, so this never surfaces on a data path.

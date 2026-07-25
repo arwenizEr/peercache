@@ -30,12 +30,28 @@ func Example() {
 		peercache.WithReplicationFactor(2),
 	)
 
-	_, err = sessions.Get(context.Background(), "user:123")
-	fmt.Println("Get:", errors.Is(err, peercache.ErrNotImplemented))
+	ctx := context.Background()
+	if err := sessions.Set(ctx, "user:123", []byte("cart=3"), time.Hour); err != nil {
+		fmt.Println("set failed:", err)
+		return
+	}
+
+	val, err := sessions.Get(ctx, "user:123")
+	if err != nil {
+		fmt.Println("get failed:", err)
+		return
+	}
+	fmt.Printf("Get: %s\n", val)
+
+	// A missing key is ErrNotFound, never a nil value: a key may legitimately
+	// hold zero bytes.
+	_, err = sessions.Get(ctx, "user:999")
+	fmt.Println("Missing:", errors.Is(err, peercache.ErrNotFound))
 
 	fmt.Println("Self:", cache.Stats().Self)
 	// Output:
-	// Get: true
+	// Get: cart=3
+	// Missing: true
 	// Self: pod-0(10.0.0.1:7946)
 }
 
@@ -51,21 +67,35 @@ func ExampleWithLoader() {
 	}
 	defer func() { _ = cache.Close(context.Background()) }()
 
+	var loaderCalls int
 	profiles := cache.Namespace("profiles",
 		peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
+			loaderCalls++
 			return []byte("loaded:" + key), time.Minute, nil
 		}),
 	)
 
-	_, err = profiles.GetOrLoad(context.Background(), "user:123")
-	fmt.Println("loader registered:", !errors.Is(err, peercache.ErrNoLoader))
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		val, err := profiles.GetOrLoad(ctx, "user:123")
+		if err != nil {
+			fmt.Println("load failed:", err)
+			return
+		}
+		if i == 0 {
+			fmt.Printf("GetOrLoad: %s\n", val)
+		}
+	}
+	// The first call loads; the rest are served from memory.
+	fmt.Println("loader calls:", loaderCalls)
 
 	// Without a loader, GetOrLoad says so rather than returning nothing.
 	bare := cache.Namespace("bare")
-	_, err = bare.GetOrLoad(context.Background(), "user:123")
+	_, err = bare.GetOrLoad(ctx, "user:123")
 	fmt.Println("no loader:", errors.Is(err, peercache.ErrNoLoader))
 	// Output:
-	// loader registered: true
+	// GetOrLoad: loaded:user:123
+	// loader calls: 1
 	// no loader: true
 }
 

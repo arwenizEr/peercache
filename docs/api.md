@@ -7,8 +7,11 @@ declaration of scaffolding rather than a comment nobody greps for.
 Runnable examples for everything below are in `example_test.go` (verified by
 `go test`) and `examples/m0/main.go` (`go run ./examples/m0`).
 
-**Milestone status:** M0 complete. Construction, option validation, registration
-and `Close` are real. Data paths are not.
+**Milestone status:** M0 and M1 complete. Namespaces are fully functional on a
+single node: `Get`, `Set`, `Delete`, `Exists`, the batch forms and `GetOrLoad`
+with singleflight collapsing, all with TTL expiry and optional compression.
+Groups arrive in M2 and report `ErrNotImplemented` until then. Nothing is
+distributed until M3, so every operation currently executes locally.
 
 ---
 
@@ -95,12 +98,35 @@ atomic across owners, and no cross-group transaction exists to make them so.
 | `WithLoader(Loader)` | none | Reconstructs a missing value. Without it, `GetOrLoad` returns `ErrNoLoader`. |
 | `WithPartitioner(Partitioner)` | `PartitionByKey()` | Maps keys to groups. Must be pure and identical on every pod. |
 | `WithReplicationFactor(int)` | 1 | 1 to 3. Outside that range is `ErrInvalidOption`. |
-| `WithCodec(string)` | none | Names a registered codec. |
+| `WithCodec(string)` | none | Names a registered codec: `json` or `msgpack`. Unknown names fail at construction. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
+| `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
+| `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
+| `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 
 `Namespace` cannot return an error, so an invalid option is reported by every
 operation on the returned handle. Ignoring it would hide the misconfiguration
 until production.
+
+Calling `Namespace` twice with the same name returns the same handle; the first
+call's options win. Two handles to one namespace would mean two stores.
+
+### Compression is off by default
+
+Reading a 4 KiB value costs 72 ns uncompressed and 5.0 µs with LZ4 — seventy
+times more, plus an allocation. That is a good trade for large, cold,
+compressible values and a bad one for a forty-byte counter, and only the
+application knows which it has. See
+[`docs/decisions/0008-compression-is-opt-in.md`](decisions/0008-compression-is-opt-in.md).
+
+### Aliasing
+
+`Set` copies the value it is given, so a caller may reuse its buffer. `Get`
+returns the stored slice **without copying**, so a caller must not modify it.
+
+Copying on read was measured at 2.6x the cost and one allocation per read, which
+would also undo the allocation-free property the latency tail depends on. See
+[`docs/decisions/0007-get-returns-the-stored-slice.md`](decisions/0007-get-returns-the-stored-slice.md).
 
 ### GetOrLoad has no loader argument
 
@@ -117,7 +143,24 @@ val, err := profiles.GetOrLoad(ctx, "user:123")
 The loader is registered on the namespace so that it exists by name on every
 pod and the key's owner can execute it locally, instead of shipping the miss
 back to the caller. Concurrent misses for one key collapse into a single
-invocation.
+invocation: a thousand concurrent misses on a cold key invoke the loader exactly
+once, and the other 999 calls attach to that load.
+
+The returned `ttl` is applied exactly as `Set` would apply it — a non-positive
+value means the loaded value never expires on its own.
+
+Three rules about the load itself, each of which exists because the obvious
+alternative is wrong:
+
+- **The load does not inherit the caller's context.** Misses collapse, so taking
+  whichever caller arrived first as the bound would let a caller with 5 ms left
+  abort a load that 999 callers with a second left were depending on. The load
+  runs with cancellation stripped and the namespace's `WithLoaderTimeout` as its
+  deadline. Request-scoped values still propagate.
+- **A caller whose context expires stops waiting; the load continues** for
+  everyone else.
+- **A panicking loader becomes `ErrLoaderPanic` for every waiter**, rather than a
+  panic in a thousand unrelated goroutines. A loader is application code.
 
 ### L1 TTL is a correctness bound
 
@@ -302,6 +345,8 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrNotOwner` | This node does not own the key's group. | yes, after re-resolving |
 | `ErrStateEscaped` | A `GroupState` was used outside its turn. | no — it is a bug |
 | `ErrNoLoader` | `GetOrLoad` without `WithLoader`. | no |
+| `ErrLoaderPanic` | A registered loader panicked. | no — it is a bug |
+| `ErrLoaderFailed` | A load could not complete, e.g. the loader exited without returning. | no |
 | `ErrFuncNotRegistered` | Unknown function name. | during a rolling upgrade, yes |
 | `ErrDuplicateRegistration` | Name registered twice. | no |
 | `ErrInvalidOption` | Option outside its range. | no |

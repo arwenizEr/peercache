@@ -51,6 +51,12 @@ jobs:
       - name: test
         run: go test ./... -timeout 300s
 
+      # internal/l1/eval is a nested module, so `go test ./...` never sees it.
+      # Compiling it keeps the cache-library comparison from rotting into
+      # something nobody can re-run; the benchmarks themselves stay manual.
+      - name: l1 evaluation harness compiles
+        run: cd internal/l1/eval && go vet ./...
+
   race:
     name: test -race
     runs-on: ubuntu-latest

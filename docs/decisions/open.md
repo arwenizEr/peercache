@@ -178,7 +178,80 @@ after, someone adds `t.Parallel` and starts seeing phantom leaks.
 
 ---
 
-## 12. Deliberately deferred, per SPEC.md section 5
+## 12. There is no typed namespace API — M1, needs a decision
+
+SPEC.md section 2 describes the namespace as "typed Get/Set/GetOrLoad". Section
+3.1 defines it entirely in terms of `[]byte`, and no typed API appears anywhere
+in section 3.
+
+**Picked:** the `[]byte` API exactly as section 3.1 specifies. The codec
+registry is built and tested as a standalone component, and `WithCodec`
+validates its argument at construction so an unregistered name fails at startup.
+
+**The consequence:** `WithCodec` currently has nothing to encode. The registry
+is used by nothing on the data path.
+
+**What would force a change:** a decision to add `Namespace[T]`, which would be
+a genuine API addition rather than an implementation detail, or M4, where the
+codec is needed for RPC payloads regardless.
+
+---
+
+## 13. The L1 tier is not reachable from a namespace — M1, by construction
+
+`internal/l1` is complete and tested, and nothing calls it. On a single node
+every key is owned locally, so there is no non-owned copy to cache.
+
+**Picked:** build and test it standalone, as SPEC.md section 4 (M1) requires,
+and wire it in at M4 when remote reads exist.
+
+Recorded so that it is not mistaken for dead code at review.
+
+---
+
+## 14. Sub-microsecond latency cannot be measured on Windows — M1, worked around
+
+Go's monotonic clock on Windows is driven by the system interrupt timer and
+resolves to roughly 500 microseconds, so `time.Since` across a single 300 ns
+operation returns zero.
+
+**Picked:** the acceptance test measures the platform's resolution, reports it,
+and switches method — direct per-operation timing where the clock is fine
+enough (Linux CI), batches of 30,000 reads where it is not. The batched p99 is a
+lower bound on the true per-operation p99 and is labelled as such.
+
+**What would force a change:** nothing urgent. The Linux CI job measures the
+real per-operation distribution; the Windows figure is a development-time
+approximation.
+
+---
+
+## 15. otter v1 is a maintenance branch — M1, accepted
+
+`internal/l1` uses `maypok86/otter` v1 rather than v2 because v2 requires Go
+1.24 and CLAUDE.md fixes the floor at 1.23. v1 measured marginally faster on the
+read path, so nothing was given up on performance.
+
+**What would force a change:** the project's Go floor moving to 1.24, at which
+point v2 is a small diff and worth taking for the maintained branch.
+
+---
+
+## 16. L1 eviction overshoots capacity transiently — M1, bounded
+
+otter evicts asynchronously, so a write burst can leave residency above the
+configured capacity — measured at 40.9% over before settling back to exact.
+
+**Picked:** documented, and the L1 capacity should be configured with headroom.
+The tier shares a process with the owned store, so this is real memory.
+
+**What would force a change:** a memory-constrained deployment where the
+transient matters, which would need either a hard admission gate or a different
+library.
+
+---
+
+## 17. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 

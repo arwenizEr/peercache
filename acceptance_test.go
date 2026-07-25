@@ -1,0 +1,303 @@
+package peercache_test
+
+import (
+	"context"
+	"runtime"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/peercache/peercache"
+	"github.com/peercache/peercache/internal/clock"
+)
+
+// M1 acceptance parameters, from SPEC.md section 4.
+const (
+	acceptanceKeys      = 1_000_000
+	acceptanceValueSize = 64
+	acceptanceP99Budget = time.Microsecond
+
+	// batchOps is how many reads make up one sample when the platform clock
+	// is too coarse to time a single one. Sized so that a batch runs for
+	// roughly twenty times the clock's resolution, which keeps the
+	// quantisation error near five percent of the per-operation figure.
+	batchOps = 30_000
+	// batchCount is how many such samples are taken. Four hundred puts the
+	// p99 four samples from the worst, so a single descheduled batch -
+	// which measures the operating system, not the cache - does not decide
+	// the result.
+	batchCount = 400
+)
+
+// percentiles summarises a latency sample. The slice is sorted in place.
+type percentiles struct {
+	p50, p90, p99, p999, max time.Duration
+}
+
+func summarise(samples []time.Duration) percentiles {
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	at := func(q float64) time.Duration {
+		idx := int(float64(len(samples)) * q)
+		if idx >= len(samples) {
+			idx = len(samples) - 1
+		}
+		return samples[idx]
+	}
+	return percentiles{
+		p50:  at(0.50),
+		p90:  at(0.90),
+		p99:  at(0.99),
+		p999: at(0.999),
+		max:  samples[len(samples)-1],
+	}
+}
+
+// clockResolution returns the smallest non-zero interval the platform's
+// monotonic clock can report.
+//
+// This is not a formality. Go's monotonic clock on Windows is driven by the
+// system interrupt timer and resolves to roughly 500 microseconds, so timing a
+// single sub-microsecond operation there returns zero every time - and a test
+// that reported a p99 of "0s" would look like a spectacular pass rather than a
+// broken measurement.
+func clockResolution() time.Duration {
+	const probes = 2_000_000
+	realClock := clock.Real()
+
+	smallest := time.Hour
+	seen := 0
+	for i := 0; i < probes && seen < 50; i++ {
+		start := realClock.Now()
+		d := realClock.Since(start)
+		if d > 0 {
+			seen++
+			if d < smallest {
+				smallest = d
+			}
+		}
+	}
+	if seen == 0 {
+		return time.Hour
+	}
+	return smallest
+}
+
+// TestLocalGetP99AtOneMillionKeys is the M1 latency acceptance criterion: local
+// Get p99 under one microsecond at a million keys.
+//
+// Two things about the criterion need stating rather than quietly resolving.
+//
+// First, it does not say whether the tail includes garbage collection. It turns
+// out not to matter: the read path allocates nothing, which
+// [TestGetIsAllocationFree] asserts directly, and measuring with the collector
+// disabled produced the same distribution within noise. So this measures the
+// collector in its normal state, which is both the honest configuration and the
+// stricter one.
+//
+// An earlier version of this test measured both and gated on the
+// collector-disabled number. That was wrong in an instructive way: whichever
+// measurement ran *second* was consistently slower, because a desktop CPU under
+// several seconds of sustained load drops clock speed. The test was measuring
+// thermal drift and attributing it to the garbage collector.
+//
+// Second, the criterion assumes a clock that can time a single operation. On a
+// platform whose monotonic clock resolves to half a millisecond that is
+// impossible, so the test measures batches instead and says so. A batch mean
+// hides within-batch variance but still catches a sustained stall - a lock
+// convoy, a pathological hash, a collector that will not yield - because those
+// inflate whichever batch they land in.
+func TestLocalGetP99AtOneMillionKeys(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates roughly 230 MB; skipped under -short")
+	}
+	if raceEnabled {
+		// Measured at roughly four times the cost under -race, which
+		// tells you about the detector and nothing about the cache. The
+		// CI job that runs without the detector is the one that gates
+		// this criterion.
+		t.Skip("latency budgets are meaningless under the race detector")
+	}
+
+	resolution := clockResolution()
+	perOp := resolution <= 100*time.Nanosecond
+	t.Logf("platform monotonic clock resolution: %v (per-operation timing: %v)", resolution, perOp)
+
+	c, _ := newCache(t)
+	ns := c.Namespace("bench")
+	ctx := context.Background()
+
+	value := make([]byte, acceptanceValueSize)
+	keys := make([]string, acceptanceKeys)
+	for i := range keys {
+		keys[i] = key(i)
+	}
+	for _, k := range keys {
+		if err := ns.Set(ctx, k, value, 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if got := c.Stats().OwnedKeys; got != acceptanceKeys {
+		t.Fatalf("OwnedKeys = %d, want %d", got, acceptanceKeys)
+	}
+
+	var mem runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&mem)
+	t.Logf("resident heap with %d keys of %d bytes: %.1f MiB",
+		acceptanceKeys, acceptanceValueSize, float64(mem.HeapAlloc)/(1<<20))
+
+	// Access order is shuffled deterministically so the measurement is not a
+	// sequential walk over a freshly built map, which would flatter the
+	// cache hierarchy in a way no real workload does.
+	order := shuffledIndices(len(keys))
+
+	measure := measureBatched
+	method := "per-operation cost derived from batches of " + itoa(batchOps) +
+		"; batch means smooth single-operation outliers, so this p99 is a lower bound " +
+		"on the true per-operation p99 and detects sustained stalls rather than isolated ones"
+	if perOp {
+		measure = measurePerOp
+		method = "per-operation, directly timed"
+	}
+
+	// A warm-up pass that is measured and discarded, so that the recorded
+	// distribution is of a steady-state cache rather than of one whose
+	// translation buffers are still cold.
+	measure(t, ns, ctx, keys, order)
+	got := measure(t, ns, ctx, keys, order)
+
+	t.Logf("method: %s", method)
+	t.Logf("p50 %v  p90 %v  p99 %v  p99.9 %v  max %v", got.p50, got.p90, got.p99, got.p999, got.max)
+
+	if got.p99 >= acceptanceP99Budget {
+		t.Fatalf("p99 %v exceeds the %v budget at %d keys",
+			got.p99, acceptanceP99Budget, acceptanceKeys)
+	}
+}
+
+// TestGetIsAllocationFree is the assertion that makes the garbage collector
+// irrelevant to the latency criterion above.
+//
+// A read that allocates cannot have a bounded tail: sooner or later one of them
+// triggers a collection and inherits the pause. Asserting zero allocations is a
+// far stronger and far cheaper statement than measuring with the collector
+// switched off, and it fails loudly the day someone adds a fmt.Errorf to the
+// read path - which is exactly how the miss path came to allocate 128 bytes.
+func TestGetIsAllocationFree(t *testing.T) {
+	c, _ := newCache(t)
+	ns := c.Namespace("alloc")
+	ctx := context.Background()
+
+	if err := ns.Set(ctx, "hit", []byte("value"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	hits := testing.AllocsPerRun(1000, func() {
+		if _, err := ns.Get(ctx, "hit"); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+	})
+	if hits != 0 {
+		t.Errorf("a cache hit allocated %.1f times per operation, want 0", hits)
+	}
+
+	// A miss is routine, not exceptional: it is most of what GetOrLoad and
+	// BatchGet see. It must be free too.
+	misses := testing.AllocsPerRun(1000, func() {
+		if _, err := ns.Get(ctx, "absent"); err == nil {
+			t.Fatal("expected a miss")
+		}
+	})
+	if misses != 0 {
+		t.Errorf("a cache miss allocated %.1f times per operation, want 0", misses)
+	}
+
+	exists := testing.AllocsPerRun(1000, func() {
+		if _, err := ns.Exists(ctx, "hit"); err != nil {
+			t.Fatalf("Exists: %v", err)
+		}
+	})
+	if exists != 0 {
+		t.Errorf("Exists allocated %.1f times per operation, want 0", exists)
+	}
+}
+
+// measurePerOp times every read individually. Only valid where the platform
+// clock can resolve a single operation.
+func measurePerOp(t *testing.T, ns peercache.Namespace, ctx context.Context, keys []string, order []int) percentiles {
+	t.Helper()
+	realClock := clock.Real()
+	samples := make([]time.Duration, len(order))
+
+	for i, idx := range order {
+		start := realClock.Now()
+		val, err := ns.Get(ctx, keys[idx])
+		samples[i] = realClock.Since(start)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", keys[idx], err)
+		}
+		if len(val) != acceptanceValueSize {
+			t.Fatalf("Get returned %d bytes, want %d", len(val), acceptanceValueSize)
+		}
+	}
+	return summarise(samples)
+}
+
+// measureBatched times batches of reads and reports the per-operation cost of
+// each batch. Each batch is sized so that its duration exceeds the platform's
+// clock resolution by a wide margin; the resulting quantisation error is a few
+// nanoseconds per operation.
+func measureBatched(t *testing.T, ns peercache.Namespace, ctx context.Context, keys []string, order []int) percentiles {
+	t.Helper()
+	realClock := clock.Real()
+	samples := make([]time.Duration, 0, batchCount)
+
+	next := 0
+	for b := 0; b < batchCount; b++ {
+		start := realClock.Now()
+		for i := 0; i < batchOps; i++ {
+			idx := order[next%len(order)]
+			next++
+			val, err := ns.Get(ctx, keys[idx])
+			if err != nil {
+				t.Fatalf("Get(%q): %v", keys[idx], err)
+			}
+			if len(val) != acceptanceValueSize {
+				t.Fatalf("Get returned %d bytes, want %d", len(val), acceptanceValueSize)
+			}
+		}
+		samples = append(samples, realClock.Since(start)/batchOps)
+	}
+	return summarise(samples)
+}
+
+// itoa avoids pulling strconv into this file's import list for one call.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var digits []byte
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
+}
+
+// shuffledIndices returns 0..n-1 in a fixed pseudo-random order. The shuffle is
+// deterministic so the measurement is reproducible without a seed.
+func shuffledIndices(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = i
+	}
+	state := uint64(0x9E3779B97F4A7C15)
+	for i := n - 1; i > 0; i-- {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		j := int(state % uint64(i+1))
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}

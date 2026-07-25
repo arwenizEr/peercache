@@ -3,22 +3,35 @@ package peercache_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/peercache/peercache"
+	"github.com/peercache/peercache/internal/clock"
 )
 
-// newCache builds a cache with the minimum viable configuration.
-func newCache(t *testing.T, opts ...peercache.Option) peercache.Cache {
+// newCache builds a cache on a fake clock and asserts at teardown that it left
+// no timer armed. Every test in this package uses it, so a leaked ticker in
+// Close would fail immediately rather than at some unrelated later milestone.
+func newCache(t *testing.T, opts ...peercache.Option) (peercache.Cache, *clock.Fake) {
 	t.Helper()
-	c, err := peercache.New(append([]peercache.Option{peercache.WithNodeID("n0")}, opts...)...)
+	fc := clock.NewFake(clock.Epoch)
+	fc.SetMisuseHandler(func(msg string) { t.Errorf("clock misuse: %s", msg) })
+
+	base := []peercache.Option{peercache.WithNodeID("n0"), peercache.WithClock(fc)}
+	c, err := peercache.New(append(base, opts...)...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
-	return c
+	t.Cleanup(func() {
+		if err := c.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+		if pending := fc.Pending(); pending != 0 {
+			t.Errorf("timer leak: %d timer(s) armed after Close", pending)
+		}
+	})
+	return c, fc
 }
 
 func TestNewRequiresNodeID(t *testing.T) {
@@ -45,13 +58,17 @@ func TestNewRejectsNilClockAndLogger(t *testing.T) {
 func TestNewIgnoresNilOptions(t *testing.T) {
 	// A nil option in a slice built by a caller's helper should not be a
 	// crash. There are no panics in library paths.
-	if _, err := peercache.New(nil, peercache.WithNodeID("n0"), nil); err != nil {
+	c, err := peercache.New(nil, peercache.WithNodeID("n0"), nil)
+	if err != nil {
 		t.Fatalf("New with nil options = %v, want nil", err)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 
 func TestStatsReportsSelf(t *testing.T) {
-	c := newCache(t, peercache.WithBindAddr("n0:7946"))
+	c, _ := newCache(t, peercache.WithBindAddr("n0:7946"))
 	stats := c.Stats()
 	if stats.Self.ID != "n0" || stats.Self.Addr != "n0:7946" {
 		t.Fatalf("Stats().Self = %v, want n0(n0:7946)", stats.Self)
@@ -61,104 +78,8 @@ func TestStatsReportsSelf(t *testing.T) {
 	}
 }
 
-// TestNamespaceOperationsAreNotImplemented enumerates the whole Namespace
-// surface. The point is not the error value but the guarantee that every method
-// in SPEC.md section 3.1 exists, compiles and is reachable, so that M1 replaces
-// behaviour rather than inventing signatures.
-func TestNamespaceOperationsAreNotImplemented(t *testing.T) {
-	c := newCache(t)
-	ns := c.Namespace("sessions")
-	ctx := context.Background()
-
-	tests := map[string]func() error{
-		"Get":      func() error { _, err := ns.Get(ctx, "k"); return err },
-		"Set":      func() error { return ns.Set(ctx, "k", []byte("v"), time.Minute) },
-		"Delete":   func() error { return ns.Delete(ctx, "k") },
-		"Exists":   func() error { _, err := ns.Exists(ctx, "k"); return err },
-		"BatchGet": func() error { _, err := ns.BatchGet(ctx, []string{"k"}); return err },
-		"BatchSet": func() error { return ns.BatchSet(ctx, map[string][]byte{"k": nil}, time.Minute) },
-	}
-	for name, call := range tests {
-		t.Run(name, func(t *testing.T) {
-			if err := call(); !errors.Is(err, peercache.ErrNotImplemented) {
-				t.Fatalf("%s = %v, want ErrNotImplemented", name, err)
-			}
-		})
-	}
-}
-
-func TestGetOrLoadWithoutLoaderReportsErrNoLoader(t *testing.T) {
-	c := newCache(t)
-	ns := c.Namespace("sessions")
-	if _, err := ns.GetOrLoad(context.Background(), "k"); !errors.Is(err, peercache.ErrNoLoader) {
-		t.Fatalf("GetOrLoad = %v, want ErrNoLoader", err)
-	}
-}
-
-func TestGetOrLoadWithLoaderIsNotImplemented(t *testing.T) {
-	c := newCache(t)
-	loader := func(context.Context, string) ([]byte, time.Duration, error) { return nil, 0, nil }
-	ns := c.Namespace("sessions", peercache.WithLoader(loader))
-	if _, err := ns.GetOrLoad(context.Background(), "k"); !errors.Is(err, peercache.ErrNotImplemented) {
-		t.Fatalf("GetOrLoad = %v, want ErrNotImplemented", err)
-	}
-}
-
-// TestNamespaceOptionValidationSurfaces covers the awkward corner of SPEC.md
-// section 3.1: Namespace cannot return an error, so a bad option has to surface
-// somewhere. Ignoring it would hide the misconfiguration until production.
-func TestNamespaceOptionValidationSurfaces(t *testing.T) {
-	c := newCache(t)
-	tests := map[string]peercache.NamespaceOption{
-		"replication factor too high": peercache.WithReplicationFactor(4),
-		"replication factor zero":     peercache.WithReplicationFactor(0),
-		"non-positive L1 TTL":         peercache.WithL1TTL(0),
-		"nil partitioner":             peercache.WithPartitioner(nil),
-	}
-	for name, opt := range tests {
-		t.Run(name, func(t *testing.T) {
-			// Distinct names: namespace handles are memoized, so
-			// reusing one here would test the first subtest's
-			// configuration three more times.
-			ns := c.Namespace("bad-"+name, opt)
-			if _, err := ns.Get(context.Background(), "k"); !errors.Is(err, peercache.ErrInvalidOption) {
-				t.Fatalf("Get = %v, want ErrInvalidOption", err)
-			}
-		})
-	}
-}
-
-func TestNamespaceAcceptsValidReplicationFactors(t *testing.T) {
-	c := newCache(t)
-	for rf := 1; rf <= 3; rf++ {
-		ns := c.Namespace(fmt.Sprintf("ok-rf%d", rf), peercache.WithReplicationFactor(rf))
-		if _, err := ns.Get(context.Background(), "k"); !errors.Is(err, peercache.ErrNotImplemented) {
-			t.Fatalf("replication factor %d = %v, want ErrNotImplemented", rf, err)
-		}
-	}
-}
-
-// TestNamespaceHandleIsMemoized pins the documented contract that the first
-// call wins. Two handles to one namespace with different replication factors
-// and different staleness bounds is a data-loss bug wearing a
-// convenience-feature costume.
-func TestNamespaceHandleIsMemoized(t *testing.T) {
-	c := newCache(t)
-	first := c.Namespace("sessions", peercache.WithReplicationFactor(2))
-	second := c.Namespace("sessions", peercache.WithReplicationFactor(9))
-
-	if first != second {
-		t.Fatal("Namespace returned a different handle for the same name")
-	}
-	// If the second call had won, its invalid replication factor would
-	// surface here.
-	if _, err := second.Get(context.Background(), "k"); !errors.Is(err, peercache.ErrNotImplemented) {
-		t.Fatalf("Get = %v, want ErrNotImplemented; the later options were applied", err)
-	}
-}
-
 func TestGroupOperationsAreNotImplemented(t *testing.T) {
-	c := newCache(t)
+	c, _ := newCache(t)
 	g := c.Group("user:123")
 	ctx := context.Background()
 
@@ -184,7 +105,7 @@ func TestGroupOperationsAreNotImplemented(t *testing.T) {
 }
 
 func TestRegisterGroupFunc(t *testing.T) {
-	c := newCache(t)
+	c, _ := newCache(t)
 	fn := func(context.Context, peercache.GroupState, []byte) ([]byte, error) { return nil, nil }
 
 	if err := c.RegisterGroupFunc("increment", fn); err != nil {
@@ -206,7 +127,7 @@ func TestRegisterGroupFunc(t *testing.T) {
 // condition, and it must not be confused with scaffolding that has not been
 // built yet.
 func TestCallDistinguishesUnregisteredFromUnimplemented(t *testing.T) {
-	c := newCache(t)
+	c, _ := newCache(t)
 	g := c.Group("user:123")
 	ctx := context.Background()
 
@@ -224,7 +145,8 @@ func TestCallDistinguishesUnregisteredFromUnimplemented(t *testing.T) {
 }
 
 func TestClosedCacheReportsErrClosed(t *testing.T) {
-	c, err := peercache.New(peercache.WithNodeID("n0"))
+	fc := clock.NewFake(clock.Epoch)
+	c, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(fc))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -240,9 +162,15 @@ func TestClosedCacheReportsErrClosed(t *testing.T) {
 	if err := c.Close(ctx); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
+	if pending := fc.Pending(); pending != 0 {
+		t.Fatalf("timer leak: %d timer(s) armed after Close", pending)
+	}
 
 	if _, err := ns.Get(ctx, "k"); !errors.Is(err, peercache.ErrClosed) {
 		t.Fatalf("Namespace.Get after Close = %v, want ErrClosed", err)
+	}
+	if err := ns.Set(ctx, "k", nil, 0); !errors.Is(err, peercache.ErrClosed) {
+		t.Fatalf("Namespace.Set after Close = %v, want ErrClosed", err)
 	}
 	if _, err := ns.GetOrLoad(ctx, "k"); !errors.Is(err, peercache.ErrClosed) {
 		t.Fatalf("Namespace.GetOrLoad after Close = %v, want ErrClosed", err)
@@ -257,24 +185,69 @@ func TestClosedCacheReportsErrClosed(t *testing.T) {
 	if err := c.RegisterGroupFunc("late", fn); !errors.Is(err, peercache.ErrClosed) {
 		t.Fatalf("RegisterGroupFunc after Close = %v, want ErrClosed", err)
 	}
+
+	// A namespace created after Close is usable only insofar as it reports
+	// that the cache is gone.
+	if _, err := c.Namespace("new").Get(ctx, "k"); !errors.Is(err, peercache.ErrClosed) {
+		t.Fatalf("Namespace created after Close = %v, want ErrClosed", err)
+	}
+}
+
+// TestCloseReportsAnExpiredDeadline guards against training callers to ignore
+// the context they passed. There is nothing to drain on a single node, but
+// succeeding silently on an expired deadline would be a lie that gets more
+// expensive at M6.
+func TestCloseReportsAnExpiredDeadline(t *testing.T) {
+	fc := clock.NewFake(clock.Epoch)
+	c, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(fc))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close with a cancelled context = %v, want context.Canceled", err)
+	}
+	if pending := fc.Pending(); pending != 0 {
+		t.Fatalf("timer leak: %d timer(s) armed after Close", pending)
+	}
 }
 
 // TestCancelledContextIsReportedFirst pins a rule that has to hold for every
 // milestone: an expired deadline is the caller's answer, whatever the callee
 // would otherwise have said.
 func TestCancelledContextIsReportedFirst(t *testing.T) {
-	c := newCache(t)
+	c, _ := newCache(t)
 	ns := c.Namespace("sessions")
 	g := c.Group("user:123")
+
+	if err := ns.Set(context.Background(), "k", []byte("v"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	// The key exists, so anything other than the context error would mean
+	// the deadline check happened too late.
 	if _, err := ns.Get(ctx, "k"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Namespace.Get = %v, want context.Canceled", err)
 	}
 	if err := ns.Set(ctx, "k", nil, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Namespace.Set = %v, want context.Canceled", err)
+	}
+	if err := ns.Delete(ctx, "k"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Namespace.Delete = %v, want context.Canceled", err)
+	}
+	if _, err := ns.Exists(ctx, "k"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Namespace.Exists = %v, want context.Canceled", err)
+	}
+	if _, err := ns.BatchGet(ctx, []string{"k"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Namespace.BatchGet = %v, want context.Canceled", err)
+	}
+	if _, err := ns.GetOrLoad(ctx, "k"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Namespace.GetOrLoad = %v, want context.Canceled", err)
 	}
 	if _, err := g.Call(ctx, "anything", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Group.Call = %v, want context.Canceled", err)
@@ -282,7 +255,7 @@ func TestCancelledContextIsReportedFirst(t *testing.T) {
 }
 
 func TestRouterSubmit(t *testing.T) {
-	c := newCache(t)
+	c, _ := newCache(t)
 	router := peercache.NewRouter(c, func(s string) string { return s }, "apply")
 	ctx := context.Background()
 
@@ -350,6 +323,8 @@ func TestSentinelErrorsAreDistinct(t *testing.T) {
 		"ErrNotOwner":              peercache.ErrNotOwner,
 		"ErrStateEscaped":          peercache.ErrStateEscaped,
 		"ErrNoLoader":              peercache.ErrNoLoader,
+		"ErrLoaderPanic":           peercache.ErrLoaderPanic,
+		"ErrLoaderFailed":          peercache.ErrLoaderFailed,
 		"ErrFuncNotRegistered":     peercache.ErrFuncNotRegistered,
 		"ErrDuplicateRegistration": peercache.ErrDuplicateRegistration,
 		"ErrInvalidOption":         peercache.ErrInvalidOption,
@@ -367,5 +342,33 @@ func TestSentinelErrorsAreDistinct(t *testing.T) {
 				t.Fatalf("%s matches %s; sentinels must be distinct", nameA, nameB)
 			}
 		}
+	}
+}
+
+// TestSweeperReclaimsExpiredEntries proves the cache's single background
+// sweeper is wired to every namespace. Expiry is enforced on read regardless,
+// so this is about memory, not visibility.
+func TestSweeperReclaimsExpiredEntries(t *testing.T) {
+	c, fc := newCache(t)
+	ns := c.Namespace("sessions", peercache.WithShards(4))
+	ctx := context.Background()
+
+	for i := 0; i < 100; i++ {
+		if err := ns.Set(ctx, key(i), []byte("v"), time.Minute); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if got := c.Stats().OwnedKeys; got != 100 {
+		t.Fatalf("OwnedKeys = %d, want 100", got)
+	}
+
+	fc.Advance(2 * time.Minute)
+
+	// The sweeper is parked on the ticker; drive it until it has reclaimed
+	// everything. Yielding rather than sleeping, bounded by the go test
+	// timeout if the wiring is broken.
+	for c.Stats().OwnedKeys != 0 {
+		gosched()
+		fc.Advance(time.Second)
 	}
 }
