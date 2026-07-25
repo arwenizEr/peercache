@@ -379,6 +379,23 @@ mutate "gossip metadata updates advance the epoch" \
   'kind, transition = core.ChangeUpdate, true' \
   'TestEpochDoesNotRunAway' ./internal/membership/
 
+# The two below are wiring mutations rather than logic mutations. Every M3
+# invariant above holds inside internal/ownership whether or not the library
+# ever calls it; these check that peercache.New connects the guard to the
+# membership authority and to activation. A seam nobody tests is a seam that
+# breaks silently.
+mutate "the guard is built but never consulted" \
+  peercache.go \
+  'canActivate = guard.CanActivate' \
+  'canActivate = nil' \
+  'TestTwoNodesAgreeOnOwnership' .
+
+mutate "the guard never learns the membership" \
+  peercache.go \
+  'guard.Watch(resolved.Membership)' \
+  '_ = resolved.Membership' \
+  'TestJoiningNodeDefersNewlyAcquiredGroups' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 
