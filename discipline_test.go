@@ -35,10 +35,34 @@ var realTimePackages = []string{
 	"internal/membership",
 }
 
+// realTimeFiles are individual files exempt from the same rule, for the same
+// reason: each one drives a real gossip cluster, and gossip converges on
+// memberlist's own timers where no injected clock reaches.
+//
+// They are listed by name rather than by directory so that the exemption cannot
+// spread. cluster_test.go is the only test in the repository that runs two real
+// caches against real gossip — it exists because every other M3 test verifies a
+// seam in isolation and none of them proves the seams are connected. examples/m3
+// demonstrates the same thing to a reader.
+//
+// Both bound every wait and poll rather than sleeping, so the rule they are
+// exempt from is the injected-clock rule only. The no-time.Sleep rule still
+// applies to them and is enforced for the whole repository, with no exemptions
+// at all.
+var realTimeFiles = []string{
+	"cluster_test.go",
+	"examples/m3/main.go",
+}
+
 // exemptFromClockRule reports whether path may use the time package directly.
 func exemptFromClockRule(path string) bool {
 	for _, dir := range realTimePackages {
 		if strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	for _, file := range realTimeFiles {
+		if path == file {
 			return true
 		}
 	}
