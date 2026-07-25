@@ -1,0 +1,6 @@
+# Go source is gofmt-normalised with LF endings. Letting Git rewrite them to
+# CRLF on Windows checkouts makes `gofmt -l` non-empty, which fails CI for a
+# reason that has nothing to do with the code.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
