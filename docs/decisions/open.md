@@ -274,7 +274,32 @@ silent one, and the examples say plainly that these are inert.
 
 ---
 
-## 18. Deliberately deferred, per SPEC.md section 5
+## 18. A key's version is not monotonic across its lifetime — M1, an M4 constraint
+
+Versions live with the entry, so reclaiming an entry restarts the sequence at 1.
+An expired key that no sweep has reached yet is still resident, and overwriting
+it continues from the old version; the same key, once swept, starts again.
+
+**Whether a version restarts therefore depends on sweeper timing.** Two nodes
+running identical workloads can hold different versions for the same key, and a
+key's version can decrease.
+
+Found by `TestStoreMatchesReferenceModel`, which disagreed with its reference
+model for exactly this reason. Nobody reasoned their way to it; the model did.
+Pinned by `TestVersionRestartsOnlyIfTheEntryWasReclaimed`.
+
+**Why it is survivable:** the L1 TTL is a hard bound on staleness precisely
+because version comparison cannot be trusted as a total order. `internal/l1`
+already treats an expired entry as replaceable by *any* version, which is what
+stops a restarted sequence from wedging a key until its TTL runs out.
+
+**What M4 must not do:** treat a version as a cluster-wide monotonic counter, or
+use "version is lower" alone as proof that an incoming value is stale. If M4
+needs a real ordering it has to carry the owner's epoch alongside the version.
+
+---
+
+## 19. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 

@@ -236,6 +236,12 @@ func (s *Store) Exists(key string) bool {
 // that a cached copy elsewhere can be recognised as stale, which only ever
 // compares two versions of the same key. A global counter would add contention
 // for a total order nobody reads.
+//
+// A version is not monotonic across a key's whole lifetime. It lives with the
+// entry, so reclaiming the entry restarts the sequence at 1 — and whether an
+// expired entry has been reclaimed depends on when the sweeper last passed. Do
+// not treat "lower version" as proof that a value is stale; see
+// docs/decisions/open.md question 18.
 func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	var expiresAt int64
 	if ttl > 0 {

@@ -616,6 +616,88 @@ func TestCompressionRoundTrips(t *testing.T) {
 	}
 }
 
+// TestCompressionAcrossEveryReadPath covers the combinations that the
+// individual tests miss.
+//
+// Framing is applied on write and undone on read, and there is more than one
+// read path: Get, BatchGet, and the two routes through GetOrLoad — the one that
+// stores what the loader returned and the one that re-checks an
+// already-populated key. A framing bug on any of them corrupts values, and
+// testing only Get would have covered exactly one of four.
+func TestCompressionAcrossEveryReadPath(t *testing.T) {
+	compressible := bytes.Repeat([]byte("peercache-"), 500)
+	tiny := []byte("below the threshold")
+
+	var loaded atomic.Int64
+	c, _ := newCache(t)
+	ns := c.Namespace("framed",
+		peercache.WithCompression("lz4", 128),
+		peercache.WithLoader(func(_ context.Context, k string) ([]byte, time.Duration, error) {
+			loaded.Add(1)
+			if k == "loaded-large" {
+				return compressible, time.Minute, nil
+			}
+			return tiny, time.Minute, nil
+		}))
+	ctx := context.Background()
+
+	// Written directly, read back through Get and BatchGet.
+	if err := ns.Set(ctx, "large", compressible, 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := ns.Set(ctx, "small", tiny, 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := ns.Get(ctx, "large")
+	if err != nil || !bytes.Equal(got, compressible) {
+		t.Fatalf("Get(large) = %d bytes, %v", len(got), err)
+	}
+
+	batch, err := ns.BatchGet(ctx, []string{"large", "small"})
+	if err != nil {
+		t.Fatalf("BatchGet: %v", err)
+	}
+	if !bytes.Equal(batch["large"], compressible) {
+		t.Fatalf("BatchGet(large) returned %d bytes, want %d", len(batch["large"]), len(compressible))
+	}
+	if !bytes.Equal(batch["small"], tiny) {
+		t.Fatalf("BatchGet(small) = %q", batch["small"])
+	}
+
+	// Written by the loader: the value goes through Frame on the way in and
+	// must come back out of GetOrLoad unframed.
+	loadedLarge, err := ns.GetOrLoad(ctx, "loaded-large")
+	if err != nil || !bytes.Equal(loadedLarge, compressible) {
+		t.Fatalf("GetOrLoad(loaded-large) = %d bytes, %v", len(loadedLarge), err)
+	}
+
+	// The second call takes the resident path, which unframes rather than
+	// returning what the loader handed back. It must agree.
+	again, err := ns.GetOrLoad(ctx, "loaded-large")
+	if err != nil || !bytes.Equal(again, compressible) {
+		t.Fatalf("second GetOrLoad = %d bytes, %v", len(again), err)
+	}
+	if got := loaded.Load(); got != 1 {
+		t.Fatalf("loader ran %d times, want 1", got)
+	}
+
+	// And through a plain Get, which is a third route to the same bytes.
+	direct, err := ns.Get(ctx, "loaded-large")
+	if err != nil || !bytes.Equal(direct, compressible) {
+		t.Fatalf("Get of a loaded value = %d bytes, %v", len(direct), err)
+	}
+
+	// BatchSet writes through the framer too.
+	if err := ns.BatchSet(ctx, map[string][]byte{"batched": compressible}, 0); err != nil {
+		t.Fatalf("BatchSet: %v", err)
+	}
+	batched, err := ns.Get(ctx, "batched")
+	if err != nil || !bytes.Equal(batched, compressible) {
+		t.Fatalf("Get of a BatchSet value = %d bytes, %v", len(batched), err)
+	}
+}
+
 // pseudorandom returns deterministic high-entropy bytes, so an incompressible
 // payload does not need a random seed.
 func pseudorandom(n int) []byte {

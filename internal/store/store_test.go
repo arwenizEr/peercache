@@ -102,6 +102,45 @@ func TestVersionsIncrementPerKey(t *testing.T) {
 	}
 }
 
+// TestVersionRestartsOnlyIfTheEntryWasReclaimed pins a consequence of keeping
+// the version with the entry, found by the reference-model test rather than by
+// anyone reasoning about it.
+//
+// An expired key that a reader has observed but the sweeper has not yet reached
+// is still resident, so overwriting it continues the version sequence. The same
+// key, once swept, starts again at 1. Whether a version restarts therefore
+// depends on sweeper timing, which means a key's version is not monotonic
+// across its lifetime and two nodes can disagree about it.
+//
+// That is survivable — the L1 TTL is a hard bound precisely because version
+// comparison cannot be trusted as a total order — but it is a real constraint
+// on M4's invalidation design, so it is asserted here rather than left to be
+// rediscovered.
+func TestVersionRestartsOnlyIfTheEntryWasReclaimed(t *testing.T) {
+	s, fc := newStore(t, func(o *store.Options) { o.Shards = 1 })
+
+	s.Set("k", []byte("v"), time.Minute)
+	s.Set("k", []byte("v"), time.Minute) // version 2
+	fc.Advance(2 * time.Minute)
+
+	// Expired but not swept: still resident, so the sequence continues.
+	if _, _, ok := s.Get("k"); ok {
+		t.Fatal("an expired key was served")
+	}
+	if got := s.Set("k", []byte("v"), time.Minute); got != 3 {
+		t.Fatalf("Set over an expired-but-resident key returned version %d, want 3", got)
+	}
+
+	// Now expire it and let the sweeper reclaim it.
+	fc.Advance(2 * time.Minute)
+	if removed := s.Sweep(s.Shards()); removed != 1 {
+		t.Fatalf("Sweep removed %d entries, want 1", removed)
+	}
+	if got := s.Set("k", []byte("v"), time.Minute); got != 1 {
+		t.Fatalf("Set after the entry was reclaimed returned version %d, want 1", got)
+	}
+}
+
 func TestZeroLengthValueIsNotAbsence(t *testing.T) {
 	s, _ := newStore(t)
 	s.Set("empty", []byte{}, 0)
