@@ -180,6 +180,9 @@ wall clock against a 50 ms budget.
 - [`docs/api.md`](docs/api.md) — the public API, with runnable examples
 - [`docs/benchmarks.md`](docs/benchmarks.md) — numbers, with the machine they
   were measured on
+- [`docs/verification.md`](docs/verification.md) — which acceptance criteria
+  were mutation-tested, and how each failed when the behaviour was broken on
+  purpose
 - [`docs/decisions/`](docs/decisions/) — one file per significant choice, plus
   `open.md` for everything still guessed at
 - [`SPEC.md`](SPEC.md) — the build plan

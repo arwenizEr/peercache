@@ -345,6 +345,7 @@ func TestGetOrLoadCollapsesConcurrentMisses(t *testing.T) {
 	const callers = 1000
 
 	var invocations atomic.Int64
+	var arrived atomic.Int64
 	release := make(chan struct{})
 
 	c, _ := newCache(t)
@@ -362,12 +363,30 @@ func TestGetOrLoadCollapsesConcurrentMisses(t *testing.T) {
 	results := make(chan outcome, callers)
 	for i := 0; i < callers; i++ {
 		go func() {
+			arrived.Add(1)
 			val, err := ns.GetOrLoad(context.Background(), "hot")
 			results <- outcome{val, err}
 		}()
 	}
 
-	for c.Stats().InflightLoads < callers {
+	// Every caller has entered GetOrLoad. This always happens: it is only
+	// goroutine start-up, independent of whether collapsing works.
+	for arrived.Load() < callers {
+		gosched()
+	}
+
+	// Now they must all be *inside* one flight. Bounded, because if
+	// collapsing regressed this condition is never reached — and a test that
+	// hangs for the full timeout tells you far less than one that says which
+	// invariant broke. An earlier version of this test spun here forever and
+	// took 300 seconds to report nothing.
+	const yields = 5_000_000
+	for i := 0; c.Stats().InflightLoads < callers; i++ {
+		if i > yields {
+			t.Fatalf("%d callers entered GetOrLoad but only %d are inside a single flight "+
+				"after %d yields; concurrent misses are not collapsing",
+				arrived.Load(), c.Stats().InflightLoads, yields)
+		}
 		gosched()
 	}
 	close(release)
