@@ -3,6 +3,7 @@ package peercache_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sort"
@@ -378,13 +379,21 @@ func ExampleCache_RegisterGroupFunc() {
 	}
 	defer func() { _ = cache.Close(context.Background()) }()
 
-	increment := func(_ context.Context, s peercache.GroupState, _ []byte) ([]byte, error) {
+	increment := func(_ context.Context, s peercache.GroupState, delta []byte) ([]byte, error) {
 		// s is plain local memory on the group's single goroutine. No
 		// context, no error, no lock — that is the point of moving the
-		// computation to the data.
-		current, _ := s.Get("count")
-		s.Set("count", append(current, '.'))
-		return nil, nil
+		// computation to the data. Nothing here can race, because nothing
+		// else runs on this group while this turn does.
+		var n uint64
+		if cur, ok := s.Get("count"); ok {
+			n = binary.BigEndian.Uint64(cur)
+		}
+		n += binary.BigEndian.Uint64(delta)
+
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, n)
+		s.Set("count", buf)
+		return buf, nil
 	}
 
 	if err := cache.RegisterGroupFunc("increment", increment); err != nil {
@@ -396,14 +405,29 @@ func ExampleCache_RegisterGroupFunc() {
 	err = cache.RegisterGroupFunc("increment", increment)
 	fmt.Println("duplicate rejected:", errors.Is(err, peercache.ErrDuplicateRegistration))
 
-	_, err = cache.Group("user:123").Call(context.Background(), "increment", nil)
-	fmt.Println("Call:", errors.Is(err, peercache.ErrNotImplemented))
+	one := make([]byte, 8)
+	binary.BigEndian.PutUint64(one, 1)
 
-	_, err = cache.Group("user:123").Call(context.Background(), "unknown", nil)
+	ctx := context.Background()
+	group := cache.Group("user:123")
+	for i := 0; i < 3; i++ {
+		if _, err := group.Call(ctx, "increment", one); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+	total, err := group.Call(ctx, "increment", one)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("count after four calls:", binary.BigEndian.Uint64(total))
+
+	_, err = group.Call(ctx, "unknown", nil)
 	fmt.Println("unknown function:", errors.Is(err, peercache.ErrFuncNotRegistered))
 	// Output:
 	// duplicate rejected: true
-	// Call: true
+	// count after four calls: 4
 	// unknown function: true
 }
 

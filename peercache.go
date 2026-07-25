@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/peercache/peercache/internal/actor"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
@@ -94,8 +95,21 @@ func New(opts ...Option) (Cache, error) {
 		return nil, err
 	}
 
+	groups, err := actor.New(actor.Options{
+		Clock:       resolved.Clock,
+		Logger:      resolved.Logger,
+		MailboxSize: resolved.GroupMailboxSize,
+		IdleTimeout: resolved.GroupIdleTimeout,
+		MaxActive:   resolved.MaxActiveGroups,
+		OnEvent:     resolved.OnEvent,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	c := &cache{
 		opts:       resolved,
+		groups:     groups,
 		namespaces: make(map[string]*namespace),
 		done:       make(chan struct{}),
 		stopped:    make(chan struct{}),
@@ -108,6 +122,10 @@ func New(opts ...Option) (Cache, error) {
 // cache is the M1 implementation of [Cache].
 type cache struct {
 	opts core.Options
+
+	// groups is the actor runtime: the activation directory and every
+	// group's single goroutine.
+	groups *actor.Runtime
 
 	// ticker drives one sweeper for every namespace. Per-namespace
 	// sweepers would mean a goroutine per namespace for work that is
@@ -126,7 +144,6 @@ type cache struct {
 	closed atomic.Bool
 
 	mu         sync.RWMutex
-	funcs      map[string]GroupFunc
 	namespaces map[string]*namespace
 	// order preserves namespace creation order so that sweeping and stats
 	// are deterministic rather than map-iteration order.
@@ -210,26 +227,14 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 }
 
 func (c *cache) Group(id string) Group {
-	return &noopGroup{cache: c, id: id}
+	return &group{cache: c, id: id}
 }
 
 func (c *cache) RegisterGroupFunc(name string, fn GroupFunc) error {
-	if name == "" || fn == nil {
-		return ErrInvalidOption
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed.Load() {
 		return ErrClosed
 	}
-	if _, dup := c.funcs[name]; dup {
-		return ErrDuplicateRegistration
-	}
-	if c.funcs == nil {
-		c.funcs = make(map[string]GroupFunc)
-	}
-	c.funcs[name] = fn
-	return nil
+	return c.groups.Register(name, fn)
 }
 
 func (c *cache) Stats() Stats {
@@ -240,9 +245,12 @@ func (c *cache) Stats() Stats {
 	}
 	c.mu.RUnlock()
 
+	groups := c.groups.Stats()
 	stats := Stats{
-		Self:    Node{ID: c.opts.NodeID, Addr: c.opts.BindAddr},
-		Members: 1,
+		Self:              Node{ID: c.opts.NodeID, Addr: c.opts.BindAddr},
+		Members:           1,
+		AddressableGroups: groups.Addressable,
+		ActiveGroups:      groups.Active,
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
@@ -305,6 +313,12 @@ func (c *cache) Close(ctx context.Context) error {
 		c.ticker.Stop()
 		<-c.stopped
 
+		// Groups first: an activated group holds a goroutine, and its
+		// turns may still be running when Close is called.
+		if err := c.groups.Close(ctx); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing the group runtime: %w", err))
+		}
+
 		for _, ns := range namespaces {
 			if ns.store == nil {
 				continue
@@ -328,13 +342,5 @@ func (c *cache) Close(ctx context.Context) error {
 // isClosed reports whether Close has run. It is on the hot path of every
 // namespace operation, so it must not take a lock.
 func (c *cache) isClosed() bool { return c.closed.Load() }
-
-// hasFunc reports whether a group function is registered under name.
-func (c *cache) hasFunc(name string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	_, ok := c.funcs[name]
-	return ok
-}
 
 var _ Cache = (*cache)(nil)

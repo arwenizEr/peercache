@@ -6,9 +6,9 @@
 // defined and compiling, and configuration is validated at startup rather than
 // on the first request.
 //
-// The namespace data path was M0 scaffolding and is now real; see
-// ./examples/m1 for it. What remains here is what M0 itself delivered and what
-// is still true: everything below the data path.
+// The namespace and group data paths were M0 scaffolding and are now real; see
+// ./examples/m1 and ./examples/m2. What remains here is what M0 itself
+// delivered and what is still true: everything below the data path.
 //
 // Run it with:
 //
@@ -80,13 +80,13 @@ func run() error {
 	fmt.Println("group function registered; duplicate registration rejected")
 
 	group := cache.Group("user:123")
-	if _, err := group.Call(ctx, "increment", []byte("+1")); !errors.Is(err, peercache.ErrNotImplemented) {
-		return fmt.Errorf("expected ErrNotImplemented from Call, got %w", err)
+	if _, err := group.Call(ctx, "increment", []byte("+1")); err != nil {
+		return fmt.Errorf("calling increment: %w", err)
 	}
 	if _, err := group.Call(ctx, "unregistered", nil); !errors.Is(err, peercache.ErrFuncNotRegistered) {
 		return fmt.Errorf("expected ErrFuncNotRegistered, got %w", err)
 	}
-	fmt.Println("group Call: not implemented until M2; unknown names are distinguishable now")
+	fmt.Println("group function invoked; unknown names report ErrFuncNotRegistered")
 
 	// Bad configuration is reported rather than ignored, even though
 	// Namespace cannot return an error.

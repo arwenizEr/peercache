@@ -58,6 +58,48 @@ func WithMembership(m MembershipAuthority) Option {
 	return func(o *core.Options) { o.Membership = m }
 }
 
+// WithGroupMailboxSize bounds how many requests may queue for one group before
+// further calls are refused with [ErrGroupOverloaded]. The default is 64.
+//
+// Small on purpose. A deep queue does not make a slow group faster; it only
+// delays the moment the caller finds out, and it converts one slow group into
+// unbounded memory.
+func WithGroupMailboxSize(n int) Option {
+	return func(o *core.Options) { o.GroupMailboxSize = n }
+}
+
+// WithGroupIdleTimeout sets how long an activated group waits with no work
+// before releasing its goroutine. The default is 30 seconds.
+//
+// Deactivation keeps the group's state and timer schedule; only the goroutine
+// and mailbox are released. A group with pending timers is exempt, because
+// nothing else would wake it and its timer would silently never fire.
+func WithGroupIdleTimeout(d time.Duration) Option {
+	return func(o *core.Options) { o.GroupIdleTimeout = d }
+}
+
+// WithMaxActiveGroups caps concurrently activated groups, evicting the
+// least-recently-activated when the cap is exceeded. The default is 20,000; a
+// negative value means unlimited.
+//
+// Each activation costs a goroutine, so this is the knob that bounds the
+// runtime's memory. Eviction releases the goroutine and keeps the state, so an
+// evicted group is indistinguishable from an idle one except by latency.
+func WithMaxActiveGroups(n int) Option {
+	return func(o *core.Options) { o.MaxActiveGroups = n }
+}
+
+// WithEventHandler registers a receiver for lifecycle events: activation,
+// deactivation, and the create/update/delete of group keys.
+//
+// The handler runs on the emitting group's turn goroutine and must not block —
+// anything slow belongs on the far side of a channel the handler owns. Delivery
+// is best effort: nothing in this library may depend on an event being
+// observed, for the same reason nothing may depend on an invalidation arriving.
+func WithEventHandler(fn func(Event)) Option {
+	return func(o *core.Options) { o.OnEvent = fn }
+}
+
 // WithLoader registers the function that reconstructs a missing value
 // (SPEC.md section 3.1).
 //

@@ -20,6 +20,7 @@ ci: vet lint test test-race examples bench
 examples:
 	$(GO) run ./examples/m0
 	$(GO) run ./examples/m1
+	$(GO) run ./examples/m2
 
 ## test runs the suite without the race detector, which is the fast feedback loop.
 test:

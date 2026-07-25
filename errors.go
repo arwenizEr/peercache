@@ -60,6 +60,13 @@ var (
 	// be deterministic across pods.
 	ErrDuplicateRegistration = core.ErrDuplicateRegistration
 
+	// ErrGroupFuncPanic means a registered group function panicked. The
+	// panic is contained and converted rather than propagated: it would
+	// otherwise kill the group's only goroutine and wedge that group
+	// permanently, so one bad input would take a key range offline until the
+	// process restarted. The group remains usable and keeps its state.
+	ErrGroupFuncPanic = core.ErrGroupFuncPanic
+
 	// ErrLoaderPanic means a registered loader panicked. The panic is
 	// contained and converted rather than propagated, because a bug in
 	// application code must not become a panic in every unrelated goroutine

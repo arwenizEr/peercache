@@ -69,6 +69,13 @@ var (
 	// unrelated goroutine that happened to be waiting for the same key.
 	ErrLoaderPanic = errors.New("peercache: loader panicked")
 
+	// ErrGroupFuncPanic means a registered group function panicked. The
+	// panic is contained and converted rather than propagated: it would
+	// otherwise kill the group's only goroutine and wedge that group
+	// permanently, turning one bad input into a permanently unavailable
+	// key range.
+	ErrGroupFuncPanic = errors.New("peercache: group function panicked")
+
 	// ErrLoaderFailed means a load could not complete for a reason that is
 	// not the loader's own error, such as the loader exiting without
 	// returning.

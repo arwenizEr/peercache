@@ -31,6 +31,19 @@ type Options struct {
 	// Membership is the source of cluster membership. A nil authority
 	// means single-node operation.
 	Membership MembershipAuthority
+
+	// GroupMailboxSize bounds how many requests may queue for one group
+	// before further calls are refused with ErrGroupOverloaded.
+	GroupMailboxSize int
+	// GroupIdleTimeout is how long an activated group waits with no work
+	// before releasing its goroutine.
+	GroupIdleTimeout time.Duration
+	// MaxActiveGroups caps concurrently activated groups. Zero takes the
+	// default; a negative value means unlimited.
+	MaxActiveGroups int
+	// OnEvent receives lifecycle events. It runs on the emitting group's
+	// goroutine and must not block.
+	OnEvent func(Event)
 }
 
 // Option mutates [Options]. Options are applied in order, so a later option

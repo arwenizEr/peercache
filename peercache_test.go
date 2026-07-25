@@ -78,32 +78,6 @@ func TestStatsReportsSelf(t *testing.T) {
 	}
 }
 
-func TestGroupOperationsAreNotImplemented(t *testing.T) {
-	c, _ := newCache(t)
-	g := c.Group("user:123")
-	ctx := context.Background()
-
-	if g.ID() != "user:123" {
-		t.Fatalf("ID() = %q, want user:123", g.ID())
-	}
-
-	tests := map[string]func() error{
-		"Get":    func() error { _, err := g.Get(ctx, "k"); return err },
-		"Set":    func() error { return g.Set(ctx, "k", []byte("v")) },
-		"Delete": func() error { return g.Delete(ctx, "k") },
-		"Keys":   func() error { _, err := g.Keys(ctx); return err },
-		"Items":  func() error { _, err := g.Items(ctx); return err },
-		"Flush":  func() error { return g.Flush(ctx) },
-	}
-	for name, call := range tests {
-		t.Run(name, func(t *testing.T) {
-			if err := call(); !errors.Is(err, peercache.ErrNotImplemented) {
-				t.Fatalf("%s = %v, want ErrNotImplemented", name, err)
-			}
-		})
-	}
-}
-
 func TestRegisterGroupFunc(t *testing.T) {
 	c, _ := newCache(t)
 	fn := func(context.Context, peercache.GroupState, []byte) ([]byte, error) { return nil, nil }
@@ -122,11 +96,10 @@ func TestRegisterGroupFunc(t *testing.T) {
 	}
 }
 
-// TestCallDistinguishesUnregisteredFromUnimplemented matters more than it
-// looks: during a rolling upgrade a missing registration is a real, expected
-// condition, and it must not be confused with scaffolding that has not been
-// built yet.
-func TestCallDistinguishesUnregisteredFromUnimplemented(t *testing.T) {
+// TestCallOfAnUnregisteredFunction matters more than it looks: during a rolling
+// upgrade a missing registration is a real, expected condition, and it must be
+// distinguishable from every other failure.
+func TestCallOfAnUnregisteredFunction(t *testing.T) {
 	c, _ := newCache(t)
 	g := c.Group("user:123")
 	ctx := context.Background()
@@ -135,12 +108,18 @@ func TestCallDistinguishesUnregisteredFromUnimplemented(t *testing.T) {
 		t.Fatalf("Call of an unregistered function = %v, want ErrFuncNotRegistered", err)
 	}
 
-	fn := func(context.Context, peercache.GroupState, []byte) ([]byte, error) { return nil, nil }
+	fn := func(_ context.Context, s peercache.GroupState, _ []byte) ([]byte, error) {
+		return []byte("ran"), nil
+	}
 	if err := c.RegisterGroupFunc("known", fn); err != nil {
 		t.Fatalf("RegisterGroupFunc: %v", err)
 	}
-	if _, err := g.Call(ctx, "known", nil); !errors.Is(err, peercache.ErrNotImplemented) {
-		t.Fatalf("Call of a registered function = %v, want ErrNotImplemented", err)
+	got, err := g.Call(ctx, "known", nil)
+	if err != nil {
+		t.Fatalf("Call of a registered function: %v", err)
+	}
+	if string(got) != "ran" {
+		t.Fatalf("Call returned %q", got)
 	}
 }
 

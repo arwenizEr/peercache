@@ -208,6 +208,97 @@ mutate "loader runs without the namespace deadline" \
   '' \
   'TestLoaderTimeoutIsTheNamespacesNotTheCallers' .
 
+mutate "escaped group state is honoured instead of ignored" \
+  internal/actor/state.go \
+  'if s.rec.generation.Load() == s.gen {
+		return true
+	}
+	s.escapes.Add(1)
+	return false' \
+  'return true' \
+  'TestEscapedStateIsInertAndCounted' ./internal/actor/
+
+mutate "a full mailbox blocks instead of rejecting" \
+  internal/actor/record.go \
+  'select {
+	case r.act.mailbox <- req:
+		r.mu.Unlock()
+	default:
+		r.mu.Unlock()
+		r.rt.rejections.Add(1)
+		return nil, fmt.Errorf("actor: group %q: %w", r.id, core.ErrGroupOverloaded)
+	}' \
+  'mb := r.act.mailbox
+	r.mu.Unlock()
+	mb <- req' \
+  'TestFullMailboxRejectsRatherThanBlocking' ./internal/actor/
+
+mutate "a group function panic is no longer contained" \
+  internal/actor/record.go \
+  'if p := recover(); p != nil {
+			res = result{err: fmt.Errorf("%w: group %q: %v", core.ErrGroupFuncPanic, r.id, p)}
+			r.rt.opts.Logger.Error("group function panicked", "group", r.id, "panic", p)
+		}' \
+  '_ = r' \
+  'TestPanickingGroupFuncDoesNotWedgeTheGroup' ./internal/actor/
+
+mutate "deactivation discards group state" \
+  internal/actor/record.go \
+  'r.stopTimers()
+	r.act = nil' \
+  'r.stopTimers()
+	r.state = nil
+	r.act = nil' \
+  'TestDeactivationPreservesState' ./internal/actor/
+
+mutate "deactivation discards the timer schedule" \
+  internal/actor/record.go \
+  'func (r *record) stopTimers() {
+	for _, gt := range r.timers {
+		if gt.timer != nil {
+			gt.timer.Stop()
+			gt.timer = nil
+		}
+	}
+}' \
+  'func (r *record) stopTimers() {
+	for _, gt := range r.timers {
+		if gt.timer != nil {
+			gt.timer.Stop()
+		}
+	}
+	r.timers = nil
+}' \
+  'TestDeactivationPreservesPendingTimers' ./internal/actor/
+
+mutate "a group with pending timers is idle-deactivated" \
+  internal/actor/record.go \
+  'if !forced && len(r.timers) > 0 {' \
+  'if false && !forced && len(r.timers) > 0 {' \
+  'TestDeactivationPreservesPendingTimers' ./internal/actor/
+
+mutate "the active-group cap is ignored" \
+  internal/actor/runtime.go \
+  'for rt.active-len(victims) > rt.opts.MaxActive {' \
+  'for false && rt.active-len(victims) > rt.opts.MaxActive {' \
+  'TestActiveCapEvictsLeastRecentlyActivated' ./internal/actor/
+
+mutate "rescheduling a timer name accumulates duplicates" \
+  internal/actor/record.go \
+  'if existing, ok := r.timers[name]; ok && existing.timer != nil {
+		existing.timer.Stop()
+	}' \
+  '' \
+  'TestReschedulingATimerReplacesIt' ./internal/actor/
+
+mutate "the Items snapshot aliases group state" \
+  group.go \
+  'dup := make([]byte, len(val))
+				copy(dup, val)
+				items[key] = dup' \
+  'items[key] = val' \
+  'TestItemsSnapshotDoesNotAliasGroupState' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 

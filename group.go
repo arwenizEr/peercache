@@ -2,7 +2,6 @@ package peercache
 
 import (
 	"context"
-	"errors"
 
 	"github.com/peercache/peercache/internal/core"
 )
@@ -10,16 +9,16 @@ import (
 // Group is a handle to a named collection of keys guaranteed to share an owner
 // (SPEC.md section 3.2).
 //
-// A group is the unit of activation and of serialization. It is addressable at
-// all times, but it is activated lazily on its owner and deactivated after an
-// idle period. While activated, every operation on it runs on a single
-// goroutine fed by a bounded mailbox.
+// A group is a virtual actor: addressable at all times, activated lazily, and
+// deactivated after an idle period. While activated it owns exactly one
+// goroutine, fed by a bounded mailbox, and every operation below runs as one
+// turn on it.
 //
-// That is why there is no Lock method and never will be. Serialization is
-// structural: it comes from there being one goroutine, not from callers
-// agreeing to take a lock. A lock API would also be a distributed lock API,
-// with all the liveness problems that implies, on top of a membership layer
-// that is explicitly AP.
+// **There is no Lock and there will not be one.** Serialization is structural —
+// it comes from there being one goroutine, not from callers agreeing to take a
+// lock. A lock API here would also be a *distributed* lock API, with all the
+// liveness problems that implies, layered on a membership system that is
+// explicitly AP.
 //
 // The serialization guarantee holds while the group has one activation. A
 // partition can briefly produce two, which is detected through epochs and
@@ -32,17 +31,16 @@ type Group interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 
 	// Set stores a value within the group. Group entries have no
-	// independent TTL; they live as long as the group is activated or until
-	// deleted.
+	// independent TTL; they live as long as the group's record does.
 	Set(ctx context.Context, key string, val []byte) error
 
 	// Delete removes a key from the group. Removing an absent key is not an
 	// error.
 	Delete(ctx context.Context, key string) error
 
-	// Keys returns the group's keys. The result is a snapshot taken inside
-	// one turn, so it is internally consistent but stale the instant it is
-	// returned.
+	// Keys returns the group's keys, sorted. The result is a snapshot taken
+	// inside one turn, so it is internally consistent but stale the instant
+	// it is returned.
 	Keys(ctx context.Context) ([]string, error)
 
 	// Items returns the group's full contents as a snapshot. Cost is
@@ -51,7 +49,7 @@ type Group interface {
 	Items(ctx context.Context) (map[string][]byte, error)
 
 	// Call runs the registered function fn against this group's state,
-	// on the group's owner, inside a single turn.
+	// inside a single turn.
 	//
 	// This is the primary API. Moving the computation to the data is the
 	// point of the library: a counter increment, an aggregate update or a
@@ -60,9 +58,9 @@ type Group interface {
 	// blocking past the caller's deadline.
 	Call(ctx context.Context, fn string, arg []byte) ([]byte, error)
 
-	// Flush deactivates the group, releasing its memory after any pending
-	// turns complete. Because nothing is durable, flushing a group whose
-	// namespace has no loader discards its state.
+	// Flush deactivates the group, releasing its goroutine once pending
+	// turns complete. State and pending timers survive; the next operation
+	// reactivates it.
 	Flush(ctx context.Context) error
 }
 
@@ -74,87 +72,145 @@ type Group interface {
 // computation to the data.
 //
 // A GroupState is valid only for the turn that produced it. Capturing one in a
-// goroutine and using it later is a use-after-free in all but name. The
-// implementation stamps each state with a generation and turns a violation into
-// [ErrStateEscaped] on the calling layer, rather than a panic or silent
-// corruption.
+// goroutine and using it later is a use-after-free in all but name, and it is
+// what the generation stamp exists to stop: methods on an escaped state do
+// nothing and are counted, so the escape can neither corrupt a later turn nor
+// race with one. It does not panic, because the goroutine holding it is not
+// inside a Call and there is nobody to return an error to.
 type GroupState = core.GroupState
 
-// noopGroup is the placeholder implementation of [Group] until M2 builds the
-// actor runtime. Registration and lifecycle are real; every operation that
-// would touch group state reports [ErrNotImplemented].
-type noopGroup struct {
+// group is the M2 implementation of [Group], delegating to the actor runtime.
+type group struct {
 	cache *cache
 	id    string
 }
 
-func (g *noopGroup) ID() string { return g.id }
+func (g *group) ID() string { return g.id }
 
-// status mirrors noopNamespace.status: a closed cache is reported ahead of
-// unimplemented scaffolding.
-func (g *noopGroup) status() error {
+// status reports why the group cannot be used, or nil.
+func (g *group) status() error {
 	if g.cache.isClosed() {
 		return ErrClosed
 	}
-	return ErrNotImplemented
+	return nil
 }
 
-func (g *noopGroup) Get(ctx context.Context, _ string) ([]byte, error) {
+func (g *group) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, g.status()
+	if err := g.status(); err != nil {
+		return nil, err
+	}
+
+	out, err := g.cache.groups.Do(ctx, g.id, func(s GroupState) (any, error) {
+		val, ok := s.Get(key)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		return val, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	val, _ := out.([]byte)
+	return val, nil
 }
 
-func (g *noopGroup) Set(ctx context.Context, _ string, _ []byte) error {
+func (g *group) Set(ctx context.Context, key string, val []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return g.status()
+	if err := g.status(); err != nil {
+		return err
+	}
+	_, err := g.cache.groups.Do(ctx, g.id, func(s GroupState) (any, error) {
+		s.Set(key, val)
+		return nil, nil
+	})
+	return err
 }
 
-func (g *noopGroup) Delete(ctx context.Context, _ string) error {
+func (g *group) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return g.status()
+	if err := g.status(); err != nil {
+		return err
+	}
+	_, err := g.cache.groups.Do(ctx, g.id, func(s GroupState) (any, error) {
+		s.Delete(key)
+		return nil, nil
+	})
+	return err
 }
 
-func (g *noopGroup) Keys(ctx context.Context) ([]string, error) {
+func (g *group) Keys(ctx context.Context) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, g.status()
+	if err := g.status(); err != nil {
+		return nil, err
+	}
+	out, err := g.cache.groups.Do(ctx, g.id, func(s GroupState) (any, error) {
+		return s.Keys(), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	keys, _ := out.([]string)
+	return keys, nil
 }
 
-func (g *noopGroup) Items(ctx context.Context) (map[string][]byte, error) {
+func (g *group) Items(ctx context.Context) (map[string][]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, g.status()
+	if err := g.status(); err != nil {
+		return nil, err
+	}
+	out, err := g.cache.groups.Do(ctx, g.id, func(s GroupState) (any, error) {
+		keys := s.Keys()
+		items := make(map[string][]byte, len(keys))
+		for _, key := range keys {
+			if val, ok := s.Get(key); ok {
+				// Copied: this snapshot leaves the turn, so it
+				// cannot alias state a later turn may rewrite.
+				// Every other read in this library aliases; this
+				// one cannot.
+				dup := make([]byte, len(val))
+				copy(dup, val)
+				items[key] = dup
+			}
+		}
+		return items, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := out.(map[string][]byte)
+	return items, nil
 }
 
-func (g *noopGroup) Call(ctx context.Context, fn string, _ []byte) ([]byte, error) {
+func (g *group) Call(ctx context.Context, fn string, arg []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := g.status(); !errors.Is(err, ErrNotImplemented) {
+	if err := g.status(); err != nil {
 		return nil, err
 	}
-	// Registration is real even in M0, so an unregistered name is reported
-	// as such. Anything else would make the harness unable to distinguish a
-	// wiring mistake from missing scaffolding.
-	if !g.cache.hasFunc(fn) {
-		return nil, ErrFuncNotRegistered
-	}
-	return nil, ErrNotImplemented
+	return g.cache.groups.Call(ctx, g.id, fn, arg)
 }
 
-func (g *noopGroup) Flush(ctx context.Context) error {
+func (g *group) Flush(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return g.status()
+	if err := g.status(); err != nil {
+		return err
+	}
+	g.cache.groups.Deactivate(g.id)
+	return nil
 }
 
-var _ Group = (*noopGroup)(nil)
+var _ Group = (*group)(nil)
