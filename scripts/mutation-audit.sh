@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+#
+# Mutation audit: break each core invariant on purpose and check that the test
+# claiming to guard it actually fails.
+#
+# CLAUDE.md requires every acceptance criterion to be "covered by a named test
+# that would fail if the behavior regressed". A test that exists is not evidence
+# of that — it can pass because the behaviour is right, or because it never
+# really looked. This tells the two apart.
+#
+# It is not run by CI. It rewrites source files, and a mutation left behind by a
+# crashed run would be far worse than the coverage it buys. Run it by hand when
+# adding a test that guards a specific invariant:
+#
+#     bash scripts/mutation-audit.sh
+#
+# Results are recorded in docs/verification.md.
+
+set -u
+cd "$(dirname "$0")/.." || exit 1
+
+# Refuse to run on a dirty tree. Reverting is done with `git checkout --`, which
+# would silently discard uncommitted work in the files being mutated.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "refusing to run: the working tree has uncommitted changes." >&2
+  echo "this script reverts mutations with 'git checkout --', which would discard them." >&2
+  git status --short >&2
+  exit 1
+fi
+
+caught=0
+vacuous=0
+skipped=0
+
+# mutate NAME FILE FROM TO TEST PACKAGE
+#
+# Replaces the first occurrence of FROM with TO in FILE, runs TEST in PACKAGE,
+# and reports whether the test noticed. The file is always restored.
+mutate() {
+  local name="$1" file="$2" from="$3" to="$4" test="$5" pkg="$6"
+
+  if ! python - "$file" "$from" "$to" <<'PY'
+import sys
+path, frm, to = sys.argv[1], sys.argv[2], sys.argv[3]
+s = open(path, encoding="utf-8").read()
+if frm not in s:
+    sys.exit(1)
+open(path, "w", encoding="utf-8", newline="").write(s.replace(frm, to, 1))
+PY
+  then
+    echo "SKIP     $name (the code has moved; update this script)"
+    skipped=$((skipped + 1))
+    git checkout -- "$file"
+    return
+  fi
+
+  if go test "$pkg" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
+    echo "VACUOUS  $name -- $test PASSED with the behaviour broken"
+    vacuous=$((vacuous + 1))
+  else
+    echo "caught   $name -- by $test"
+    caught=$((caught + 1))
+  fi
+  git checkout -- "$file"
+}
+
+echo "=== invariant mutation audit ==="
+
+mutate "Set no longer copies the caller's buffer" \
+  internal/store/store.go \
+  'stored := make([]byte, len(val))
+	copy(stored, val)' \
+  'stored := val' \
+  'TestSetCopiesTheCallersBuffer' ./internal/store/
+
+mutate "Get copies instead of aliasing" \
+  internal/store/store.go \
+  'sh.hits.Add(1)
+	return e.val, e.version, true' \
+  'sh.hits.Add(1)
+	cp := make([]byte, len(e.val)); copy(cp, e.val); return cp, e.version, true' \
+  'TestGetReturnsTheStoredSlice' ./internal/store/
+
+mutate "read-path expiry disabled" \
+  internal/store/store.go \
+  'if e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt {' \
+  'if false && e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt {' \
+  'TestExpiryIsObservedOnRead' ./internal/store/
+
+mutate "shard selection collapses to one shard" \
+  internal/store/store.go \
+  'return s.shards[xxhash.Sum64String(key)&s.mask]' \
+  'return s.shards[0]' \
+  'TestKeysSpreadAcrossShards' ./internal/store/
+
+mutate "TTL deadline overflow reintroduced" \
+  internal/store/store.go \
+  'expiresAt = deadlineNanos(s.clk.Now(), ttl)' \
+  'expiresAt = s.clk.Now().Add(ttl).UnixNano()' \
+  'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
+
+mutate "L1 accepts an older version" \
+  internal/l1/l1.go \
+  'if live && version <= existing.version {' \
+  'if false && live && version <= existing.version {' \
+  'TestOlderVersionIsRejected' ./internal/l1/
+
+mutate "L1 stops clamping TTL to MaxTTL" \
+  internal/l1/l1.go \
+  'if ttl > c.maxTTL {
+		ttl = c.maxTTL
+	}' \
+  '' \
+  'TestEveryEntryIsTTLBounded' ./internal/l1/
+
+mutate "L1 write stripe removed" \
+  internal/l1/l1.go \
+  'stripe := c.stripeFor(key)
+	stripe.Lock()
+	defer stripe.Unlock()
+
+	now := c.clk.Now().UnixNano()' \
+  'now := c.clk.Now().UnixNano()' \
+  'TestConcurrentPutsNeverLeaveAnOlderVersion' ./internal/l1/
+
+mutate "frame parser accepts an unknown code" \
+  internal/codec/frame.go \
+  'if !known {
+			return nil, fmt.Errorf("codec: unknown frame code %d: %w", code, errCorruptFrame)
+		}' \
+  'if !known {
+			return src[1:], nil
+		}' \
+  'TestUnframeRejectsCorruptInput' ./internal/codec/
+
+mutate "namespaces share one store" \
+  peercache.go \
+  'ns = c.newNamespaceLocked(name, resolved)' \
+  'if len(c.order) > 0 { ns = &namespace{cache: c, name: name, opts: resolved, store: c.namespaces[c.order[0]].store} } else { ns = c.newNamespaceLocked(name, resolved) }' \
+  'TestNamespacesAreIsolated' .
+
+mutate "singleflight bypassed" \
+  namespace.go \
+  'result := n.flight.Do(ctx, key, func(loadCtx context.Context) ([]byte, time.Duration, error) {' \
+  'if true {
+		v, ttl, err := n.opts.Loader(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		n.store.Set(key, n.encode(v), ttl)
+		return v, nil
+	}
+	result := n.flight.Do(ctx, key, func(loadCtx context.Context) ([]byte, time.Duration, error) {' \
+  'TestGetOrLoadCollapsesConcurrentMisses' .
+
+echo
+echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: mutations were left behind:" >&2
+  git status --short >&2
+  exit 1
+fi
+echo "tree clean"
+
+if [ "$vacuous" -ne 0 ] || [ "$skipped" -ne 0 ]; then
+  exit 1
+fi
