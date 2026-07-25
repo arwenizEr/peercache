@@ -421,7 +421,26 @@ the boundary that logs it, not to make the message worse.
 
 ---
 
-## 25. Deliberately deferred, per SPEC.md section 5
+## 25. Goroutine leaks are caught by accident, not by construction — M3, a gap
+
+`internal/membership` leaked one goroutine per node until an unrelated latency
+budget in another package noticed. Open question 11 records that `goleak` is not
+wired in because parallel tests would make it noisy. That reasoning still holds,
+but the cost of it is now measured rather than theoretical.
+
+**Picked:** a targeted leak test per package that starts goroutines
+(`TestCloseLeavesNoGoroutines`), rather than a global `TestMain` check. It is
+narrower than `goleak` and catches the case that actually occurred: a `Close`
+that does not close.
+
+**What would resolve it:** `goleak.VerifyTestMain` in each package that owns
+goroutines, once the tests in that package are known not to run in parallel with
+anything that outlives them. Worth doing in M7 alongside the metrics work, when
+every long-lived goroutine in the system exists and can be enumerated.
+
+---
+
+## 26. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 

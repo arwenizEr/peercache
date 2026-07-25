@@ -116,6 +116,40 @@ The mutation was aimed at production code, found a false statement in a comment,
 and was replaced by one that targets what the sort actually does. Comments are
 not tested by anything else.
 
+### A goroutine leak that only one test could see
+
+`Gossip.consume` ranged over the channel memberlist delivers node events on.
+memberlist never closes that channel — not on `Shutdown`, not ever — so the
+goroutine waited forever. One leak per node, for the life of the process.
+
+Every membership test missed it, and they missed it structurally rather than by
+oversight: each constructs a node, asserts something, and exits. A goroutine
+that leaks *after* the assertion cannot fail the assertion.
+
+What found it was the M1 p99 acceptance test, which has nothing to do with
+membership. Adding `cluster_test.go` to the root package put four gossip nodes
+in the same binary; under `-count=2`, the goroutines leaked by the first
+iteration pushed the second iteration's p99 from 0.5µs to 1.475µs and broke the
+1µs budget.
+
+Two things are worth taking from that.
+
+**The `-count=2` gate earned its place.** CLAUDE.md requires it to catch state
+leaking between runs, and this is exactly that: a defect visible only on the
+second pass, in a package that did not contain it.
+
+**A budget in an unrelated test is a real detector.** The p99 assertion was not
+written to find goroutine leaks. It found one because a leak is a resource cost,
+and a tight latency budget is sensitive to resource costs whatever their origin.
+That is an argument for asserting on numbers rather than logging them.
+
+The fix signals a stop channel and *waits* for the goroutine to close a done
+channel, so that when `Close` returns the goroutine is provably gone rather than
+merely asked to leave. `TestCloseLeavesNoGoroutines` now guards it, and was
+itself verified by reverting the wait: it fails, taking 30 seconds to do so, and
+reports rather than hanging.
+
+
 ---
 
 ## Automated audit
@@ -126,7 +160,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all thirty-seven invariants:
+Latest run, all thirty-eight invariants:
 
 ```
 === store ===
@@ -184,10 +218,11 @@ caught   compares the previous view, not the settled -- TestPartitionedMinorityS
 
 === membership and wiring ===
 caught   gossip metadata updates advance the epoch  -- TestEpochDoesNotRunAway
+caught   the gossip event goroutine is never released -- TestCloseLeavesNoGoroutines
 caught   the guard is built but never consulted     -- TestTwoNodesAgreeOnOwnership
 caught   the guard never learns the membership      -- TestJoiningNodeDefersNewlyAcquiredGroups
 
-caught: 37   vacuous: 0   skipped: 0
+caught: 38   vacuous: 0   skipped: 0
 tree clean
 ```
 
