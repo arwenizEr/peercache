@@ -75,6 +75,41 @@ nobody will trust at three in the morning.
 
 ---
 
+## Automated audit
+
+`scripts/mutation-audit.sh` applies each mutation below, runs only the test that
+claims to guard it, and restores the file. It refuses to start on a dirty tree —
+it reverts with `git checkout --`, which would otherwise discard uncommitted
+work — and fails if any mutation is left behind or any test turns out to be
+vacuous.
+
+Latest run, all eleven invariants:
+
+```
+caught   Set no longer copies the caller's buffer  -- by TestSetCopiesTheCallersBuffer
+caught   Get copies instead of aliasing            -- by TestGetReturnsTheStoredSlice
+caught   read-path expiry disabled                 -- by TestExpiryIsObservedOnRead
+caught   shard selection collapses to one shard    -- by TestKeysSpreadAcrossShards
+caught   TTL deadline overflow reintroduced        -- by TestUnrepresentableTTLDoesNotExpireImmediately
+caught   L1 accepts an older version               -- by TestOlderVersionIsRejected
+caught   L1 stops clamping TTL to MaxTTL           -- by TestEveryEntryIsTTLBounded
+caught   L1 write stripe removed                   -- by TestConcurrentPutsNeverLeaveAnOlderVersion
+caught   frame parser accepts an unknown code      -- by TestUnframeRejectsCorruptInput
+caught   namespaces share one store                -- by TestNamespacesAreIsolated
+caught   singleflight bypassed                     -- by TestGetOrLoadCollapsesConcurrentMisses
+
+caught: 11   vacuous: 0   skipped: 0
+tree clean
+```
+
+It is deliberately **not** run by CI. It rewrites source files, and a mutation
+left behind by a crashed run would cost far more than the coverage it buys. Run
+it by hand when adding a test that guards a specific invariant.
+
+A `SKIP` result means the code moved and the script needs updating — which is a
+failure, not a pass, because a mutation that no longer applies is verifying
+nothing.
+
 ## A test that proved nothing
 
 Not every mutation confirms a test. `TestGetOrLoadRechecksAfterWinningTheFlight`

@@ -135,6 +135,8 @@ make examples      # run every example to completion; they assert what they show
 make bench         # benchmarks, 5 runs
 make fuzz          # fuzz the frame parser
 make bench-l1-eval # re-run the cache-library comparison (nested module)
+
+bash scripts/mutation-audit.sh   # break each invariant, check its test notices
 make ci            # exactly what the pipeline runs
 ```
 
