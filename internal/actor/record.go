@@ -265,6 +265,7 @@ func (r *record) finish(a *activation, forced bool) bool {
 		// A group with pending timers is exempt from idle deactivation.
 		// Deactivating it would stop its clock timers, and nothing would
 		// ever wake it again, so the timer would silently never fire.
+		r.rt.timerHeldOpen.Add(1)
 		r.mu.Unlock()
 		return false
 	}

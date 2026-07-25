@@ -110,6 +110,7 @@ type Runtime struct {
 	funcs   map[string]core.GroupFunc
 
 	turns              atomic.Int64
+	timerHeldOpen      atomic.Int64
 	rejections         atomic.Int64
 	refusedActivations atomic.Int64
 	escapes            atomic.Int64
@@ -316,6 +317,15 @@ type Counters struct {
 	// because this node does not own the group or because it acquired the
 	// group too recently to activate safely.
 	RefusedActivations int64
+	// TimerHeldOpen counts idle deactivations declined because the group
+	// still had a pending timer.
+	//
+	// It exists as a positive signal. "The group did not deactivate" is not
+	// directly observable — a test can only look and see it still active,
+	// which is equally true a moment before it deactivates. Counting the
+	// decision makes the exemption something that can be waited for rather
+	// than inferred from a sample.
+	TimerHeldOpen int64
 }
 
 // Stats returns a snapshot of the counters.
@@ -334,6 +344,7 @@ func (rt *Runtime) Stats() Counters {
 		Activations:        rt.activations.Load(),
 		Evictions:          rt.evictions.Load(),
 		RefusedActivations: rt.refusedActivations.Load(),
+		TimerHeldOpen:      rt.timerHeldOpen.Load(),
 	}
 }
 

@@ -106,30 +106,28 @@ func TestDeactivationPreservesPendingTimers(t *testing.T) {
 
 	// A group with a pending timer is exempt from idle deactivation:
 	// deactivating would stop its clock timer and nothing would ever wake it.
-	activationsBefore := rt.Stats().Activations
 	fc.Advance(time.Minute * 2)
 
-	// Round-trip through the mailbox before asserting. Advancing only
-	// *delivers* the idle-timer tick; the turn goroutine acts on it
-	// afterwards, so reading Stats immediately would sample the moment
-	// before deactivation and pass whether or not the exemption exists.
-	// A completed turn proves the goroutine has been round the loop.
-	if _, err := rt.Do(context.Background(), "g", func(core.GroupState) (any, error) {
-		return nil, nil
-	}); err != nil {
-		t.Fatalf("Do: %v", err)
-	}
-
+	// Wait for a *positive* signal that the exemption fired.
+	//
+	// "It did not deactivate" cannot be sampled: the group looks equally
+	// active a moment before it deactivates, so reading Stats right after an
+	// advance passes whether or not the exemption exists — and a round trip
+	// does not help either, because the turn loop selects between a ready
+	// mailbox and a ready idle tick in an unspecified order. Counting the
+	// declined deactivation turns the absence into a presence, which is
+	// something a test can wait for.
+	//
+	// The failure case is also positive: without the exemption the group
+	// deactivates, so Active drops to zero and this loop exits on the second
+	// condition with a message rather than timing out.
+	waitFor(t, "the idle deactivation to be declined", func() bool {
+		stats := rt.Stats()
+		return stats.TimerHeldOpen > 0 || stats.Active == 0
+	})
 	if got := rt.Stats().Active; got != 1 {
 		t.Fatalf("Stats().Active = %d; a group with a pending timer was idle-deactivated "+
 			"and its timer would never fire", got)
-	}
-	// Activations is the assertion that survives a reactivation: if the group
-	// had deactivated, the Do above would have revived it and the count would
-	// have moved.
-	if got := rt.Stats().Activations; got != activationsBefore {
-		t.Fatalf("the group was deactivated and reactivated (%d activations, was %d); "+
-			"a pending timer must prevent idle deactivation", got, activationsBefore)
 	}
 
 	// Force it out anyway, as the LRU cap would.
