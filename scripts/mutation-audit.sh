@@ -373,6 +373,17 @@ mutate "the guard compares against the previous view, not the settled one" \
   'g.settled.Store(g.table.current.Load())' \
   'TestPartitionedMinorityStopsActivating' ./internal/ownership/
 
+mutate "a stale epoch is accepted"   internal/ownership/guard.go   'if epoch < snap.epoch {'   'if false {'   'TestStaleEpochIsRefused' ./internal/ownership/
+
+mutate "a caller ahead of this node is not deferred"   internal/ownership/guard.go   'if epoch > snap.epoch {'   'if false {'   'TestFutureEpochDefersRatherThanRefusing' ./internal/ownership/
+
+mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '	current, ok := owner(snap, groupKey)'   '	if epoch < snap.epoch {
+		return fmt.Errorf("mutant: %w", core.ErrStaleEpoch)
+	}
+	current, ok := owner(snap, groupKey)'   'TestNotOwnerBeatsStaleEpoch' ./internal/ownership/
+
+mutate "local activation does not use the current epoch"   internal/ownership/guard.go   'return g.CanActivateAt(groupKey, g.table.Epoch())'   'return g.CanActivateAt(groupKey, 0)'   'TestCanActivateUsesTheCurrentEpoch' ./internal/ownership/
+
 mutate "gossip metadata updates advance the epoch" \
   internal/membership/gossip.go \
   'kind, transition = core.ChangeUpdate, false' \

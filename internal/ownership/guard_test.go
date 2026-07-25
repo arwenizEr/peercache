@@ -335,3 +335,95 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestStaleEpochIsRefused covers the half of SPEC.md §4 (M3) that the
+// activation delay does not: "a node refuses to activate a group whose epoch is
+// stale".
+//
+// The caller resolved ownership under a view that has since been replaced. Its
+// conclusion may still be right, but it was not reached from the facts this
+// node now holds, and a caller that cannot tell the difference will keep
+// arriving at the wrong node.
+func TestStaleEpochIsRefused(t *testing.T) {
+	self := core.Node{ID: "a"}
+	g, tbl, _ := newGuard(t, self, -1) // deferral off; the epoch is the subject
+	nodes := []core.Node{self, {ID: "b"}, {ID: "c"}}
+	g.Update(nodes, 7)
+
+	key := ownedBy(t, tbl, "a")
+
+	if err := g.CanActivateAt(key, 7); err != nil {
+		t.Fatalf("CanActivateAt at the current epoch: %v; a caller in step with this "+
+			"node must be allowed to activate", err)
+	}
+	err := g.CanActivateAt(key, 6)
+	if !errors.Is(err, core.ErrStaleEpoch) {
+		t.Fatalf("CanActivateAt at epoch 6 with the node at 7 = %v; want ErrStaleEpoch", err)
+	}
+	if got := g.Stats().StaleEpochs; got != 1 {
+		t.Fatalf("Stats().StaleEpochs = %d, want 1; the refusal must be countable", got)
+	}
+}
+
+// TestFutureEpochDefersRatherThanRefusing is the other direction, and it is a
+// different problem with the opposite remedy.
+//
+// A caller ahead of this node is not wrong; this node is behind. Answering
+// ErrStaleEpoch would send it away from the node that is about to be able to
+// serve it, so it gets ErrActivationPending — retry here, shortly.
+func TestFutureEpochDefersRatherThanRefusing(t *testing.T) {
+	self := core.Node{ID: "a"}
+	g, tbl, _ := newGuard(t, self, -1)
+	g.Update([]core.Node{self, {ID: "b"}, {ID: "c"}}, 7)
+
+	key := ownedBy(t, tbl, "a")
+
+	err := g.CanActivateAt(key, 9)
+	if !errors.Is(err, core.ErrActivationPending) {
+		t.Fatalf("CanActivateAt at epoch 9 with the node at 7 = %v; want ErrActivationPending, "+
+			"because this node is behind rather than the caller being stale", err)
+	}
+	if errors.Is(err, core.ErrStaleEpoch) {
+		t.Fatal("a caller ahead of this node was told its epoch was stale; that sends it " +
+			"away from the node that is about to be able to serve it")
+	}
+}
+
+// TestNotOwnerBeatsStaleEpoch pins the order of the two checks.
+//
+// When both are wrong, "go elsewhere" is the more useful answer: it is the
+// action the caller would take after re-resolving anyway, delivered one round
+// trip sooner.
+func TestNotOwnerBeatsStaleEpoch(t *testing.T) {
+	self := core.Node{ID: "a"}
+	g, tbl, _ := newGuard(t, self, -1)
+	g.Update([]core.Node{self, {ID: "b"}, {ID: "c"}}, 7)
+
+	other := ownedBy(t, tbl, "b")
+
+	err := g.CanActivateAt(other, 6)
+	if !errors.Is(err, core.ErrNotOwner) {
+		t.Fatalf("CanActivateAt(%q, 6) = %v; want ErrNotOwner even though the epoch is "+
+			"also stale, because the ownership answer is the actionable one", other, err)
+	}
+}
+
+// TestCanActivateUsesTheCurrentEpoch proves the no-epoch form is exactly the
+// epoch-carrying form at the current view, so that adding the epoch check did
+// not quietly change local activation.
+func TestCanActivateUsesTheCurrentEpoch(t *testing.T) {
+	self := core.Node{ID: "a"}
+	g, tbl, _ := newGuard(t, self, -1)
+
+	for _, epoch := range []core.Epoch{1, 2, 50, 1 << 40} {
+		g.Update([]core.Node{self, {ID: "b"}, {ID: "c"}}, epoch)
+		key := ownedBy(t, tbl, "a")
+		if err := g.CanActivate(key); err != nil {
+			t.Fatalf("CanActivate at epoch %d: %v; a local activation resolves under the "+
+				"current view and can never be stale", epoch, err)
+		}
+	}
+	if got := g.Stats().StaleEpochs; got != 0 {
+		t.Fatalf("Stats().StaleEpochs = %d after only local activations, want 0", got)
+	}
+}

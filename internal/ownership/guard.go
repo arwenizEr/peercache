@@ -21,13 +21,15 @@ const DefaultActivationDelay = 3 * time.Second
 
 // Guard decides whether this node may activate a group.
 //
-// It answers two questions, and they fail differently on purpose:
+// It answers three questions, and they fail differently on purpose:
 //
 //   - Does this node own the key? If not, [core.ErrNotOwner] — the caller
 //     should re-resolve and go elsewhere.
 //   - Did this node acquire the key so recently that the previous owner may not
 //     have noticed? If so, [core.ErrActivationPending] — the caller should
 //     retry here shortly.
+//   - Did the caller resolve ownership under a view that has since been
+//     replaced? If so, [core.ErrStaleEpoch] — see [Guard.CanActivateAt].
 //
 // A Guard is safe for concurrent use.
 type Guard struct {
@@ -60,6 +62,10 @@ type Guard struct {
 	// resolving ownership differently from this node.
 	deferrals atomic.Int64
 	refusals  atomic.Int64
+	// staleEpochs counts activations refused because the caller resolved
+	// ownership under a view older than this node's. Zero until M4, when
+	// requests start arriving with an epoch attached.
+	staleEpochs atomic.Int64
 
 	mu       sync.Mutex
 	watching bool
@@ -114,10 +120,37 @@ func NewGuard(opts GuardOptions) (*Guard, error) {
 // ActivationDelay returns the configured delay.
 func (g *Guard) ActivationDelay() time.Duration { return g.activationDelay }
 
-// CanActivate reports whether this node may activate the group now.
+// CanActivate reports whether this node may activate the group now, under this
+// node's own current view.
 //
-// It returns nil, [core.ErrNotOwner], or [core.ErrActivationPending].
+// It returns nil, [core.ErrNotOwner], or [core.ErrActivationPending]. A local
+// activation resolves ownership under the current epoch and so can never be
+// stale by construction, which is why this form takes no epoch.
 func (g *Guard) CanActivate(groupKey string) error {
+	return g.CanActivateAt(groupKey, g.table.Epoch())
+}
+
+// CanActivateAt reports whether this node may activate the group on behalf of a
+// caller that resolved ownership under epoch.
+//
+// SPEC.md §4 (M3) requires a node to refuse a group whose epoch is stale. The
+// two directions of disagreement are different problems and get different
+// errors, because they call for opposite corrective actions:
+//
+//   - epoch older than ours — [core.ErrStaleEpoch]. The caller decided under a
+//     view that has since been replaced. It should re-resolve; it may be
+//     talking to the wrong node entirely.
+//   - epoch newer than ours — [core.ErrActivationPending]. *This* node is
+//     behind, and cannot confirm ownership under a view it has not seen yet.
+//     The caller should ask again here shortly.
+//
+// Collapsing them into one error would send a caller away from the node that is
+// about to be able to serve it.
+//
+// M3 has no caller that carries an epoch, since nothing crosses the network
+// until M4. The check is implemented and tested now rather than left as a hole
+// for the transport to fall into.
+func (g *Guard) CanActivateAt(groupKey string, epoch core.Epoch) error {
 	snap := g.table.current.Load()
 	if len(snap.nodes) == 0 {
 		// A node that has not learned the membership yet owns nothing.
@@ -132,6 +165,22 @@ func (g *Guard) CanActivate(groupKey string) error {
 		g.refusals.Add(1)
 		return fmt.Errorf("ownership: group %q belongs to %s: %w", groupKey, current.ID, core.ErrNotOwner)
 	}
+
+	// Ownership is checked before the epoch on purpose. If this node does not
+	// own the key under its current view, "go elsewhere" is strictly more
+	// useful than "your epoch is old" — and it is the same corrective action
+	// the caller would take anyway, one round trip sooner.
+	if epoch < snap.epoch {
+		g.staleEpochs.Add(1)
+		return fmt.Errorf("ownership: group %q was resolved at epoch %d, this node is at %d: %w",
+			groupKey, epoch, snap.epoch, core.ErrStaleEpoch)
+	}
+	if epoch > snap.epoch {
+		g.deferrals.Add(1)
+		return fmt.Errorf("ownership: group %q was resolved at epoch %d, this node is still at %d: %w",
+			groupKey, epoch, snap.epoch, core.ErrActivationPending)
+	}
+
 	if g.activationDelay < 0 {
 		return nil
 	}
@@ -224,6 +273,11 @@ type Counters struct {
 	// the key. Sustained non-zero under stable membership means callers
 	// disagree with this node about ownership.
 	Refusals int64
+	// StaleEpochs counts activations refused because the caller resolved
+	// ownership under an older view. A steady trickle during a membership
+	// change is expected; a sustained rate means a caller is caching
+	// ownership for too long.
+	StaleEpochs int64
 	// Epoch is the current view's epoch.
 	Epoch core.Epoch
 	// Members is the size of the current view.
@@ -234,10 +288,11 @@ type Counters struct {
 func (g *Guard) Stats() Counters {
 	snap := g.table.current.Load()
 	return Counters{
-		Deferrals: g.deferrals.Load(),
-		Refusals:  g.refusals.Load(),
-		Epoch:     snap.epoch,
-		Members:   len(snap.nodes),
+		Deferrals:   g.deferrals.Load(),
+		Refusals:    g.refusals.Load(),
+		StaleEpochs: g.staleEpochs.Load(),
+		Epoch:       snap.epoch,
+		Members:     len(snap.nodes),
 	}
 }
 

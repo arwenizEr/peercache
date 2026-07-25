@@ -160,7 +160,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all thirty-eight invariants:
+Latest run, all forty-two invariants:
 
 ```
 === store ===
@@ -215,6 +215,10 @@ caught   an unknown membership claims everything    -- TestGuardWithNoMembership
 caught   the guard activates groups it does not own -- TestGuardRefusesGroupsItDoesNotOwn
 caught   newly acquired groups activate immediately -- TestGuardDefersOnlyNewlyAcquiredGroups
 caught   compares the previous view, not the settled -- TestPartitionedMinorityStopsActivating
+caught   a stale epoch is accepted                  -- TestStaleEpochIsRefused
+caught   a caller ahead of this node is not deferred -- TestFutureEpochDefersRatherThanRefusing
+caught   the epoch is checked before ownership      -- TestNotOwnerBeatsStaleEpoch
+caught   local activation ignores the current epoch -- TestCanActivateUsesTheCurrentEpoch
 
 === membership and wiring ===
 caught   gossip metadata updates advance the epoch  -- TestEpochDoesNotRunAway
@@ -222,7 +226,7 @@ caught   the gossip event goroutine is never released -- TestCloseLeavesNoGorout
 caught   the guard is built but never consulted     -- TestTwoNodesAgreeOnOwnership
 caught   the guard never learns the membership      -- TestJoiningNodeDefersNewlyAcquiredGroups
 
-caught: 38   vacuous: 0   skipped: 0
+caught: 42   vacuous: 0   skipped: 0
 tree clean
 ```
 

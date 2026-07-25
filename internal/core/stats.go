@@ -58,4 +58,10 @@ type Stats struct {
 	// about who owns what.
 	RefusedActivations  int64
 	DeferredActivations int64
+	// StaleEpochRefusals counts activations refused because the caller
+	// resolved ownership under a view older than this node's. It stays zero
+	// until M4, when requests start arriving with an epoch attached; a
+	// sustained rate after that means a caller is caching ownership for
+	// longer than membership stays still.
+	StaleEpochRefusals int64
 }

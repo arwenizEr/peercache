@@ -440,8 +440,8 @@ Note the limit precisely: the guard runs on *activation*. A group that is
 already active on a node that has just lost it keeps running there until it goes
 idle. Graceful handoff is M6. See `docs/decisions/0012-the-activation-guard.md`.
 
-`Stats().DeferredActivations` and `Stats().RefusedActivations` count these
-decisions. A spike in deferrals after a change that returns to zero is healthy;
+`Stats().DeferredActivations`, `Stats().RefusedActivations` and
+`Stats().StaleEpochRefusals` count these decisions. A spike in deferrals after a change that returns to zero is healthy;
 sustained refusals under stable membership mean callers disagree with this node
 about who owns what.
 
@@ -457,7 +457,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrNotFound` | Key or group does not exist. | no |
 | `ErrClosed` | The cache has been closed. | no |
 | `ErrGroupOverloaded` | Mailbox full; rejected rather than queued. | yes, after backoff |
-| `ErrStaleEpoch` | Attempted under an older membership epoch. | yes, after re-resolving |
+| `ErrStaleEpoch` | Ownership was resolved under a view this node has already replaced. | yes, after re-resolving |
 | `ErrNotOwner` | This node does not own the key's group. | yes, after re-resolving |
 | `ErrActivationPending` | This node owns the group but acquired it within `WithActivationDelay`. | yes, here, shortly |
 | `ErrStateEscaped` | A `GroupState` was used outside its turn. | no — it is a bug |
@@ -472,6 +472,14 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 
 `ErrGroupOverloaded` is backpressure working as designed. Blocking indefinitely
 would convert one slow group into a cluster-wide stall.
+
+`ErrStaleEpoch`, `ErrNotOwner` and `ErrActivationPending` are all about
+ownership and they are retryable in different directions. `ErrStaleEpoch` means
+*your view is out of date* — re-resolve, you may be at the wrong node. It is
+raised when a caller's epoch is older than this node's; when it is *newer*, the
+answer is `ErrActivationPending` instead, because it is this node that is behind
+and it will catch up. Until M4 nothing carries an epoch across a boundary, so in
+M3 this error is reachable only through `Guard.CanActivateAt` directly.
 
 `ErrNotOwner` and `ErrActivationPending` are both about ownership and they are
 retryable in opposite directions. `ErrNotOwner` means *go somewhere else* —

@@ -288,6 +288,7 @@ func (c *cache) Stats() Stats {
 		stats.Members = owned.Members
 		stats.RefusedActivations = groups.RefusedActivations
 		stats.DeferredActivations = owned.Deferrals
+		stats.StaleEpochRefusals = owned.StaleEpochs
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {

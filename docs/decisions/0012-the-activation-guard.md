@@ -39,11 +39,28 @@ answer is stamped with the epoch it was computed under. On top of that, a
   should re-resolve and go elsewhere. From M4 the router does that for them.
 - **`ErrActivationPending`** — this node owns the key but acquired it within the
   last `ActivationDelay`. Retryable *here*, shortly.
+- **`ErrStaleEpoch`** — the caller resolved ownership under a view this node has
+  already replaced. Retryable elsewhere, after re-resolving.
 
 The delay defaults to 3 seconds and is a deliberate availability trade. It is a
 guess about how long the previous owner takes to notice it lost the key. Too
 short and both nodes serve the group; too long and every membership change is a
 brownout.
+
+The epoch check is the other half of SPEC.md §4's requirement and it is
+deliberately asymmetric. A caller whose epoch is *older* than ours reached its
+conclusion from facts we have since discarded, and gets `ErrStaleEpoch`. A
+caller whose epoch is *newer* is not wrong — we are behind, and cannot confirm
+ownership under a view we have not seen — so it gets `ErrActivationPending` and
+is told to ask again here. One error for both would send a caller away from the
+node that is about to be able to serve it.
+
+Ownership is checked before the epoch. When both are wrong, "go elsewhere" is
+the action the caller would take after re-resolving anyway, delivered a round
+trip sooner.
+
+Nothing carries an epoch across a boundary until M4. `CanActivateAt` exists and
+is tested now rather than left as a hole for the transport to discover.
 
 Two refinements matter more than the delay itself.
 
