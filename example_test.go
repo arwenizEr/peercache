@@ -1,12 +1,16 @@
 package peercache_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/peercache/peercache"
+	"github.com/peercache/peercache/internal/clock"
 )
 
 // Example shows the whole M0 surface: construct, configure a namespace,
@@ -97,6 +101,257 @@ func ExampleWithLoader() {
 	// GetOrLoad: loaded:user:123
 	// loader calls: 1
 	// no loader: true
+}
+
+// ExampleNamespace_Set shows TTL expiry driven by an injected clock, which is
+// how every timeout in this library is meant to be tested: no sleeping, and the
+// same behaviour every run.
+func ExampleNamespace_Set() {
+	fake := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fake))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	sessions := cache.Namespace("sessions")
+	ctx := context.Background()
+
+	if err := sessions.Set(ctx, "user:123", []byte("cart=3"), time.Minute); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fake.Advance(59 * time.Second)
+	_, err = sessions.Get(ctx, "user:123")
+	fmt.Println("after 59s:", err == nil)
+
+	fake.Advance(2 * time.Second)
+	_, err = sessions.Get(ctx, "user:123")
+	fmt.Println("after 61s:", errors.Is(err, peercache.ErrNotFound))
+
+	// A non-positive TTL means the value does not expire on its own. It can
+	// still be lost: nothing here is durable.
+	if err := sessions.Set(ctx, "forever", []byte("v"), 0); err != nil {
+		fmt.Println(err)
+		return
+	}
+	fake.Advance(365 * 24 * time.Hour)
+	_, err = sessions.Get(ctx, "forever")
+	fmt.Println("after a year, no TTL:", err == nil)
+	// Output:
+	// after 59s: true
+	// after 61s: true
+	// after a year, no TTL: true
+}
+
+// ExampleNamespace_Get shows the aliasing contract, which is the sharpest edge
+// in this API: Set copies, Get does not.
+func ExampleNamespace_Get() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	ns := cache.Namespace("values")
+	ctx := context.Background()
+
+	// Set copies, so the caller may reuse its buffer immediately.
+	buf := []byte("original")
+	if err := ns.Set(ctx, "k", buf, 0); err != nil {
+		fmt.Println(err)
+		return
+	}
+	copy(buf, "MUTATED!")
+
+	stored, err := ns.Get(ctx, "k")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("reusing the write buffer is safe: %s\n", stored)
+
+	// Get does NOT copy. Writing through the returned slice corrupts the
+	// store for every later reader. Copy it if you need to change it.
+	mine := make([]byte, len(stored))
+	copy(mine, stored)
+	mine[0] = 'O'
+	fmt.Printf("copy before modifying: %s, store still holds %s\n", mine, stored)
+	// Output:
+	// reusing the write buffer is safe: original
+	// copy before modifying: Original, store still holds original
+}
+
+// ExampleNamespace_BatchGet shows batch semantics: keys are grouped by owner
+// and issued as one request per owner, and absent keys are omitted rather than
+// reported as errors.
+func ExampleNamespace_BatchGet() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	counters := cache.Namespace("counters")
+	ctx := context.Background()
+
+	if err := counters.BatchSet(ctx, map[string][]byte{
+		"tenant:acme":   []byte("41"),
+		"tenant:globex": []byte("7"),
+	}, time.Hour); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	got, err := counters.BatchGet(ctx, []string{"tenant:acme", "tenant:globex", "tenant:missing"})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// Sorted, because map iteration order is not defined.
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Printf("%s = %s\n", k, got[k])
+	}
+	fmt.Println("asked for 3, received:", len(got))
+	// Output:
+	// tenant:acme = 41
+	// tenant:globex = 7
+	// asked for 3, received: 2
+}
+
+// ExampleWithCompression shows opt-in compression above a size threshold.
+//
+// It is off by default: a decompress costs roughly seventy times a plain read,
+// which is the wrong default for a cache whose premise is sub-microsecond local
+// reads. Values below the threshold are stored verbatim, transparently.
+func ExampleWithCompression() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	blobs := cache.Namespace("blobs", peercache.WithCompression("lz4", 1024))
+	ctx := context.Background()
+
+	large := []byte(strings.Repeat("peercache-", 500))
+	small := []byte("well under the threshold")
+
+	for name, payload := range map[string][]byte{"large": large, "small": small} {
+		if err := blobs.Set(ctx, name, payload, time.Hour); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+
+	got, err := blobs.Get(ctx, "large")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("large round-trips intact:", bytes.Equal(got, large))
+
+	got, err = blobs.Get(ctx, "small")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("small round-trips intact:", bytes.Equal(got, small))
+
+	// An unregistered compressor is rejected at construction, so a typo
+	// fails at startup rather than on the first large value.
+	broken := cache.Namespace("broken", peercache.WithCompression("lz5", 1024))
+	_, err = broken.Get(ctx, "anything")
+	fmt.Println("unknown compressor rejected:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// large round-trips intact: true
+	// small round-trips intact: true
+	// unknown compressor rejected: true
+}
+
+// ExampleWithLoaderTimeout shows that a load is bounded by the namespace, not
+// by whichever caller happened to arrive first.
+//
+// Concurrent misses collapse into one load. If that load inherited the first
+// caller's deadline, a caller with milliseconds left could abort a load that
+// hundreds of callers with seconds left were depending on.
+func ExampleWithLoaderTimeout() {
+	fake := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fake))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	deadline := make(chan error, 1)
+	entered := make(chan struct{}, 1)
+
+	profiles := cache.Namespace("profiles",
+		peercache.WithLoaderTimeout(30*time.Second),
+		peercache.WithLoader(func(loadCtx context.Context, _ string) ([]byte, time.Duration, error) {
+			entered <- struct{}{}
+			<-loadCtx.Done() // the namespace's deadline, not the caller's
+			deadline <- loadCtx.Err()
+			return nil, 0, loadCtx.Err()
+		}))
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := profiles.GetOrLoad(context.Background(), "user:123")
+		result <- err
+	}()
+
+	<-entered
+	fake.BlockUntil(2) // the cache's sweep ticker, plus the loader's deadline
+	fake.Advance(30 * time.Second)
+
+	fmt.Println("loader stopped on its own deadline:", errors.Is(<-deadline, context.DeadlineExceeded))
+	fmt.Println("caller saw it too:", errors.Is(<-result, context.DeadlineExceeded))
+	// Output:
+	// loader stopped on its own deadline: true
+	// caller saw it too: true
+}
+
+// ExampleWithShards shows the per-namespace shard count. The default of 256 is
+// well above any realistic core count; lower it only for a namespace known to
+// hold very few keys, where 256 mostly-empty maps are pure overhead.
+func ExampleWithShards() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	// Rounded up to a power of two, so shard selection is a mask rather than
+	// a division.
+	tiny := cache.Namespace("feature-flags", peercache.WithShards(3))
+	ctx := context.Background()
+
+	if err := tiny.Set(ctx, "dark-mode", []byte("on"), 0); err != nil {
+		fmt.Println(err)
+		return
+	}
+	got, err := tiny.Get(ctx, "dark-mode")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("dark-mode = %s\n", got)
+	// Output:
+	// dark-mode = on
 }
 
 // ExamplePartitionByPrefix shows how keys are grouped so that related keys

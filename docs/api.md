@@ -4,8 +4,26 @@ Every symbol here exists and compiles today. Anything belonging to a milestone
 that has not run yet returns `ErrNotImplemented`, which is a typed, testable
 declaration of scaffolding rather than a comment nobody greps for.
 
-Runnable examples for everything below are in `example_test.go` (verified by
-`go test`) and `examples/m0/main.go` (`go run ./examples/m0`).
+Every public symbol below has a runnable example in `example_test.go`, compiled
+and output-checked by `go test`:
+
+| Example | Covers |
+|---|---|
+| `Example` | construction, `Set`, `Get`, `ErrNotFound` |
+| `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
+| `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
+| `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
+| `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
+| `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
+| `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
+| `ExampleWithShards` | per-namespace shard count |
+| `ExamplePartitionByPrefix` | key-to-group mapping |
+| `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
+| `ExampleNewRouter` | queue-workload routing |
+
+End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle) and
+`go run ./examples/m1` (the local data path). Both assert what they demonstrate
+and are run by CI.
 
 **Milestone status:** M0 and M1 complete. Namespaces are fully functional on a
 single node: `Get`, `Set`, `Delete`, `Exists`, the batch forms and `GetOrLoad`
