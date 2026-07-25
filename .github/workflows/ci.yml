@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A stale run tells you nothing useful once a newer commit exists.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  build:
+    name: vet, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: gofmt is clean
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: staticcheck
+        run: staticcheck ./...
+
+      - name: test
+        run: go test ./... -timeout 300s
+
+  race:
+    name: test -race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # -count=2 is not padding. It catches state that survives between runs of
+      # the same test, which is the failure mode a harness with shared fakes is
+      # most likely to introduce.
+      - name: test -race
+        run: go test ./... -race -count=2 -timeout 300s
+
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Benchmarks run in CI for regression, not just for the record. A shared
+      # runner is too noisy to gate on absolute numbers, so this gate is
+      # "benchmarks still compile and complete", and the tracked numbers in
+      # docs/benchmarks.md come from a known machine.
+      - name: bench
+        run: go test ./... -run '^$' -bench . -benchmem -benchtime 100ms -count 1
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: cover
+        run: |
+          go test ./... -covermode atomic -coverprofile coverage.out -timeout 300s
+          go tool cover -func coverage.out | tail -n 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out

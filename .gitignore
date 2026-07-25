@@ -1,0 +1,13 @@
+# Build and test artefacts
+/coverage.out
+/bench.txt
+*.test
+*.exe
+*.out
+*.prof
+
+# Editor and OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

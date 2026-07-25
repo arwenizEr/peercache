@@ -1,0 +1,362 @@
+# PeerCache — Build Specification
+
+Embedded distributed L1 cache and stateful aggregation engine for Go.
+Companion to `CLAUDE.md`, which holds the non-negotiable constraints.
+
+---
+
+## 1. Problem statement
+
+A Go service deployed as N replicas in Kubernetes needs shared mutable state —
+session data, per-user aggregates, tenant counters, workflow state — with
+sub-millisecond access. The conventional answer is Redis: a separate cluster, a
+network hop on every access, an operational burden, and a serialization tax on
+every read.
+
+PeerCache removes the separate tier. Every pod embeds the library. Each key
+belongs to exactly one pod. Reads hit local memory when the data is local or
+recently cached; otherwise they route to the owner. Mutations and computations
+execute on the owner, so the working set is never shipped to the caller.
+
+The API surface a user sees should be roughly as small as a `map` plus a
+`Group` handle.
+
+---
+
+## 2. Repository layout
+
+```
+peercache/
+  peercache.go           Cache construction, lifecycle, options
+  namespace.go           Namespace handle: typed Get/Set/GetOrLoad
+  group.go               Group handle: State, Call, Keys, Flush
+  router.go              Queue-message routing with owner batching
+  errors.go              Sentinel errors
+  options.go             Functional options
+
+  internal/
+    clock/               Real + fake clock. Nothing else calls time.Now.
+    ownership/           Rendezvous hashing, ring epochs, ownership table
+    membership/          MembershipAuthority iface; gossip impl (memberlist)
+    store/               Owned store, replica store, shard maps
+    l1/                  Local cache wrapper, TTL + version discipline
+    actor/               Group activation, mailbox, lifecycle, timers
+    transport/           gRPC client + server, connection pool, mTLS
+    replication/         Replica fan-out, promotion, catch-up
+    rebalance/           Partition move planning + streaming transfer
+    codec/               Codec registry, compression
+    metrics/             Prometheus + OTel emitters
+    testkit/             In-process cluster harness, network fault injection
+
+  proto/                 gRPC service definitions
+  examples/              Runnable examples, one per milestone
+  docs/
+    api.md
+    benchmarks.md
+    decisions/           One file per significant choice + open.md
+```
+
+---
+
+## 3. Core interfaces
+
+Write these first, with compiling no-op implementations, before any logic.
+Signatures may evolve, but changes go in `docs/decisions/`.
+
+### 3.1 Cache and namespaces
+
+```go
+type Cache interface {
+    Namespace(name string, opts ...NamespaceOption) Namespace
+    Group(id string) Group
+    RegisterGroupFunc(name string, fn GroupFunc) error
+    Stats() Stats
+    Close(ctx context.Context) error
+}
+
+type Namespace interface {
+    Get(ctx context.Context, key string) ([]byte, error)
+    Set(ctx context.Context, key string, val []byte, ttl time.Duration) error
+    Delete(ctx context.Context, key string) error
+    Exists(ctx context.Context, key string) (bool, error)
+    BatchGet(ctx context.Context, keys []string) (map[string][]byte, error)
+    BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error
+    GetOrLoad(ctx context.Context, key string) ([]byte, error)
+}
+```
+
+`GetOrLoad` has no loader argument. The loader is registered on the namespace at
+construction, so it exists on every pod by name and the owner can execute it.
+Concurrent misses on the owner collapse via singleflight.
+
+```go
+type Loader func(ctx context.Context, key string) (val []byte, ttl time.Duration, err error)
+
+func WithLoader(l Loader) NamespaceOption
+func WithPartitioner(p Partitioner) NamespaceOption   // see 3.4
+func WithReplicationFactor(rf int) NamespaceOption    // 1..3
+func WithCodec(name string) NamespaceOption
+func WithL1TTL(d time.Duration) NamespaceOption       // non-owned copies
+```
+
+### 3.2 Groups
+
+A group is a named collection of keys guaranteed to share an owner, and the unit
+of activation and serialization.
+
+```go
+type Group interface {
+    ID() string
+    Get(ctx context.Context, key string) ([]byte, error)
+    Set(ctx context.Context, key string, val []byte) error
+    Delete(ctx context.Context, key string) error
+    Keys(ctx context.Context) ([]string, error)
+    Items(ctx context.Context) (map[string][]byte, error)
+    Call(ctx context.Context, fn string, arg []byte) ([]byte, error)
+    Flush(ctx context.Context) error
+}
+```
+
+There is no `Lock`. Serialization is structural.
+
+### 3.3 Registered group functions
+
+```go
+type GroupFunc func(ctx context.Context, s GroupState, arg []byte) ([]byte, error)
+
+// GroupState is only valid for the duration of one turn. It must not escape.
+type GroupState interface {
+    ID() string
+    Get(key string) ([]byte, bool)
+    Set(key string, val []byte)
+    Delete(key string)
+    Keys() []string
+
+    ScheduleTimer(name string, after time.Duration, fn string, arg []byte)
+    CancelTimer(name string)
+    Emit(event Event)
+}
+```
+
+`GroupState` methods take no context and return no error: they are pure local
+memory access inside the actor turn. This is the whole point of moving
+computation to the data. Enforce non-escape with a generation counter checked on
+every call, returning a panic-free error path in the calling layer if violated.
+
+### 3.4 Pluggable partitioning
+
+```go
+type Partitioner interface {
+    // GroupKey maps a cache key to the group whose owner holds it.
+    GroupKey(key string) string
+}
+
+func PartitionByKey() Partitioner                     // default
+func PartitionByPrefix(sep string) Partitioner        // "user:123/cart" -> "user:123"
+func PartitionByFunc(f func(string) string) Partitioner
+```
+
+For queue workloads, the same idea typed over messages:
+
+```go
+type Router[T any] interface {
+    Submit(ctx context.Context, msgs ...T) error
+}
+
+func NewRouter[T any](c Cache, groupOf func(T) string, handler string) Router[T]
+```
+
+`Submit` groups messages by owner, issues one RPC per owner, and the owner
+applies all messages for a group inside a single actor turn. This is the batch
+affinity requirement, and it is a first-class API rather than an internal
+optimization.
+
+### 3.5 Membership
+
+```go
+type MembershipAuthority interface {
+    Self() Node
+    Members() ([]Node, Epoch)
+    Watch() <-chan MembershipChange
+    Join(seeds []string) error
+    Leave(ctx context.Context) error
+}
+```
+
+Two implementations. `gossip` (memberlist) is the default and is AP. A `raft`
+implementation may be added later for clusters that need a single authoritative
+ring epoch; the interface exists so that swap is not a rewrite.
+
+### 3.6 Clock and transport (for testability)
+
+```go
+type Clock interface {
+    Now() time.Time
+    After(d time.Duration) <-chan time.Time
+    NewTimer(d time.Duration) Timer
+}
+
+type Transport interface {
+    Dial(node Node) (PeerClient, error)
+    Serve(l net.Listener, h Handler) error
+    Close() error
+}
+```
+
+Both are injected at construction. The test harness supplies fakes.
+
+---
+
+## 4. Milestones
+
+Each milestone ends with working, tested, benchmarked code. Do not begin the
+next until the previous is done per `CLAUDE.md`.
+
+### M0 — Test harness and skeleton
+
+Nothing distributed. This exists so every later milestone is provable.
+
+- `internal/clock` with real and fake implementations. Fake clock supports
+  `Advance(d)` and deterministic timer firing.
+- `internal/testkit`: spin up N in-process nodes sharing a fake transport.
+  Fault injection: drop, delay, reorder, partition into arbitrary groups, kill
+  a node with and without graceful shutdown.
+- All core interfaces from §3 defined and compiling with no-op implementations.
+- Deterministic seeded randomness throughout; a failing test prints a seed that
+  reproduces it.
+
+**Acceptance:** a test can create a 5-node in-process cluster, partition it
+3/2, advance a fake clock by an hour, heal the partition, and assert on
+membership — all in under 50ms of wall clock and with zero `time.Sleep`.
+
+### M1 — Single-node core
+
+- Sharded owned store. 256 shards default, `xxhash` key hashing, per-shard
+  `RWMutex`. Values stored as `[]byte`.
+- L1 cache wrapper over a local cache library. **Evaluate at least two
+  candidates under this workload and record the comparison** — do not assume
+  the first one is best.
+- Namespace API fully working locally: Get/Set/Delete/Exists/Batch/GetOrLoad
+  with singleflight.
+- Codec registry: JSON and MsgPack. Compression: LZ4, applied above a
+  configurable size threshold.
+
+**Acceptance:** local Get p99 under 1µs at 1M keys; correct TTL expiry under
+fake clock; singleflight proven by a loader that counts invocations under 1000
+concurrent misses and reports exactly 1.
+
+### M2 — Group actor runtime
+
+Still single-node. This is the hardest correctness work; do it before adding
+networking.
+
+- Activation directory, bounded mailbox per group, single-goroutine turn loop.
+- Idle deactivation with configurable timeout, plus a global cap on active
+  groups with LRU deactivation under pressure.
+- `RegisterGroupFunc` + `Call` end to end.
+- Per-group timers on the injected clock, cancelled on deactivation and
+  re-registered on activation.
+- Lifecycle events: OnActivate, OnDeactivate, OnCreate, OnUpdate, OnDelete,
+  OnEvict.
+- Backpressure: full mailbox returns `ErrGroupOverloaded` rather than blocking
+  indefinitely; caller deadline is respected.
+
+**Acceptance:** 10k concurrent `Call`s across 1k groups produce serialized,
+correct results under `-race`; memory for 1M *addressable* / 20k *active*
+groups stays inside budget, measured and recorded; a group that deactivates and
+reactivates preserves state and pending timers.
+
+### M3 — Membership and ownership
+
+- Rendezvous hashing over member set, epoch-stamped.
+- Gossip membership via memberlist, with node metadata carrying epoch.
+- Ownership table with fast `Owner(groupKey) (Node, Epoch)`.
+- Activation guard: a node refuses to activate a group whose epoch is stale, and
+  waits a configurable `activationDelay` after a membership change before
+  activating groups it newly owns.
+
+**Acceptance:** in a 7-node harness cluster, ownership of 100k group keys is
+within 5% of uniform; removing one node moves approximately 1/7 of keys and no
+more; a partitioned minority stops activating new groups within
+`activationDelay`.
+
+### M4 — Transport and remote routing
+
+- gRPC service per `proto/`, connection pool, keepalive, mTLS optional but
+  implemented.
+- Remote Get/Set/Delete/Batch, remote `Call`, request deadline propagation.
+- Non-owned L1 population with mandatory short TTL and owner-issued version.
+- Best-effort invalidation broadcast, explicitly documented as an optimization.
+- `Router[T]` with owner-side batching.
+
+**Acceptance:** remote Get p99 under 2ms and p999 under 10ms at 50k rps in a
+3-node real-network test; a router submitting 10k messages across 3 owners
+issues at most 3 RPCs per flush window; killing the transport mid-request
+surfaces a deadline error, never a hang.
+
+### M5 — Replication and failure handling
+
+- RF 1/2/3, async fan-out by default, sync mode available.
+- Replica promotion on owner failure, driven by membership change + epoch bump.
+- Catch-up sync for a returning node.
+- Measured and documented data-loss window for async mode.
+
+**Acceptance:** killing an owner ungracefully causes promotion and resumed
+service within a stated bound; a chaos test that kills a random node every 2
+seconds for 60 seconds loses no key that was written with sync replication;
+split-brain writes are detected and counted in metrics.
+
+### M6 — Rebalancing and Kubernetes lifecycle
+
+- Move planning: compute only the affected partitions, never a full reshuffle.
+- Streaming transfer with backpressure and resumability.
+- PreStop hook: drain, deactivate groups, transfer ownership, then exit.
+- Readiness gate that fails until the node has joined and settled.
+- Manifests for Deployment and StatefulSet with headless service.
+
+**Acceptance:** a simulated rolling upgrade of a 9-node cluster under sustained
+write load completes with zero failed client requests and moves no more than
+the theoretically required key count ±10%.
+
+### M7 — Observability and hardening
+
+- Prometheus and OTel: the metrics from the original spec, plus correctness
+  metrics — split-brain detections, stale-epoch activation rejections, version
+  conflicts, mailbox rejections, transfer failures.
+- pprof endpoints, structured logging via the `Logger` interface.
+- Load and soak test: 24h at target throughput, memory flat.
+- `docs/api.md` complete, examples runnable, README with an honest guarantees
+  section including the failure modes.
+
+---
+
+## 5. Deliberately deferred
+
+Record these in `docs/decisions/open.md` and do not build them in v1:
+
+- Persistence (WAL, snapshots, object-storage backup)
+- Cross-group transactions
+- Multi-region / multi-cluster
+- Raft-backed membership
+- Group sharding for hot-key mitigation (document the limitation instead)
+- Protobuf and CBOR codecs beyond the registry hook
+- Snappy/Zstd beyond the compression interface
+
+---
+
+## 6. Guarantees to state honestly in the README
+
+Write this section early and keep it accurate as the implementation evolves.
+It is the most useful documentation in the project.
+
+- Operations on a single group are serialized while that group has one
+  activation.
+- Membership is eventually consistent. A network partition can briefly produce
+  two activations of the same group; conflicting writes are detected but not
+  automatically merged.
+- State is not durable. Ungraceful pod termination loses that pod's owned data
+  and any replicas not yet caught up.
+- Async replication has a data-loss window of approximately X ms under normal
+  conditions (fill in from M5 measurements).
+- Reads of non-owned keys may be stale by up to the configured L1 TTL.
+- Throughput degrades to single-pod capacity for a single hot group.
