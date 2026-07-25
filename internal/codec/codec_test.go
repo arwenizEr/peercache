@@ -3,7 +3,9 @@ package codec_test
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/peercache/peercache/internal/codec"
@@ -150,5 +152,123 @@ func TestRegisterRejectsBadInput(t *testing.T) {
 func TestGetUnknownCompressor(t *testing.T) {
 	if _, err := codec.GetCompressor("nope"); !errors.Is(err, core.ErrInvalidOption) {
 		t.Fatalf("GetCompressor = %v, want ErrInvalidOption", err)
+	}
+}
+
+// identityCompressor is a third-party compressor, used to exercise the
+// registration path that ships with no in-tree caller.
+type identityCompressor struct{ name string }
+
+func (c identityCompressor) Name() string { return c.name }
+
+func (identityCompressor) Compress(src []byte) ([]byte, error) {
+	return append([]byte(nil), src...), nil
+}
+
+func (identityCompressor) Decompress(src []byte) ([]byte, error) {
+	return append([]byte(nil), src...), nil
+}
+
+// registrations generates names unique within this process.
+//
+// Registration is deliberately global and permanent — it models startup, where
+// every pod registers the same names once — so a test cannot undo it. Under
+// `go test -count=2`, which is the gate CLAUDE.md specifies, a fixed name would
+// collide with the previous run and the test would fail on its second pass.
+// That is not a flaw in the registry; it is a flaw in a test that assumes a
+// clean process.
+var registrations atomic.Int64
+
+func uniqueName(prefix string) string {
+	return prefix + "-" + strconv.FormatInt(registrations.Add(1), 10)
+}
+
+// TestRegisterCompressorSucceeds covers the half of RegisterCompressor that had
+// no coverage at all: the one that works.
+//
+// The registry exists so that a compressor can be added from outside this
+// package, and nothing in the tree does that — LZ4 is installed directly by
+// init. So the only path anyone would actually use was the untested one.
+func TestRegisterCompressorSucceeds(t *testing.T) {
+	name := uniqueName("identity-test")
+
+	if err := codec.RegisterCompressor(identityCompressor{name: name}); err != nil {
+		t.Fatalf("RegisterCompressor: %v", err)
+	}
+	if err := codec.RegisterCompressor(identityCompressor{name: name}); !errors.Is(err, core.ErrDuplicateRegistration) {
+		t.Fatalf("duplicate = %v, want ErrDuplicateRegistration", err)
+	}
+
+	got, err := codec.GetCompressor(name)
+	if err != nil {
+		t.Fatalf("GetCompressor: %v", err)
+	}
+	if got.Name() != name {
+		t.Fatalf("Name() = %q, want %q", got.Name(), name)
+	}
+	if !slices.Contains(codec.CompressorNames(), name) {
+		t.Fatalf("CompressorNames() = %v, missing %q", codec.CompressorNames(), name)
+	}
+
+	// A compressor with no frame code cannot be used for framing. That is
+	// deliberate: adding a code is a wire-format change.
+	if _, err := codec.NewFramer(name, 64); !errors.Is(err, core.ErrInvalidOption) {
+		t.Fatalf("NewFramer with an un-coded compressor = %v, want ErrInvalidOption", err)
+	}
+}
+
+// TestRegisterSucceedsForANewCodec covers the same gap on the codec side.
+func TestRegisterSucceedsForANewCodec(t *testing.T) {
+	name := uniqueName("passthrough-test")
+
+	if err := codec.Register(namedCodec{name: name}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	got, err := codec.Get(name)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Name() != name {
+		t.Fatalf("Name() = %q, want %q", got.Name(), name)
+	}
+	if !slices.Contains(codec.Names(), name) {
+		t.Fatalf("Names() = %v, missing %q", codec.Names(), name)
+	}
+}
+
+// TestCodecErrorsAreReported covers the failure branches of the codecs
+// themselves, which had no tests: a value that cannot be encoded, and input
+// that cannot be decoded.
+func TestCodecErrorsAreReported(t *testing.T) {
+	for _, name := range []string{codec.NameJSON, codec.NameMsgPack} {
+		c, err := codec.Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+
+		t.Run(name+"/unencodable value", func(t *testing.T) {
+			// A channel has no representation in either format.
+			if _, err := c.Marshal(make(chan int)); err == nil {
+				t.Fatal("Marshal of a channel succeeded")
+			}
+		})
+
+		t.Run(name+"/undecodable input", func(t *testing.T) {
+			var out profile
+			if err := c.Unmarshal([]byte{0xc1, 0xff, 0xfe, 0xfd}, &out); err == nil {
+				t.Fatal("Unmarshal of malformed input succeeded")
+			}
+		})
+
+		t.Run(name+"/non-pointer target", func(t *testing.T) {
+			encoded, err := c.Marshal(profile{ID: "x"})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var out profile
+			if err := c.Unmarshal(encoded, out); err == nil {
+				t.Fatal("Unmarshal into a non-pointer succeeded")
+			}
+		})
 	}
 }
