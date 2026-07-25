@@ -45,6 +45,12 @@ type Options struct {
 	// OnEvent receives lifecycle events. It is called on the group's turn
 	// goroutine and must not block: anything slow belongs on the far side
 	// of a channel the handler owns.
+	//
+	// Events carry no ordering guarantee relative to [Runtime.Stats]. The
+	// deactivation event in particular is emitted after the activation has
+	// already left the directory, so a handler that observes it and then
+	// reads Stats may see a count that has already moved on. Delivery is
+	// best effort and nothing may depend on it.
 	OnEvent func(core.Event)
 }
 

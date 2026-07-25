@@ -25,11 +25,11 @@ End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle) and
 `go run ./examples/m1` (the local data path). Both assert what they demonstrate
 and are run by CI.
 
-**Milestone status:** M0 and M1 complete. Namespaces are fully functional on a
-single node: `Get`, `Set`, `Delete`, `Exists`, the batch forms and `GetOrLoad`
-with singleflight collapsing, all with TTL expiry and optional compression.
-Groups arrive in M2 and report `ErrNotImplemented` until then. Nothing is
-distributed until M3, so every operation currently executes locally.
+**Milestone status:** M0, M1 and M2 complete. Namespaces are fully functional on
+a single node, and groups run as virtual actors with a single goroutine each,
+bounded mailboxes, idle deactivation, an active cap, per-group timers and
+lifecycle events. Nothing is distributed until M3, so every operation currently
+executes locally.
 
 ---
 
@@ -51,6 +51,10 @@ startup rather than on the first request. `WithNodeID` is required.
 | `WithLogger(Logger)` | Defaults to `NopLogger`, which discards everything. |
 | `WithTransport(Transport)` | Peer fabric. Nil means single-node, no networking — a supported configuration, not an error. |
 | `WithMembership(MembershipAuthority)` | Nil means single-node. |
+| `WithGroupMailboxSize(int)` | Queue depth per group before `ErrGroupOverloaded`. Default 64. |
+| `WithGroupIdleTimeout(time.Duration)` | How long an activated group waits before releasing its goroutine. Default 30s. |
+| `WithMaxActiveGroups(int)` | Cap on activated groups, LRU-evicted. Default 20,000; negative means unlimited. |
+| `WithEventHandler(func(Event))` | Receives lifecycle events. Must not block. |
 
 ```go
 cache, err := peercache.New(
@@ -218,6 +222,48 @@ that is explicitly AP.
 stale the instant they are returned. Prefer `Call` to compute over a large group
 in place rather than shipping it to the caller.
 
+`Items` is the one read in this library that **copies**. Every other read hands
+back the stored slice, but this snapshot outlives its turn, so aliasing would let
+a caller mutate state that a later turn owns, with no lock between them.
+
+### Activation, deactivation and cost
+
+A group is *addressable* always and *active* only while it holds a goroutine.
+
+- First use activates it: a mailbox, a goroutine, an idle timer.
+- `WithGroupIdleTimeout` of no work releases the goroutine; `Flush` does it on
+  demand; exceeding `WithMaxActiveGroups` evicts the least recently activated.
+- **Deactivation preserves state and pending timers.** Only the goroutine goes;
+  the next operation reactivates and re-arms the timer schedule.
+
+Measured: an addressable group costs about 167 B, an active one about 1.1 KiB of
+heap plus a goroutine stack. That fifty-fold ratio is why the two are separate —
+a million addressable groups is 160 MiB, while a million *active* would be
+gigabytes of stack. See
+[`docs/decisions/0010-records-and-activations.md`](decisions/0010-records-and-activations.md).
+
+A group with pending timers is exempt from *idle* deactivation, because nothing
+else would wake it and its timer would silently never fire. The active cap can
+still evict it, after which its timers lie dormant until it is next called.
+
+The cap is a settled bound, not an instantaneous one: eviction is signalled
+after the call that tripped it is already enqueued, so the active count may sit
+slightly above the cap while victims finish their turns.
+
+### Backpressure
+
+A full mailbox returns `ErrGroupOverloaded` **immediately** — it does not wait
+for room. The caller's deadline governs waiting for the *result*, not for a slot.
+
+The error is retryable and retrying is what a caller is expected to do: a
+thousand concurrent callers against a mailbox of 64 will see rejections and still
+produce an exactly correct total once they retry. `Stats().Rejections` rising is
+flow control working, not a fault. See
+[`docs/decisions/0011-mailbox-rejects-immediately.md`](decisions/0011-mailbox-rejects-immediately.md).
+
+A single group is a serialization point: one goroutine, one turn at a time, about
+1.2 µs per call. No mailbox tuning changes that ceiling.
+
 ---
 
 ## Registered group functions
@@ -364,6 +410,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrStateEscaped` | A `GroupState` was used outside its turn. | no — it is a bug |
 | `ErrNoLoader` | `GetOrLoad` without `WithLoader`. | no |
 | `ErrLoaderPanic` | A registered loader panicked. | no — it is a bug |
+| `ErrGroupFuncPanic` | A registered group function panicked. The group keeps its state and stays usable. | no — it is a bug |
 | `ErrLoaderFailed` | A load could not complete, e.g. the loader exited without returning. | no |
 | `ErrFuncNotRegistered` | Unknown function name. | during a rolling upgrade, yes |
 | `ErrDuplicateRegistration` | Name registered twice. | no |

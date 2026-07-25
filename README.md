@@ -75,7 +75,7 @@ the next begins.
 |---|---|---|
 | M0 | Test harness and skeleton | **complete** |
 | M1 | Single-node core | **complete** |
-| M2 | Group actor runtime | not started |
+| M2 | Group actor runtime | **complete** |
 | M3 | Membership and ownership | not started |
 | M4 | Transport and remote routing | not started |
 | M5 | Replication and failure handling | not started |
@@ -108,6 +108,7 @@ internal/
   codec/          Codec registry, LZ4 framing                 (M1)
   singleflight/   Collapses concurrent loads of one key       (M1)
   actor/          Group activation, mailbox, lifecycle        (M2)
+                  Records persist state; activations hold the goroutine
   ownership/      Rendezvous hashing, ring epochs             (M3)
   membership/     Gossip membership over memberlist           (M3)
   transport/      gRPC client and server                      (M4)

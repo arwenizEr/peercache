@@ -418,14 +418,29 @@ func TestLifecycleEventsAreDelivered(t *testing.T) {
 	}
 	fc.BlockUntil(1)
 	fc.Advance(time.Minute)
-	waitFor(t, "deactivation", func() bool { return rt.Stats().Active == 0 })
 
+	// Wait for the event itself, not for Stats().Active to reach zero.
+	//
+	// Those are different moments: the activation is released from the
+	// directory *before* the deactivation event is emitted, so a test that
+	// waited on the counter would read the event slice in the window between
+	// them and intermittently miss the event it came to assert. Events carry
+	// no ordering guarantee relative to Stats, so the only sound thing to
+	// wait for is the event.
+	countKinds := func() map[core.EventKind]int {
+		mu.Lock()
+		defer mu.Unlock()
+		counts := map[core.EventKind]int{}
+		for _, k := range seen {
+			counts[k]++
+		}
+		return counts
+	}
+	waitFor(t, "the deactivate event", func() bool { return countKinds()[core.EventDeactivate] > 0 })
+
+	counts := countKinds()
 	mu.Lock()
 	defer mu.Unlock()
-	counts := map[core.EventKind]int{}
-	for _, k := range seen {
-		counts[k]++
-	}
 	for _, want := range []core.EventKind{
 		core.EventActivate, core.EventCreate, core.EventUpdate,
 		core.EventDelete, core.EventCustom, core.EventDeactivate,

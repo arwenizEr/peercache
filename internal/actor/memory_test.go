@@ -38,6 +38,13 @@ func TestMemoryAtOneMillionAddressableGroups(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocates on the order of a gigabyte; skipped under -short")
 	}
+	if raceEnabled {
+		// The race detector allocates shadow memory for every access, so
+		// a heap measurement under it describes the detector rather than
+		// the runtime — and the run takes about a minute for a number
+		// that means nothing.
+		t.Skip("memory measurements are meaningless under the race detector")
+	}
 
 	rt, _ := newRuntime(t, func(o *actor.Options) {
 		o.MaxActive = activeGroups
@@ -108,6 +115,9 @@ func TestMemoryAtOneMillionAddressableGroups(t *testing.T) {
 func TestMemoryOfActiveGroups(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocates a few hundred megabytes; skipped under -short")
+	}
+	if raceEnabled {
+		t.Skip("memory measurements are meaningless under the race detector")
 	}
 
 	rt, _ := newRuntime(t, func(o *actor.Options) {

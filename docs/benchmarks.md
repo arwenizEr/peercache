@@ -176,6 +176,73 @@ Collapsing is *cheaper* than not collapsing, because 999 of 1000 callers
 allocate nothing. The uncontended cost is a goroutine and a channel, paid so
 that a leader never blocks past its own deadline; see decision 0006.
 
+---
+
+## M2 — group actor runtime
+
+Measured on Machine A. Medians of three.
+
+### Acceptance: memory at 1M addressable / 20k active
+
+SPEC.md requires this "measured and recorded" and does not state a budget, so
+these are reported rather than asserted against an invented number.
+
+```
+baseline heap:                         0.5 MiB
+1000000 addressable, 19997 active:   159.5 MiB (167 B per addressable group)
+goroutines: 19999
+evictions: 980003
+```
+
+Isolating an activation's cost:
+
+```
+20000 active groups: 21.8 MiB heap (1144 B each), 20000 goroutines
+note: goroutine stacks are not counted in HeapAlloc; at 8 KiB initial stack
+      that is roughly 156 MiB more
+```
+
+So the split that the design rests on holds by a wide margin:
+
+| | Cost |
+|---|---:|
+| Addressable group (record: identity, state, timer schedule) | **167 B** |
+| Active group (adds mailbox, goroutine, idle timer) | **~1.1 KiB heap + ~8 KiB stack** |
+
+An activation is roughly **fifty times** the heap of a record, and the goroutine
+stack dwarfs both. That ratio is why records and activations are separate types:
+a million addressable groups cost 160 MiB, while a million *active* ones would
+cost around 9 GiB of stack alone. `MaxActiveGroups` is the knob that keeps the
+second number hypothetical.
+
+The test asserts one bound rather than a total: an addressable group must stay
+under 1 KiB. If it ever approached a goroutine's stack, the separation would
+have silently collapsed.
+
+### Throughput
+
+| Benchmark | ns/op | B/op | allocs/op | Notes |
+|---|---:|---:|---:|---|
+| `BenchmarkCallHot` | 1243 | 232 | 4 | one turn on an activated group: mailbox round trip and nothing else |
+| `BenchmarkCallHotParallel` | 815 | 232 | 4 | many callers, one group — bounded by the single turn goroutine *by design* |
+| `BenchmarkCallAcrossGroups` | 608 | 232 | 4 | 1024 groups: parallelism comes from having many groups, never from one |
+| `BenchmarkActivation` | 11,378 | 33,853 | 16 | the cold path — what an eviction costs the next caller |
+| `BenchmarkStateAccess/Get` | 1190 | 232 | 4 | |
+| `BenchmarkStateAccess/Set` | 1334 | 242 | 6 | the two extra allocations are the value copy and the event |
+
+Two things worth reading off this table.
+
+**A group call costs about 1.2 µs, against ~70 ns for a namespace read.** That
+is the price of serialization: a channel send, a scheduler hop to the turn
+goroutine, and a reply. It is the right trade when the alternative is shipping
+state to the caller, and the wrong one for a plain key lookup — which is why
+namespaces and groups are separate APIs rather than one with a flag.
+
+**Activation costs ~11 µs and 33 KB**, dominated by the goroutine and the
+mailbox. That is what a caller pays after its group has been evicted, and it is
+the number to weigh when setting `MaxActiveGroups`: too low and the working set
+thrashes through this path.
+
 ### Fuzzing
 
 The frame parser is the only code here that interprets bytes it did not write.

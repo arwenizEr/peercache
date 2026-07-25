@@ -83,7 +83,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all eighteen invariants:
+Latest run, all twenty-seven invariants:
 
 ```
 === store ===
@@ -115,8 +115,19 @@ caught   namespaces share one store                 -- TestNamespacesAreIsolated
 caught   singleflight bypassed                      -- TestGetOrLoadCollapsesConcurrentMisses
 caught   namespace skips the context check          -- TestCancelledContextIsReportedFirst
 caught   loader runs without the namespace deadline -- TestLoaderTimeoutIsTheNamespacesNotTheCallers
+caught   Items snapshot aliases group state         -- TestItemsSnapshotDoesNotAliasGroupState
 
-caught: 18   vacuous: 0   skipped: 0
+=== actor runtime ===
+caught   escaped group state is honoured            -- TestEscapedStateIsInertAndCounted
+caught   a full mailbox blocks instead of rejecting -- TestFullMailboxRejectsRatherThanBlocking
+caught   a group function panic is not contained    -- TestPanickingGroupFuncDoesNotWedgeTheGroup
+caught   deactivation discards group state          -- TestDeactivationPreservesState
+caught   deactivation discards the timer schedule   -- TestDeactivationPreservesPendingTimers
+caught   pending timers no longer block idle exit   -- TestDeactivationPreservesPendingTimers
+caught   the active-group cap is ignored            -- TestActiveCapEvictsLeastRecentlyActivated
+caught   rescheduling a name accumulates timers     -- TestReschedulingATimerReplacesIt
+
+caught: 27   vacuous: 0   skipped: 0
 tree clean
 ```
 
