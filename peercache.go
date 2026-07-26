@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +98,20 @@ type Cache interface {
 
 	// WaitReady blocks until this node is ready or ctx ends.
 	WaitReady(ctx context.Context) error
+
+	// Metrics returns this node's measurements, ready to hand to a
+	// Prometheus collector or an OpenTelemetry observer. The library carries
+	// no dependency on either; see the method documentation for the adapter,
+	// which is about a dozen lines.
+	Metrics() []Metric
+
+	// WriteMetrics renders the measurements in the Prometheus text
+	// exposition format, so a scrape endpoint needs no dependency at all.
+	WriteMetrics(w io.Writer) error
+
+	// MetricsHandler serves the same output over HTTP with the right content
+	// type, which is the part everybody gets wrong once.
+	MetricsHandler() http.Handler
 
 	Stats() Stats
 
