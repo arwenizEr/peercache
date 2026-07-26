@@ -103,14 +103,9 @@ func (r *record) enqueue(ctx context.Context, run func(core.GroupState) (any, er
 		req.reply = make(chan result, 1)
 	}
 
-	select {
-	case r.act.mailbox <- req:
-		r.mu.Unlock()
-	default:
-		r.mu.Unlock()
-		r.rt.rejections.Add(1)
-		return nil, fmt.Errorf("actor: group %q: %w", r.id, core.ErrGroupOverloaded)
-	}
+	mb := r.act.mailbox
+	r.mu.Unlock()
+	mb <- req
 
 	if !wait {
 		return nil, nil
