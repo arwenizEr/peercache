@@ -26,7 +26,7 @@ End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle),
 and `./examples/m3` (a real three-node cluster over loopback gossip). Each one
 asserts what it demonstrates and all are run by CI.
 
-**Milestone status:** M0 through M4 complete. Namespaces are fully functional on
+**Milestone status:** M0 through M5 complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,
 bounded mailboxes, idle deactivation, an active cap, per-group timers and
 lifecycle events; and nodes form a gossip cluster in which every node computes
@@ -38,8 +38,15 @@ latency. Non-owned values are cached under a mandatory TTL, loaders run on the
 owner so a cold key costs the cluster one load rather than one per pod, and
 `Router` turns a flush of messages into one request per owner.
 
-What is *not* yet true: there are no replicas. Losing a pod loses the keys it
-owned, exactly as CLAUDE.md's durability section says. M5 adds replication.
+Keys are replicated to the runners-up in the same ranking that chose their
+owner, so losing a pod promotes a replica rather than losing its data. Fan-out
+is asynchronous by default with a measured ≈0.1 ms exposure window, and
+`WithSyncReplication()` closes that window at the cost of the group's write
+rate.
+
+What is *not* yet true: nothing rebalances on purpose. A node joining or leaving
+moves ownership immediately rather than transferring state in a planned,
+resumable way, and there is no graceful drain on shutdown. M6 adds both.
 
 ---
 
@@ -425,6 +432,60 @@ cache.RegisterGroupFunc("apply", func(ctx context.Context, s GroupState, arg []b
 Failures are reported per group. There is no cross-group atomicity and no
 rollback, so a group that failed is named and the ones beside it have already
 applied.
+
+---
+
+## Replication
+
+```go
+ns := cache.Namespace("orders",
+    peercache.WithReplicationFactor(3),
+    peercache.WithSyncReplication(),
+)
+```
+
+Replicas are the runners-up in the rendezvous ranking that chose the owner, so
+promotion needs no election: when a node dies, the node that ranked second ranks
+first everywhere at once, computed from the same membership.
+
+`WithReplicationFactor` takes 1 to 3. The default is 1 — owner only, no copies.
+
+`WithSyncReplication` makes a write wait for its replicas. Without it, fan-out is
+asynchronous and a write is exposed for ≈0.1 ms on average (p99 1.5 ms) during
+which it exists on one node. With it, the window closes and the group's write
+rate becomes its slowest replica's round trip, because the fan-out holds the
+group's single activation.
+
+### `CatchUp` — required after a restart
+
+```go
+// After the readiness gate, before serving traffic.
+if err := cache.CatchUp(ctx); err != nil {
+    log.Warn("catch-up incomplete", "error", err)
+}
+```
+
+**A restarted node that skips this will report keys as missing when they are
+not.** Replication carries writes, not state, so a returning node receives only
+what is written after it comes back — while the ownership ranking gives it back
+its keys immediately. It then answers `ErrNotFound` for data that exists
+elsewhere in the cluster.
+
+It is explicit rather than automatic because a starting node is usually also
+serving traffic, and a bulk transfer at that moment competes with the requests
+it was started to answer. The application decides when it can afford it.
+
+Safe to call at any time and alongside live traffic: incoming pages go through
+the same version check as replicated writes, so a page that arrives after a
+newer write is discarded rather than applied.
+
+### Conflicts
+
+`Stats().SplitBrainDetections` counts writes a replica saw from two different
+nodes under one membership epoch. One group has one owner, so this cannot happen
+unless two nodes believed they owned the same key — the partition case. It is
+counted and never merged; choosing between conflicting writes is the
+application's business.
 
 ---
 

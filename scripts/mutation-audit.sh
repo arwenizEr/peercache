@@ -537,6 +537,154 @@ mutate "enqueueing an invalidation blocks when the queue is full" \
 	}' \
   '	iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}' \
   'TestInvalidationBacklogIsDroppedNotQueued' .
+# ---------------------------------------------------------------- M5
+
+mutate "an older replica copy overwrites a newer one" \
+  internal/replication/replica.go \
+  'if !e.Stamp.NewerThan(existing.Stamp) {' \
+  'if false {' \
+  'TestAnOlderCopyIsRejected' ./internal/replication/
+
+mutate "the replica store compares versions, ignoring the epoch" \
+  internal/replication/replica.go \
+  'if !e.Stamp.NewerThan(existing.Stamp) {' \
+  'if e.Stamp.Version <= existing.Stamp.Version {' \
+  'TestALaterEpochWinsWhateverTheVersion' ./internal/replication/
+
+mutate "split brain is not detected" \
+  internal/replication/replica.go \
+  'existing.From != e.From {
+			conflict = true' \
+  'false {
+			conflict = true' \
+  'TestTwoOwnersInOneEpochIsAConflict' ./internal/replication/
+
+mutate "any writer change counts as a split brain" \
+  internal/replication/replica.go \
+  'existing.Stamp.Epoch == e.Stamp.Epoch && existing.From != "" && e.From != "" &&
+			existing.From != e.From' \
+  'existing.From != e.From' \
+  'TestDifferentEpochsAreNotAConflict' ./internal/replication/
+
+mutate "Drain leaves a stranded copy behind" \
+  internal/replication/replica.go \
+  '		taken[key] = e
+		delete(nr.entries, key)' \
+  '		taken[key] = e' \
+  'TestDrainTakesOnlyWhatItClaims' ./internal/replication/
+
+mutate "promotion restarts the version sequence" \
+  internal/store/store.go \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	sh.sets.Add(1)
+	return true' \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: 1}
+	sh.sets.Add(1)
+	return true' \
+  'TestRestoreContinuesTheVersionSequence' ./internal/store/
+
+mutate "Restore overwrites a newer value" \
+  internal/store/store.go \
+  'if existing, ok := sh.entries[key]; ok && existing.version >= version {
+		return false
+	}' \
+  '' \
+  'TestRestoreRefusesAnOlderVersion' ./internal/store/
+
+mutate "snapshot ignores its page limit" \
+  internal/store/store.go \
+  'if len(candidates) > limit {
+		return candidates[:limit], true
+	}' \
+  '' \
+  'TestSnapshotPagesInKeyOrder' ./internal/store/
+
+mutate "snapshot ignores the paging cursor" \
+  internal/store/store.go \
+  'if key <= after {
+				continue
+			}' \
+  '' \
+  'TestSnapshotPagesInKeyOrder' ./internal/store/
+
+mutate "snapshot hands over expired keys" \
+  internal/store/store.go \
+  'if e.expiresAt != 0 && now >= e.expiresAt {
+				continue
+			}' \
+  '' \
+  'TestSnapshotSkipsExpiredEntries' ./internal/store/
+
+mutate "sync replication does not wait" \
+  replicate.go \
+  'if !sync {
+		r.enqueue(w)
+		return nil
+	}
+	return r.fanOut(ctx, w)' \
+  'r.enqueue(w)
+	return nil' \
+  'TestSyncReplicationPlacesCopiesBeforeReturning' .
+
+mutate "async replication waits for its replicas" \
+  replicate.go \
+  'if !sync {
+		r.enqueue(w)
+		return nil
+	}
+	return r.fanOut(ctx, w)' \
+  'return r.fanOut(ctx, w)' \
+  'TestAsyncReplicationDoesNotBlockTheWrite' .
+
+mutate "replication does nothing at all" \
+  replicate.go \
+  'if !sync {
+		r.enqueue(w)
+		return nil
+	}
+	return r.fanOut(ctx, w)' \
+  'return nil' \
+  'TestChaosLosesNoSynchronouslyWrittenKey' .
+
+mutate "deletions are not replicated" \
+  namespace.go \
+  'if err := n.fanOut(ctx, key, nil, 0, tombstone, true); err != nil {
+		return err
+	}' \
+  '' \
+  'TestADeletionReplicates' .
+
+mutate "a remote write skips replication" \
+  handler.go \
+  'if err := ns.localSet(ctx, in.Key, in.Value, time.Duration(in.TTLNanos)); err != nil {
+		return nil, err
+	}' \
+  'ns.store.Set(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos))' \
+  'TestKillingAnOwnerPromotesAReplica' .
+
+mutate "promotion drains nothing" \
+  promote.go \
+  'taken := c.replicas.Drain(name, func(key string) bool {' \
+  'taken := c.replicas.Drain(name, func(key string) bool { return false
+			_ = func() bool {' \
+  'TestKillingAnOwnerPromotesAReplica' .
+
+mutate "catch-up sends whatever is asked for" \
+  handler.go \
+  'for _, n := range ranked {
+			if n.ID == in.Requester {
+				return true
+			}
+		}
+		return false' \
+  'return true' \
+  'TestCatchUpOnlySendsKeysTheAskerRanksFor' .
+
+mutate "catch-up does not reconcile what it pulled" \
+  catchup.go \
+  'defer c.promoter.reconcile()' \
+  '' \
+  'TestARestartedNodeRecoversItsColdReplicas' .
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 

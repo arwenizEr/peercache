@@ -45,12 +45,31 @@ the feature list rather than after it.
   data and any replicas not yet caught up. Graceful shutdown transfers ownership
   and streams state. Every namespace must therefore either be reconstructible
   from a loader or tolerate loss.
-- **Async replication has a data-loss window** of approximately X ms under
-  normal conditions. *(To be filled in from M5 measurements. Until then the
-  honest answer is: unmeasured.)*
+- **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
+  1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
+  acknowledged inside it exists on one node only. `WithSyncReplication()` closes
+  the window entirely, at the cost of bounding a group's write rate by its
+  slowest replica.
+- **A restarted node must call `CatchUp` before it serves traffic.** This is the
+  sharpest edge in the system. Replication is a stream of writes, not a state
+  transfer, so a node that restarts receives only the keys written *after* it
+  came back — while the ownership ranking hands it back its keys immediately. It
+  will answer "not found", with total confidence, for data sitting safely on the
+  node that covered for it. In the chaos test that presented as 558 of 600 keys
+  lost, none of them actually gone. Call `CatchUp` after readiness and before
+  serving.
 - **Reads of non-owned keys may be stale** by up to the configured L1 TTL.
   Invalidation broadcasts are a latency optimisation and may be lost;
   correctness never depends on one arriving.
+- **Replication survives the loss of RF−1 nodes, and no more.** At RF=3, a
+  chaos run of 30 kills and 30 restarts over 60 simulated seconds lost no
+  synchronously written key. At RF=2, killing both holders of a key loses it —
+  that is what RF=2 means, and it is asserted as a test rather than left as a
+  caveat. Survivors are always correct: losing data is possible, corrupting it
+  is not.
+- **Failure detection must be faster than your failure rate.** A cluster losing
+  a node every two seconds while taking three to notice never converges. This is
+  a deployment constraint the library cannot fix.
 - **Throughput degrades to single-pod capacity for a single hot group.** Group
   sharding for hot-key mitigation is deliberately not in v1.
 
@@ -78,7 +97,7 @@ the next begins.
 | M2 | Group actor runtime | **complete** |
 | M3 | Membership and ownership | **complete** |
 | M4 | Transport and remote routing | **complete** |
-| M5 | Replication and failure handling | not started |
+| M5 | Replication and failure handling | **complete** |
 | M6 | Rebalancing and Kubernetes lifecycle | not started |
 | M7 | Observability and hardening | not started |
 
