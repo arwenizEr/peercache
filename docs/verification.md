@@ -331,6 +331,41 @@ passed it. The test was renamed for what it can actually see, and the version
 property is asserted where it is visible — at the store level, where the
 mutation is caught.
 
+### The audit deleted a guarantee and shipped it
+
+The worst thing that happened in M5 was done by the verification tooling itself.
+
+`internal/actor/record.go` was committed carrying the audit's own mutant for "a
+full mailbox blocks instead of rejecting". The real code refuses work when a
+group's mailbox is full and returns `ErrGroupOverloaded`; the mutant blocks
+instead, which converts one slow group into a cluster-wide stall — the exact
+failure the bounded mailbox exists to prevent.
+
+An audit run died between applying that mutation and reverting it. A later
+`git add -A` swept the mutant into a commit, and it survived **three commits**
+before anything noticed.
+
+**What caught it was `go test -race -count=2` hanging for 1201 seconds.** Not
+review — the diff looked like a plausible simplification. Not the audit, which
+reported 77 of 77 caught and a clean tree, because it reverts each mutation
+before evaluating the next and so cannot see one it left behind earlier.
+
+Three things follow, and they are worth more than the bug was.
+
+**The script now reverts on any exit.** A `trap cleanup EXIT INT TERM` restores
+every file it has touched, whether the run finishes, is interrupted, or crashes.
+`git checkout --` on a clean tree is a no-op, so the guard costs nothing.
+Verified by killing a run mid-mutation and confirming a clean tree afterwards.
+
+**Every deletion since the previous milestone was audited by hand.** The stray
+mutant was the only one; the rest are accounted for as deliberate changes.
+
+**A tool that rewrites source is a hazard, not merely a convenience.** This one
+has found a hung test, a vacuous test, two flaky tests, a bad mutation, an
+incorrect comment, dead code, and now it has silently removed a guarantee from
+shipping code. It stays — the evidence it produces is worth the risk — but the
+risk is real and is written down here rather than remembered.
+
 ---
 
 ## Automated audit
