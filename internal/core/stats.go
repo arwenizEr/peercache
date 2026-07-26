@@ -111,4 +111,17 @@ type Stats struct {
 	// Any non-zero value deserves investigation. It does not mean data was
 	// lost, but it means two writers disagreed about who was in charge.
 	SplitBrainDetections int64
+
+	// KeysPromoted counts keys this node took over from a failed owner:
+	// replicas it already held that it now owns. ReplicasEvicted counts
+	// copies it dropped because membership moved them elsewhere.
+	//
+	// Both spike on a membership change and are flat otherwise. Movement
+	// under stable membership means the view is not settling.
+	KeysPromoted    int64
+	ReplicasEvicted int64
+	// PromotionRounds counts reconciliations run. It exists so the two
+	// counters above can be read as a rate, and so a test can wait for a
+	// membership change to have been *acted on* rather than merely observed.
+	PromotionRounds int64
 }

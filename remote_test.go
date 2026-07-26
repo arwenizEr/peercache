@@ -35,6 +35,70 @@ type fabric struct {
 
 	// counters is populated only by newFabricCounting.
 	counters map[string]*countingTransport
+
+	// memberships lets a test kill a node the way a crash does.
+	memberships map[string]*testkit.Membership
+	dead        map[string]bool
+}
+
+// hardKill removes a node the way an ungraceful termination does: no
+// announcement, no state transfer, and its memory goes with it.
+//
+// The surviving peers learn only by failing to reach it, which is the case
+// worth testing — a graceful leave is the easy path and M6 owns it.
+func (f *fabric) hardKill(t *testing.T, id string) {
+	t.Helper()
+	if f.dead[id] {
+		return
+	}
+	f.dead[id] = true
+
+	// Close the cache first so its goroutines stop, then remove the node
+	// from the fabric so peers cannot reach it. The reverse order would
+	// leave the cache trying to talk to a network that no longer knows it.
+	if err := f.caches[id].Close(context.Background()); err != nil {
+		t.Fatalf("closing %s: %v", id, err)
+	}
+	f.memberships[id].Close()
+	f.net.Unregister(id)
+}
+
+// live returns the IDs of nodes that have not been killed.
+func (f *fabric) live() []string {
+	out := make([]string, 0, len(f.ids))
+	for _, id := range f.ids {
+		if !f.dead[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// convergeTo waits until every live node sees exactly n members.
+func (f *fabric) convergeTo(t *testing.T, n int) {
+	t.Helper()
+	const maxYields = 10_000_000
+	for i := 0; ; i++ {
+		settled := true
+		for _, id := range f.live() {
+			if f.caches[id].Stats().Members != n {
+				settled = false
+				break
+			}
+		}
+		if settled {
+			return
+		}
+		if i > maxYields {
+			var seen []string
+			for _, id := range f.live() {
+				seen = append(seen, fmt.Sprintf("%s=%d", id, f.caches[id].Stats().Members))
+			}
+			t.Fatalf("membership did not converge to %d after %d yields: %v",
+				n, maxYields, seen)
+		}
+		runtime.Gosched()
+	}
 }
 
 // newFabric builds n caches wired to each other through the fake fabric.
@@ -62,11 +126,13 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 	clk.SetMisuseHandler(func(msg string) { t.Errorf("clock misuse: %s", msg) })
 
 	f := &fabric{
-		clk:      clk,
-		net:      testkit.NewNetwork(clk, seed),
-		nodes:    make(map[string]core.Node, n),
-		caches:   make(map[string]peercache.Cache, n),
-		counters: make(map[string]*countingTransport, n),
+		clk:         clk,
+		net:         testkit.NewNetwork(clk, seed),
+		nodes:       make(map[string]core.Node, n),
+		caches:      make(map[string]peercache.Cache, n),
+		counters:    make(map[string]*countingTransport, n),
+		memberships: make(map[string]*testkit.Membership, n),
+		dead:        make(map[string]bool, n),
 	}
 	reg := testkit.NewRegistry()
 
@@ -77,6 +143,7 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 		f.nodes[id] = info
 		f.ids = append(f.ids, id)
 		memberships[id] = testkit.NewMembership(info, f.net, clk, reg, testkit.MembershipConfig{})
+		f.memberships[id] = memberships[id]
 	}
 	for _, id := range f.ids {
 		var tr core.Transport = f.net.Transport(f.nodes[id])
@@ -107,6 +174,9 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 
 	t.Cleanup(func() {
 		for _, id := range f.ids {
+			if f.dead[id] {
+				continue
+			}
 			if err := f.caches[id].Close(context.Background()); err != nil {
 				t.Errorf("Close(%s): %v", id, err)
 			}

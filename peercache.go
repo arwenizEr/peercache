@@ -148,6 +148,8 @@ func New(opts ...Option) (Cache, error) {
 	c.invalidator = newInvalidator(c)
 	c.replicas = replication.NewStore()
 	c.replicator = newReplicator(c)
+	c.promoter = newPromoter(c)
+	c.promoter.start(guard)
 
 	// Serve before returning, so that a caller which constructs a cache and
 	// immediately joins the cluster cannot be given ownership of keys it is
@@ -219,6 +221,10 @@ type cache struct {
 
 	// replicator fans owned writes out to those replicas.
 	replicator *replicator
+
+	// promoter turns replicas into owned keys when membership moves them
+	// here, and drops the ones it moves away.
+	promoter *promoter
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -394,6 +400,10 @@ func (c *cache) Stats() Stats {
 		stats.ReplicationsDropped = rdropped
 		stats.ReplicationsFailed = rfailed
 		stats.SplitBrainDetections = conflicts + c.splitBrain.Load()
+		promoted, evicted, rounds := c.promoter.counters()
+		stats.KeysPromoted = promoted
+		stats.ReplicasEvicted = evicted
+		stats.PromotionRounds = rounds
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
@@ -469,6 +479,9 @@ func (c *cache) Close(ctx context.Context) error {
 		// cache and dials peers.
 		if c.invalidator != nil {
 			c.invalidator.Close()
+		}
+		if c.promoter != nil {
+			c.promoter.Close()
 		}
 		if c.replicator != nil {
 			c.replicator.Close()

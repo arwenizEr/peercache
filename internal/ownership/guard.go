@@ -67,6 +67,18 @@ type Guard struct {
 	// requests start arriving with an epoch attached.
 	staleEpochs atomic.Int64
 
+	// onUpdate is called after each view is applied, on the watcher
+	// goroutine.
+	//
+	// It exists because two independent watchers of the same authority have
+	// no ordering between them. Replica promotion has to read an ownership
+	// table that already holds the new view — a promoter racing the guard
+	// sees the dead node still owning its keys, promotes nothing, and then
+	// waits forever for an event that has already been delivered. Hanging
+	// the work off the update makes the dependency explicit instead of
+	// hoping the scheduler is kind.
+	onUpdate func()
+
 	mu       sync.Mutex
 	watching bool
 	stop     chan struct{}
@@ -115,6 +127,17 @@ func NewGuard(opts GuardOptions) (*Guard, error) {
 	g.changedAt.Store(opts.Clock.Now().Add(-opts.ActivationDelay).UnixNano())
 	g.settled.Store(&snapshot{})
 	return g, nil
+}
+
+// OnUpdate registers a function to run after each membership view is applied.
+//
+// It runs on the watcher goroutine, so it must not block for long: a slow
+// callback delays the next view. It is called after the table has been
+// updated, which is the entire point.
+func (g *Guard) OnUpdate(fn func()) {
+	g.mu.Lock()
+	g.onUpdate = fn
+	g.mu.Unlock()
 }
 
 // ActivationDelay returns the configured delay.
@@ -218,6 +241,13 @@ func (g *Guard) Update(nodes []core.Node, epoch core.Epoch) {
 	}
 	g.table.Update(nodes, epoch)
 	g.changedAt.Store(now)
+
+	g.mu.Lock()
+	fn := g.onUpdate
+	g.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // Watch applies membership changes from authority until [Guard.Close].

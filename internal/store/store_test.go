@@ -567,3 +567,55 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Fatalf("timer leak: %d timer(s) armed after Close", pending)
 	}
 }
+
+// TestRestoreContinuesTheVersionSequence is the promotion contract.
+//
+// A node taking ownership of keys it held as replicas has to carry on the dead
+// owner's version sequence. Every cached copy in the cluster is stamped against
+// that sequence, so restarting it at 1 would make stale copies look newer than
+// the truth and be preferred to it — the failure the stamp exists to prevent,
+// caused by the recovery from a different one.
+func TestRestoreContinuesTheVersionSequence(t *testing.T) {
+	s, _ := newStore(t)
+
+	if !s.Restore("k", []byte("promoted"), 0, 900) {
+		t.Fatal("Restore refused to install into an empty store")
+	}
+	got, version, ok := s.Get("k")
+	if !ok || string(got) != "promoted" || version != 900 {
+		t.Fatalf("Get = %q v%d ok=%v, want \"promoted\" v900", got, version, ok)
+	}
+
+	// And an ordinary write continues from there rather than from zero.
+	if next := s.Set("k", []byte("after"), 0); next != 901 {
+		t.Fatalf("the next Set produced v%d, want v901; promotion must leave the "+
+			"sequence where the previous owner left it", next)
+	}
+}
+
+// TestRestoreRefusesAnOlderVersion covers the race promotion runs into: a
+// caller can write to the new owner between it acquiring the key and the drain
+// reaching that key, and the newer value must win whichever arrived first.
+func TestRestoreRefusesAnOlderVersion(t *testing.T) {
+	s, _ := newStore(t)
+
+	s.Set("k", []byte("written after promotion began"), 0) // v1
+	for i := 0; i < 5; i++ {
+		s.Set("k", []byte("more"), 0)
+	}
+	_, version, _ := s.Get("k")
+
+	if s.Restore("k", []byte("stale replica copy"), 0, version) {
+		t.Fatal("Restore installed a copy at the resident version; a drain arriving after " +
+			"a write must not undo it")
+	}
+	if s.Restore("k", []byte("older still"), 0, version-1) {
+		t.Fatal("Restore installed an older copy over a newer one")
+	}
+	if got, _, _ := s.Get("k"); string(got) == "stale replica copy" {
+		t.Fatal("the stale copy is resident")
+	}
+	if !s.Restore("k", []byte("genuinely newer"), 0, version+1) {
+		t.Fatal("Restore refused a genuinely newer copy")
+	}
+}

@@ -263,6 +263,40 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	return version
 }
 
+// Restore installs a value at a version chosen by the caller, reporting
+// whether it was installed.
+//
+// This is the promotion path and nothing else should use it. A node taking
+// ownership of keys it held as replicas must continue the previous owner's
+// version sequence rather than start a new one: every cached copy in the
+// cluster is stamped against that sequence, and restarting it would make stale
+// copies look newer than the truth and be kept in preference to it.
+//
+// A version not newer than the resident one is refused. Promotion races with
+// ordinary writes — a caller can write to this node between the moment it
+// becomes the owner and the moment the drain reaches a key — and the newer
+// value must win whichever arrived first.
+func (s *Store) Restore(key string, val []byte, ttl time.Duration, version uint64) bool {
+	var expiresAt int64
+	if ttl > 0 {
+		expiresAt = deadlineNanos(s.clk.Now(), ttl)
+	}
+
+	stored := make([]byte, len(val))
+	copy(stored, val)
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	if existing, ok := sh.entries[key]; ok && existing.version >= version {
+		return false
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	sh.sets.Add(1)
+	return true
+}
+
 // Delete removes key and reports whether it was present and unexpired.
 //
 // Deleting an absent key is not an error: the caller's postcondition already

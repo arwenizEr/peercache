@@ -341,6 +341,17 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 		return nil
 	}
 
+	return n.localDelete(ctx, key)
+}
+
+// localDelete removes an owned key, replicates the removal and tells the
+// cluster.
+//
+// It is shared with the peer handler so that a deletion arriving over the
+// network does exactly what a local one does. Two write paths that differ is
+// how the first version ended up replicating only the writes that happened to
+// start on their owner.
+func (n *namespace) localDelete(ctx context.Context, key string) error {
 	n.store.Delete(key)
 	// A deletion invalidates every cached copy. The stamp carries this
 	// node's epoch with a version above anything the deleted entry could

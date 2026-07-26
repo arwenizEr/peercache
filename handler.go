@@ -200,7 +200,19 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	// value lives, so refusing would mean a key could never be written from
 	// anywhere but the node that happened to read it first.
 	ns := h.cache.Namespace(in.Namespace).(*namespace)
-	version := ns.store.Set(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos))
+
+	// Through the namespace's own write path, not straight into the store.
+	//
+	// Writing to the store directly is what the first version did, and it
+	// meant a write that arrived over the network was never replicated and
+	// never invalidated: only keys written *through* their owner got copies.
+	// The promotion acceptance test found it, because two thirds of the
+	// keyspace had no replica to promote. A local write and a remote write
+	// must be the same write once they reach the owner.
+	if err := ns.localSet(ctx, in.Key, in.Value, time.Duration(in.TTLNanos)); err != nil {
+		return nil, err
+	}
+	_, version, _ := ns.store.Get(in.Key)
 	return wire.Encode(&wire.SetResponse{Stamp: h.stamp(version)})
 }
 
@@ -213,8 +225,13 @@ func (h *peerHandler) delete(ctx context.Context, req []byte) ([]byte, error) {
 	if err := h.assertOwned(in.Key); err != nil {
 		return nil, err
 	}
+	// Same reasoning as set: a deletion arriving over the network has to
+	// replicate its tombstone, or a replica that missed it resurrects the
+	// key the moment it is promoted.
 	if ns, ok := h.localNamespace(in.Namespace); ok {
-		ns.store.Delete(in.Key)
+		if err := ns.localDelete(ctx, in.Key); err != nil {
+			return nil, err
+		}
 	}
 	return wire.Encode(&wire.DeleteResponse{})
 }
