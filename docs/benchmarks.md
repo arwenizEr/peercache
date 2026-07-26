@@ -688,6 +688,68 @@ and rejoining, at rf/9 of the keyspace per change.
 
 ---
 
+## M7 — observability and soak
+
+Measured on Machine A.
+
+### The soak
+
+SPEC.md §4 asks for "24h at target throughput, memory flat".
+
+**This was run for 2 minutes, not 24 hours.** The harness takes any duration —
+`PEERCACHE_SOAK=24h go test . -run TestSoak -timeout 25h` — and CI runs it for
+seconds as a regression gate. What is recorded here is what was actually
+executed, because a 24-hour claim from a 2-minute run would make every other
+number in this file suspect.
+
+| | Measured |
+|---|---|
+| Duration | 2m0s |
+| Operations | **20,105,305** |
+| Throughput | 167,544 ops/sec |
+| Non-retryable failures | **0** |
+| Live heap, baseline | 4.1 MiB |
+| Live heap, final | 5.6 MiB |
+| Live heap samples | 4.1, then 5.6 for all nine subsequent samples |
+| Goroutines | **23 → 23** |
+
+Three nodes, RF=2 synchronous, 2,000-key working set, 2s L1 TTL, mixed 25%
+writes.
+
+**"Flat" means the live heap, after a forced collection.** The distinction
+matters: this system allocates on the write path by design — `Set` copies the
+value — so allocation *rate* is high and says nothing about leaks. What a leak
+looks like is monotonic growth in `HeapAlloc` across samples with a bounded key
+set, and there is none: 5.6 MiB from the second sample to the tenth.
+
+**The goroutine count is the stricter check.** A goroutine leak stays invisible
+in heap terms until it is severe, and this project has shipped one — M3's gossip
+event loop, found only because it slowed an unrelated latency test. Exactly 23
+before and after twenty million operations.
+
+### internal/metrics — instrumentation cost
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `Observe` | 15.81 | 0 | 0 |
+| `ObserveParallel` | 36.88 | 0 | 0 |
+| `ObserveFastPath` | 15.64 | 0 | 0 |
+| `ObserveSlowPath` | 15.82 | 0 | 0 |
+| `Quantile` | 7.31 | 0 | 0 |
+
+**These numbers decided the design.** 36.9 ns under contention against M1's
+515 ns local read is ~7%, and on a platform whose monotonic clock resolves to
+~500 µs a sub-microsecond operation times as zero regardless — so instrumenting
+the local path would pay 7% to record nothing. `WithLatencyHistograms` is
+therefore opt-in and instruments the remote path only, where a 1.7 ms round trip
+makes the observation free by comparison.
+
+The fast and slow paths costing the same (15.64 vs 15.82 ns) says the linear
+bucket scan is not the cost — the atomics are. That is why a finer bucket set
+would be nearly free and a lock-based sketch would not.
+
+---
+
 ## Method notes
 
 - `-count 5` is the minimum for a median worth quoting. Single-run numbers are
