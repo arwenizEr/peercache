@@ -304,10 +304,12 @@ mutate "fake clock drops the creation-order tie-break" \
 mutate "namespace skips the context check" \
   namespace.go \
   'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}' \
-  'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {' \
+  'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)' \
   'TestCancelledContextIsReportedFirst' .
 
 mutate "loader runs without the namespace deadline" \
