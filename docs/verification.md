@@ -562,7 +562,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all ninety-six invariants:
+Latest run, all ninety-nine invariants:
 
 ```
 caught   Set no longer copies the caller's buffer                           -- TestSetCopiesTheCallersBuffer
@@ -660,9 +660,12 @@ caught   snapshot buckets are exclusive, not cumulative                     -- T
 caught   the overflow bucket is dropped                                     -- TestTheInfBucketMatchesTheCount
 caught   histogram bounds emitted in nanoseconds, not seconds               -- TestHistogramTextFormat
 caught   a correctness counter is exported as a gauge                       -- TestCorrectnessMetricsAreCounters
+caught   an out-of-order copy is not counted as a version conflict          -- TestVersionConflictsAreCountedButRetransmissionsAreNot
+caught   a retransmission is counted as a version conflict                  -- TestVersionConflictsAreCountedButRetransmissionsAreNot
+caught   mailbox rejections never reach Stats                               -- TestMailboxRejectionsAreCounted
 caught   a stats field is exported under the wrong name                     -- TestEveryStatsFieldIsExported
 
-caught: 96   vacuous: 0   skipped: 0
+caught: 99   vacuous: 0   skipped: 0
 tree clean
 ```
 
