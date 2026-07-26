@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,12 +35,57 @@ func localConfig(name string) *memberlist.Config {
 	return cfg
 }
 
+// newGossipRetrying starts a gossip node, retrying if the OS hands out a port
+// it will not then let us bind.
+//
+// Windows reserves large contiguous ephemeral ranges for Hyper-V and friends —
+// 50510-51109 on the machine this was written on — and memberlist's port-0
+// selection lands in them often enough to fail a run. The bind fails with
+// "access permissions", which reads like a defect and is not one: the port was
+// allocated and then refused.
+//
+// Retrying is what a real deployment does too, so this is not test-only
+// sleight of hand. It is bounded, and the last error is reported so a genuine
+// bind problem still fails loudly rather than looping.
+//
+// See docs/decisions/open.md question 27.
+func newGossipRetrying(t *testing.T, id string) (*membership.Gossip, error) {
+	return newGossipAt(t, core.Node{ID: id})
+}
+
+// newGossipAt is newGossipRetrying for a node with an explicit address.
+func newGossipAt(t *testing.T, self core.Node) (*membership.Gossip, error) {
+	t.Helper()
+	const attempts = 12
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		g, err := membership.New(membership.Options{
+			Self:   self,
+			Config: localConfig(self.ID),
+		})
+		if err == nil {
+			return g, nil
+		}
+		lastErr = err
+		if !isPortRefused(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// isPortRefused reports whether an error is the OS declining a port it just
+// handed out, rather than a real failure.
+func isPortRefused(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "access permissions") ||
+		strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "Only one usage of each socket address")
+}
+
 func newGossip(t *testing.T, id string) *membership.Gossip {
 	t.Helper()
-	g, err := membership.New(membership.Options{
-		Self:   core.Node{ID: id},
-		Config: localConfig(id),
-	})
+	g, err := newGossipRetrying(t, id)
 	if err != nil {
 		t.Fatalf("membership.New(%s): %v", id, err)
 	}
@@ -261,10 +307,7 @@ func TestGossipCloseIsIdempotent(t *testing.T) {
 		t.Skip("integration test")
 	}
 
-	g, err := membership.New(membership.Options{
-		Self:   core.Node{ID: "solo"},
-		Config: localConfig("solo"),
-	})
+	g, err := newGossipRetrying(t, "solo")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -314,10 +357,7 @@ func TestCloseLeavesNoGoroutines(t *testing.T) {
 	gossips := make([]*membership.Gossip, 0, nodes)
 	for i := 0; i < nodes; i++ {
 		id := fmt.Sprintf("leak-%d", i)
-		g, err := membership.New(membership.Options{
-			Self:   core.Node{ID: id},
-			Config: localConfig(id),
-		})
+		g, err := newGossipRetrying(t, id)
 		if err != nil {
 			t.Fatalf("membership.New(%s): %v", id, err)
 		}
@@ -370,19 +410,13 @@ func TestGossipAdvertisesTheRPCAddress(t *testing.T) {
 
 	// Two nodes whose RPC addresses are deliberately nothing like the ports
 	// memberlist will choose.
-	a, err := membership.New(membership.Options{
-		Self:   core.Node{ID: "node-a", Addr: "10.0.0.1:9999"},
-		Config: localConfig("node-a"),
-	})
+	a, err := newGossipAt(t, core.Node{ID: "node-a", Addr: "10.0.0.1:9999"})
 	if err != nil {
 		t.Fatalf("membership.New(node-a): %v", err)
 	}
 	t.Cleanup(func() { _ = a.Close() })
 
-	b, err := membership.New(membership.Options{
-		Self:   core.Node{ID: "node-b", Addr: "10.0.0.2:8888"},
-		Config: localConfig("node-b"),
-	})
+	b, err := newGossipAt(t, core.Node{ID: "node-b", Addr: "10.0.0.2:8888"})
 	if err != nil {
 		t.Fatalf("membership.New(node-b): %v", err)
 	}

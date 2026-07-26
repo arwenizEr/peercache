@@ -485,7 +485,7 @@ counts, codec names) and skipped for the ones where it is not.
 
 ---
 
-## 27. Windows reserves ephemeral ports, so socket tests flake — M4, environmental
+## 27. Windows reserves ephemeral ports, so socket tests flake — M4, handled in M6
 
 `internal/membership` and the gRPC transport tests bind port 0 and let the OS
 choose. On this Windows host the choice sometimes lands in a range Hyper-V has
@@ -493,9 +493,23 @@ reserved, and the bind fails with "An attempt was made to access a socket in a
 way forbidden by its access permissions". Observed roughly once in twenty runs;
 three consecutive re-runs passed.
 
-**Picked:** nothing. It is not a defect in this code, and a retry loop around
-every listener would hide a real bind failure to paper over an environmental
-one.
+**Picked in M4:** nothing, on the grounds that a retry loop would hide a real
+bind failure.
+
+**Revised in M6.** The reserved ranges turned out to be far larger than the
+"once in twenty runs" first observed suggested — `netsh interface ipv4 show
+excludedportrange protocol=udp` reports 600 contiguous UDP ports reserved on
+this machine (50510-51109), and a single race run failed three tests at once
+inside that band.
+
+A gate that fails for environmental reasons is a gate people learn to ignore,
+which is worse than either outcome it was protecting against. The gossip tests
+now retry construction up to twelve times, and *only* when the error is the OS
+declining a port it just handed out. Any other bind failure still fails
+immediately, so the original objection is met: a real problem is not hidden.
+
+Retrying is also what a real deployment does, so this is not test-only sleight
+of hand.
 
 **What would resolve it:** running the socket tests on Linux CI, where the
 ephemeral range is not carved up. Recorded here so that a future flake is
