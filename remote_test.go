@@ -42,6 +42,9 @@ type fabric struct {
 	// registry is shared by every membership in the fabric, so a revived
 	// node rejoins the same cluster rather than forming its own.
 	registry *testkit.Registry
+	// mcfg is the detection profile, kept so a revived node uses the same
+	// one the cluster was built with.
+	mcfg testkit.MembershipConfig
 }
 
 // hardKill removes a node the way an ungraceful termination does: no
@@ -75,7 +78,7 @@ func (f *fabric) revive(t *testing.T, id string) {
 	}
 
 	info := f.nodes[id]
-	m := testkit.NewMembership(info, f.net, f.clk, f.registry, testkit.MembershipConfig{})
+	m := testkit.NewMembership(info, f.net, f.clk, f.registry, f.mcfg)
 	f.memberships[id] = m
 
 	c, err := peercache.New(
@@ -90,6 +93,43 @@ func (f *fabric) revive(t *testing.T, id string) {
 	}
 	f.caches[id] = c
 	f.dead[id] = false
+}
+
+// settle waits until reconciliation has quiesced on every live node.
+//
+// Observing a membership change and acting on it are different moments, and the
+// promoter acts on the guard's update callback. A test that reads Stats between
+// those two moments sees a cluster that has noticed a failure and not yet
+// repaired it, which is a real state but never the one being asserted about.
+func (f *fabric) settle(t *testing.T) {
+	t.Helper()
+	const maxYields = 5_000_000
+	const quietFor = 2000
+
+	seen := make(map[string]int64, len(f.ids))
+	for _, id := range f.live() {
+		seen[id] = f.caches[id].Stats().PromotionRounds
+	}
+	quiet := 0
+	for i := 0; i < maxYields; i++ {
+		moved := false
+		for _, id := range f.live() {
+			if n := f.caches[id].Stats().PromotionRounds; n != seen[id] {
+				seen[id] = n
+				moved = true
+			}
+		}
+		if moved {
+			quiet = 0
+		} else {
+			quiet++
+			if quiet >= quietFor {
+				return
+			}
+		}
+		runtime.Gosched()
+	}
+	t.Fatal("reconciliation never quiesced")
 }
 
 // live returns the IDs of nodes that have not been killed.
@@ -149,6 +189,17 @@ func newFabricCounting(t *testing.T, n int) *fabric {
 
 func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 	t.Helper()
+	return newFabricTuned(t, n, counting, testkit.MembershipConfig{})
+}
+
+// newFabricTuned builds a fabric with an explicit detection profile.
+//
+// Detection latency is a real parameter, not a detail: a cluster that kills a
+// node every two seconds while taking three to notice never converges, and no
+// amount of correct replication code helps. Tests that create churn have to
+// state the profile they assume.
+func newFabricTuned(t *testing.T, n int, counting bool, mcfg testkit.MembershipConfig) *fabric {
+	t.Helper()
 
 	seed := testkit.Seed(t)
 	clk := clock.NewFake(clock.Epoch)
@@ -165,6 +216,13 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 	}
 	reg := testkit.NewRegistry()
 	f.registry = reg
+	if mcfg.FailureTimeout == 0 {
+		mcfg.FailureTimeout = testkit.DefaultFailureTimeout
+	}
+	if mcfg.JoinDelay == 0 {
+		mcfg.JoinDelay = testkit.DefaultJoinDelay
+	}
+	f.mcfg = mcfg
 
 	memberships := make(map[string]*testkit.Membership, n)
 	for i := 0; i < n; i++ {
@@ -172,7 +230,7 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 		info := core.Node{ID: id, Addr: id + ":7946"}
 		f.nodes[id] = info
 		f.ids = append(f.ids, id)
-		memberships[id] = testkit.NewMembership(info, f.net, clk, reg, testkit.MembershipConfig{})
+		memberships[id] = testkit.NewMembership(info, f.net, clk, reg, mcfg)
 		f.memberships[id] = memberships[id]
 	}
 	for _, id := range f.ids {
