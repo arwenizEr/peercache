@@ -201,7 +201,30 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	// Unlike Get, a write creates the namespace: the owner is where the
 	// value lives, so refusing would mean a key could never be written from
 	// anywhere but the node that happened to read it first.
+	//
+	// But a namespace created here gets *default* options — replication
+	// factor 1 — and options are fixed at creation (open question 26). So an
+	// owner whose application has not yet opened the namespace silently
+	// replicates nothing, and killing it loses its entire share. That
+	// presented as 53 of 300 keys destroyed by a node failure at RF=3, and
+	// it took a bisect to find because every counter said the write
+	// succeeded.
+	//
+	// The creation still happens, because refusing would break the routed
+	// write path. What is added is that it is counted and logged: a non-zero
+	// ImplicitNamespaces means some node is running with configuration its
+	// application never chose.
+	_, existed := h.cache.namespaceIfExists(in.Namespace)
 	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if !existed {
+		h.cache.implicitNamespaces.Add(1)
+		h.cache.opts.Logger.Warn(
+			"namespace created by an incoming write, with default options; "+
+				"replication is disabled for it until this node's application "+
+				"opens it with the options it wants",
+			"namespace", in.Namespace,
+			"replicationFactor", ns.opts.ReplicationFactor)
+	}
 
 	// Through the namespace's own write path, not straight into the store.
 	//

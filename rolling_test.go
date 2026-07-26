@@ -517,3 +517,79 @@ func TestDrainStopsPeersRoutingImmediately(t *testing.T) {
 		}
 	}
 }
+
+// TestAnImplicitNamespaceIsCountedAndReplicatesNothing pins the hazard that
+// looked like a data-loss bug for most of a milestone.
+//
+// A write routed to its owner creates the namespace there if the application
+// has not opened it — with default options, so replication factor 1. Options
+// are fixed at creation, so that node replicates nothing for that namespace
+// ever after, however it is configured later. Killing it loses its whole share
+// at what the operator believes is RF=3.
+//
+// The library cannot refuse the write without breaking routing, so it counts
+// and logs instead. This test is what stops that counter being quietly dropped.
+func TestAnImplicitNamespaceIsCountedAndReplicatesNothing(t *testing.T) {
+	f := newFabric(t, 5)
+	ctx := context.Background()
+
+	// Open the namespace on ONE node only, which is the mistake.
+	writer := f.ids[0]
+	ns := f.caches[writer].Namespace("implicit",
+		peercache.WithReplicationFactor(3),
+		peercache.WithSyncReplication())
+
+	const keys = 200
+	for i := 0; i < keys; i++ {
+		if err := ns.Set(ctx, fmt.Sprintf("implicit/%d", i), []byte("v"), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+
+	// The other owners created the namespace implicitly and replicate
+	// nothing, so the cluster holds far fewer copies than RF=3 implies.
+	var implicit, sent int64
+	for _, id := range f.ids {
+		st := f.caches[id].Stats()
+		implicit += st.ImplicitNamespaces
+		sent += st.ReplicationsSent
+	}
+	if implicit == 0 {
+		t.Fatal("no implicit namespace was counted, yet only one node opened it; the " +
+			"misconfiguration that silently disables replication is invisible")
+	}
+	t.Logf("%d nodes created the namespace implicitly; %d replications sent "+
+		"(RF=3 over %d keys would be %d)", implicit, sent, keys, keys*2)
+
+	// The shortfall is the point: this is what "replication factor 3" is
+	// actually delivering under this misconfiguration.
+	if sent >= int64(keys*2) {
+		t.Fatalf("%d replications sent for %d keys at RF=3; the test is not reproducing "+
+			"the misconfiguration", sent, keys)
+	}
+
+	// And with every node configured properly, replication is complete.
+	for _, id := range f.ids {
+		f.caches[id].Namespace("proper",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication())
+	}
+	before := int64(0)
+	for _, id := range f.ids {
+		before += f.caches[id].Stats().ReplicationsSent
+	}
+	for i := 0; i < keys; i++ {
+		if err := f.caches[writer].Namespace("proper").Set(
+			ctx, fmt.Sprintf("proper/%d", i), []byte("v"), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	after := int64(0)
+	for _, id := range f.ids {
+		after += f.caches[id].Stats().ReplicationsSent
+	}
+	if got := after - before; got != int64(keys*2) {
+		t.Fatalf("with every node configured, %d replications were sent for %d keys at "+
+			"RF=3; want exactly %d", got, keys, keys*2)
+	}
+}

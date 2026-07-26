@@ -145,4 +145,18 @@ type Stats struct {
 	// already owned, and so took directly into its owned store rather than
 	// filing as replicas.
 	KeysAdopted int64
+
+	// ImplicitNamespaces counts namespaces this node created in response to
+	// an incoming peer write, rather than because its own application asked
+	// for one.
+	//
+	// Any non-zero value is a misconfiguration worth alerting on. Such a
+	// namespace runs with default options — replication factor 1 — and
+	// namespace options cannot be changed afterwards, so this node will
+	// replicate nothing for it however the application configures it later.
+	// Losing the node then loses its entire share of that namespace.
+	//
+	// The remedy is to open every namespace, with the options you want, on
+	// every node before serving traffic.
+	ImplicitNamespaces int64
 }

@@ -50,6 +50,13 @@ the feature list rather than after it.
   acknowledged inside it exists on one node only. `WithSyncReplication()` closes
   the window entirely, at the cost of bounding a group's write rate by its
   slowest replica.
+- **Every namespace must be opened on every node, with the same options, before
+  serving.** A namespace not opened locally is created on the first routed write
+  with *default* options — replication factor 1 — and options cannot be changed
+  afterwards. That node then silently replicates nothing for it. A five-node
+  cluster where one node had opened the namespace placed 17% of the copies RF=3
+  implies, with every write reporting success. `Stats().ImplicitNamespaces`
+  counts the misconfiguration; any non-zero value deserves an alert.
 - **A restarted node must call `CatchUp` before it serves traffic.** This is the
   sharpest edge in the system. Replication is a stream of writes, not a state
   transfer, so a node that restarts receives only the keys written *after* it
@@ -98,7 +105,7 @@ the next begins.
 | M3 | Membership and ownership | **complete** |
 | M4 | Transport and remote routing | **complete** |
 | M5 | Replication and failure handling | **complete** |
-| M6 | Rebalancing and Kubernetes lifecycle | not started |
+| M6 | Rebalancing and Kubernetes lifecycle | **complete** |
 | M7 | Observability and hardening | not started |
 
 Methods belonging to a milestone that has not run return `ErrNotImplemented`.

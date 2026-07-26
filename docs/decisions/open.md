@@ -596,52 +596,54 @@ it happens at all.
 
 ---
 
-## 32. A hard kill at RF=3 can lose keys — M6, UNRESOLVED
+## 32. An implicitly created namespace silently disables replication — M6, resolved
 
-**This is an open defect, not a design trade.** It is recorded here because it
-is real, reproducible, and not yet fixed.
+**Symptom, as first seen.** Hard-killing one node of five at replication factor
+3 with synchronous replication left 53 of 300 keys permanently unreachable —
+`ErrNotFound`, not deferred. A node failure at RF=3 should be survivable by
+definition, so this looked like a serious defect in replication.
 
-**Symptom.** In `examples/m6`, hard-killing one node of five at replication
-factor 3 with synchronous replication leaves 53 of 300 keys permanently
-unreachable — `ErrNotFound`, not `ErrActivationPending`. The keys are gone, not
-deferred.
+**Cause.** A write routed to its owner creates the namespace there if that
+node's application has not opened it, using *default* options — replication
+factor 1. Namespace options are fixed at creation and silently ignored
+afterwards (question 26), so such an owner replicates nothing for that
+namespace, permanently, however the application configures it later.
 
-**What is established:**
+In the failing example only one node had opened the namespace. The other four
+created it implicitly on their first routed write, and the cluster placed 68 of
+the 400 copies that RF=3 implies — 17%. Every counter said the writes succeeded,
+because they had.
 
-- The loss happens at the *kill*, not at the drain or the revive that follow.
-  Bisecting the example showed 53 unreachable immediately after the kill and
-  before anything else ran.
-- Diagnostics at that moment show `replicas: 0` on three of the four survivors.
-  Replication had not placed copies on them at all, so the killed node's share
-  existed on one node only.
-- Removing the preceding kill/revive makes the drain lose nothing, so the two
-  interact.
-- A focused test reproducing the same nominal sequence
-  (5 nodes, RF=3, sync, default activation delay) **passes**. Whatever differs
-  between that test and the example is the thing still to find.
+**Resolved by** making the hazard visible rather than silent.
+`Stats().ImplicitNamespaces` counts namespaces created by an incoming peer write
+rather than by the local application, and each one logs a warning naming the
+namespace and the replication factor it is stuck with. Any non-zero value is a
+misconfiguration: the node is running with options its application never chose.
+`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` pins both the shortfall
+and the correct behaviour when every node is configured.
 
-**Leading hypothesis, not yet confirmed.** A write routed to its owner creates
-the namespace there if the application has not opened it, using *default*
-options — replication factor 1. Namespace options are fixed at creation and
-silently ignored afterwards (question 26), so such a node replicates nothing and
-keeps ignoring the RF=3 the application later asks for. Opening the namespace on
-every node before writing did not resolve it in the example, so this is either
-not the cause or not the whole cause.
+The creation itself still happens. Refusing would break routed writes to a node
+that has not yet opened the namespace, which is a legitimate startup ordering.
 
-**Why the example still runs.** It prints the number and continues rather than
-failing. Making it pass by relaxing the check would convert a known failure into
-an unknown one, which is strictly worse.
+**The operational rule**, now stated in the deploy README and the guarantees:
+open every namespace, with the options you want, on every node, before serving
+traffic. The library assumes every pod runs the same binary; the corollary is
+that every pod must configure its namespaces identically.
 
-**What would resolve it:** bisect the remaining differences between
-`examples/m6` and the passing focused test until the divergence appears. The
-diagnostic that finally distinguished "deferred" from "absent" was printing the
-error rather than counting failures — several hours of hypothesising preceded
-one line of output that settled it, which is the lesson worth carrying forward.
+**What this cost, and why it is worth recording.** The diagnosis took far longer
+than the fix. Three things went wrong in the process and all three are
+repeatable mistakes:
 
-**Impact if real.** A node failure at RF=3 should be survivable by definition.
-If replication silently fails to place copies under some configuration, the
-replication factor is nominal rather than actual, and every guarantee resting on
-it is overstated. M6 is not complete until this is understood.
+- I hypothesised the correct cause early, "fixed" it, saw no change, and
+  discarded it. The fix had silently not applied — a `str.replace` whose anchor
+  did not match is a no-op, not an error. It is the third time in this project
+  that has happened, and the second time it sent an investigation down a wrong
+  path. Every generated edit now gets verified by reading the file back.
+- I announced the root cause twice before confirming it.
+- The measurement that finally settled it — printing the replication counters
+  per node — took one command. It came after a long run of reading code and
+  reasoning about what *should* happen. Bisecting the failing case against a
+  passing one worked immediately every time it was actually used.
 
 ---
 

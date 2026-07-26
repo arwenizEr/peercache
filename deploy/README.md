@@ -19,9 +19,28 @@ restarted pod a new identity, which rendezvous hashing treats as a departure
 plus an unrelated arrival — two rebalances instead of none. With stable names a
 restarted pod hashes to the same place and reclaims exactly what it had.
 
-## The three things that must be right
+## The four things that must be right
 
-### 1. Peer discovery needs a headless service
+### 1. Open every namespace on every node, before serving
+
+```go
+// On every pod, at startup, with identical options.
+cache.Namespace("orders", peercache.WithReplicationFactor(3), peercache.WithSyncReplication())
+```
+
+**A namespace not opened locally is created for you on the first routed write —
+with default options, meaning replication factor 1.** Options are fixed at
+creation, so that node then replicates nothing for that namespace, permanently,
+however you configure it afterwards. Losing the node loses its entire share at
+what you believe is RF=3.
+
+In testing, a cluster where one of five nodes had opened the namespace placed
+17% of the copies RF=3 implies, and every write reported success.
+
+`Stats().ImplicitNamespaces` counts this. **Alert on it being non-zero** — it
+means a node is running with configuration your application never chose.
+
+### 2. Peer discovery needs a headless service
 
 Both manifests include a headless service (`clusterIP: None`). It exists so DNS
 returns every pod's address rather than one load-balanced address, which is what
@@ -31,7 +50,7 @@ whichever one a service IP happens to pick.
 `SEEDS` is set to the headless service name. Resolve it at startup and pass the
 addresses to `Join`.
 
-### 2. Two ports, and they are not interchangeable
+### 3. Two ports, and they are not interchangeable
 
 - **7946** — gossip (SWIM). memberlist binds this itself.
 - **7947** — data (gRPC). The peer transport binds this.
@@ -41,7 +60,7 @@ metadata; assuming the two are the same makes every peer dial memberlist
 expecting gRPC, which fails with `error reading server preface: EOF`. This is
 not hypothetical — it is how M4's first real-network run failed.
 
-### 3. The readiness probe and PreStop hook are not optional
+### 4. The readiness probe and PreStop hook are not optional
 
 ```
 readinessProbe -> GET /readyz -> cache.Ready()

@@ -296,6 +296,10 @@ type cache struct {
 	// keysAdopted counts keys taken directly into the owned store because
 	// this node already owned them when they arrived — the hand-off path.
 	keysAdopted atomic.Int64
+	// implicitNamespaces counts namespaces created by an incoming peer write
+	// rather than by this node's application. Each one runs with default
+	// options, which means no replication.
+	implicitNamespaces atomic.Int64
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -481,6 +485,7 @@ func (c *cache) Stats() Stats {
 		stats.CatchUpFailures = cfailures
 		stats.KeysHandedOff = c.keysHandedOff.Load()
 		stats.KeysAdopted = c.keysAdopted.Load()
+		stats.ImplicitNamespaces = c.implicitNamespaces.Load()
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
