@@ -77,7 +77,7 @@ the next begins.
 | M1 | Single-node core | **complete** |
 | M2 | Group actor runtime | **complete** |
 | M3 | Membership and ownership | **complete** |
-| M4 | Transport and remote routing | not started |
+| M4 | Transport and remote routing | **complete** |
 | M5 | Replication and failure handling | not started |
 | M6 | Rebalancing and Kubernetes lifecycle | not started |
 | M7 | Observability and hardening | not started |

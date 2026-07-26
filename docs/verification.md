@@ -152,6 +152,117 @@ reports rather than hanging.
 
 ---
 
+## M4 — what the fuzzer and the first real network found
+
+M4 added the first code that reads bytes another machine wrote, and the first
+tests that use real sockets. Both classes found defects that nothing else could
+have.
+
+### A length prefix that bought an allocation
+
+`FuzzDecode` was written for the new message parser and failed in **under two
+seconds**: two bytes decoded into ten entries.
+
+msgpack writes an array as a length followed by its elements, and the decoder
+allocated the whole slice from that length before reading a single element. A
+probe confirmed the scale — a **six-byte** input wedged the process for the full
+two-minute test timeout, trying to allocate two billion structs. Over a network
+that is an unauthenticated remote out-of-memory: one corrupt frame, every node
+that receives it.
+
+The library has a guard for exactly this and it cannot be reached.
+`decode_slice.go` computes `noLimit := d.flags&disableAllocLimitFlag != 1`, and
+since that flag is not bit zero the expression is true whatever the flag is set
+to — so `DisableAllocLimit` cannot switch the limit on, and maps and byte
+strings are protected while slices of structs are not.
+
+Rather than wait for that to be fixed upstream, the decoders in
+`internal/wire/bounded.go` append as elements arrive. A declared length is
+treated as a statement of intent, never as an instruction to allocate, so the
+cost of a malformed message is proportional to the bytes actually sent.
+
+The regression test asserts the *allocation*, not just the error: a decoder that
+rejected the message after allocating would still be exploitable. Its cases are
+an ordered slice with the modest one first, because reverting the fix makes that
+case fail in milliseconds having allocated four megabytes — which reports —
+while the enormous cases would thrash for minutes, which does not. The crasher
+`` is a permanent corpus entry and `FuzzDecode` runs 60s in CI.
+
+### A best-effort hint that had become the write path's hardest dependency
+
+Invalidation was broadcast inline, on the writing caller's context. On the test
+fabric a dropped message looks like silence rather than an error
+(`docs/decisions/0004`), so an unreachable peer did not fail the send — it
+simply never replied. A caller passing `context.Background()`, which is the
+ordinary thing to do, blocked in `Set` **forever**.
+
+A latency optimisation had become an unbounded dependency of every write:
+precisely the inversion CLAUDE.md non-negotiable 6 exists to prevent, on a path
+that could block past any deadline because it had none.
+
+It is now a bounded queue. Enqueueing never blocks and never fails; a full queue
+drops the hint and counts it. The property is structural rather than
+aspirational — correctness cannot depend on something the writer never waits
+for.
+
+Fixing it exposed a second defect immediately: `Close` waited on the delivery
+goroutine, whose per-peer timeout is measured on the *injected* clock, which
+under a fake clock never advances. Signalling was not enough; `Close` now
+cancels a parent context so an in-flight send returns at once.
+
+### An epoch check that could never have worked
+
+The handler originally refused any request whose caller quoted a different
+membership epoch. It looked principled. A three-node test then failed with a
+reader at epoch 6 refused by an owner at epoch 4 — **and both were right**.
+
+An epoch counts the transitions *one node* has observed. `core.Epoch`'s own
+documentation says epochs are per-view and that comparing them "establishes
+staleness, never consensus". Two nodes that agree exactly about who is in the
+cluster can hold different epochs, because they counted different numbers of
+intermediate views getting there. Demanding equality across a hop therefore
+fails requests between nodes that agree, and once the counters have drifted it
+fails them permanently.
+
+The check is now advisory and the skew is counted. Safety comes from
+`assertOwned`, which asks a question answerable locally: does *this* node own
+this key under *its own* current view.
+
+### Two sockets, one address
+
+The first real-network run failed with `error reading server preface: EOF` —
+what a protocol looks like when it reaches the wrong listener.
+
+`membership.New` overwrote `Node.Addr` with memberlist's own address, so the
+ownership table told the data path to dial the SWIM port expecting gRPC. The
+gossip socket and the data socket are different sockets; the RPC address now
+travels in gossip metadata beside the epoch, with a fallback to the gossip
+address so a rolling upgrade from a build that does not advertise one still
+works.
+
+Nothing in the deterministic suite could have caught this: the in-process fabric
+gives each node exactly one address, so the distinction does not exist there.
+That is the argument for keeping a small number of real-socket tests despite
+their cost.
+
+### An mTLS test that proved nothing
+
+Recorded in full under M3's heading in spirit, but it happened here. The first
+"rejects an unknown CA" test passed even with the server downgraded to
+`RequireAnyClientCert`. In TLS 1.3 the server's CertificateRequest advertises
+its trusted CA names and Go's client will not send a certificate that cannot
+chain to one, so the handshake died at "client didn't provide a certificate"
+before the server formed an opinion. A test named for server-side verification
+was measuring client-side reticence.
+
+It now uses an impostor CA carrying the *same subject name* as the real one,
+which forces the certificate onto the wire so the server must reject it on the
+signature — also the realistic attack, since a CA's distinguished name is not a
+secret. The behaviour the old test accidentally measured is pinned separately
+and named for what it is.
+
+---
+
 ## Automated audit
 
 `scripts/mutation-audit.sh` applies each mutation below, runs only the test that

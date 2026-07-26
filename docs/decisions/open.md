@@ -8,7 +8,7 @@ change.
 
 ---
 
-## 1. The shape of `PeerClient` and `Handler` — M0, decided provisionally
+## 1. The shape of `PeerClient` and `Handler` — M0, confirmed by M4
 
 SPEC.md section 3.6 names `Transport.Dial(node) (PeerClient, error)` and
 `Serve(l net.Listener, h Handler)` but never defines either type.
@@ -33,6 +33,13 @@ lines, and adding an RPC in M4 or M5 does not widen the interface.
 wants a stream, not a unary call, and M5's replication fan-out might too. The
 likely resolution is an additional `InvokeStream` method rather than reshaping
 `Invoke`, but that is not decided.
+
+**Confirmed in M4.** The gRPC transport implements this shape unchanged, and so
+does the in-process fake, which is the evidence the interface was worth having:
+the same seven RPCs run over sockets and over a fault-injecting fabric with no
+difference above the transport. Adding `Load` and `Submit` during M4 widened the
+protocol without touching this interface at all, which was the property it was
+chosen for.
 
 ---
 
@@ -210,7 +217,7 @@ codec is needed for RPC payloads regardless.
 
 ---
 
-## 13. The L1 tier is not reachable from a namespace — M1, by construction
+## 13. The L1 tier is not reachable from a namespace — M1, resolved in M4
 
 `internal/l1` is complete and tested, and nothing calls it. On a single node
 every key is owned locally, so there is no non-owned copy to cache.
@@ -219,6 +226,14 @@ every key is owned locally, so there is no non-owned copy to cache.
 and wire it in at M4 when remote reads exist.
 
 Recorded so that it is not mistaken for dead code at review.
+
+**Resolved in M4.** Namespaces build an L1 cache whenever a membership authority
+is present, and every non-owned read populates it. The wiring also changed the
+tier's comparison: it stamps entries with `(epoch, version)` rather than a bare
+version, because question 18 below turned out to matter exactly here — a key
+that moves to a new owner is usually reconstructed there at version 1, and a
+version-only comparison would have rejected that fresh value as stale until the
+TTL expired.
 
 ---
 
@@ -274,6 +289,13 @@ consulted by any data path:
 | `WithPartitioner` | M3 | Grouping decides which node owns a key. One node, no ownership, nothing to decide. |
 | `WithReplicationFactor` | M5 | There is nowhere to put a replica. |
 | `WithCodec` | M4 | SPEC.md section 3.1 defines a `[]byte` API; there is nothing to encode. See question 12. |
+
+**Updated in M4.** `WithPartitioner` now acts: `namespace.groupKeyFor` consults
+it on every routed operation, so keys grouped under one group key share an owner
+and travel together in a batch. `WithReplicationFactor` remains inert until M5.
+`WithCodec` still only validates — the protocol's own encoding is fixed
+(`internal/wire`), and choosing a codec for application *values* is question 12,
+which is still open.
 
 **Picked:** accept and validate them now. An unregistered codec or an
 out-of-range replication factor fails at startup, which is the point of naming
@@ -440,7 +462,72 @@ every long-lived goroutine in the system exists and can be enumerated.
 
 ---
 
-## 26. Deliberately deferred, per SPEC.md section 5
+## 26. Namespace options are fixed at creation, silently — M4, a sharp edge
+
+`Namespace(name, opts...)` returns the existing namespace if there is one, and
+the options are ignored. There is no error and no warning.
+
+This cost an afternoon during M4: the acceptance benchmark asked for a
+one-nanosecond L1 bound on a namespace that had already been created with
+defaults, got the default five seconds, and measured twelve million requests per
+second — because every "remote" read was a local cache hit. No gRPC stack
+produces that number, which is the only reason it was caught.
+
+**Picked:** leave the behaviour, document it. Returning an error would break the
+common and reasonable pattern of calling `Namespace("x")` from several places
+with the same options, and comparing option sets for equality means comparing
+function values, which Go cannot do meaningfully for `Loader` or `Partitioner`.
+
+**What would resolve it:** a `Stats` field, or a debug-level log line, when a
+namespace is requested with options that cannot be applied. That needs the
+comparison problem solved for the fields where it is possible (TTLs, shard
+counts, codec names) and skipped for the ones where it is not.
+
+---
+
+## 27. Windows reserves ephemeral ports, so socket tests flake — M4, environmental
+
+`internal/membership` and the gRPC transport tests bind port 0 and let the OS
+choose. On this Windows host the choice sometimes lands in a range Hyper-V has
+reserved, and the bind fails with "An attempt was made to access a socket in a
+way forbidden by its access permissions". Observed roughly once in twenty runs;
+three consecutive re-runs passed.
+
+**Picked:** nothing. It is not a defect in this code, and a retry loop around
+every listener would hide a real bind failure to paper over an environmental
+one.
+
+**What would resolve it:** running the socket tests on Linux CI, where the
+ephemeral range is not carved up. Recorded here so that a future flake is
+recognised rather than investigated twice.
+
+---
+
+## 28. `EpochSkew` is observed but nothing acts on it — M4, deliberate
+
+The peer handler counts requests whose caller resolved ownership under a
+different epoch, and does nothing else with the number.
+
+That is the correction of an earlier mistake rather than an oversight. The first
+implementation *refused* those requests, which looked principled and was wrong:
+epochs count one node's observed transitions, so two nodes that agree exactly
+about membership can hold different epochs, and demanding equality fails
+requests between nodes that agree — permanently, once the counters have drifted.
+`core.Epoch`'s own documentation says comparing epochs "establishes staleness,
+never consensus"; the handler was treating it as consensus.
+
+**Picked:** the ownership check (`assertOwned`) is the safety mechanism, because
+"do I own this key under my own current view" is answerable locally and is the
+only question that matters. The epoch is carried for stamping and counted for
+visibility.
+
+**What would resolve it into something actionable:** M7's metrics work, where a
+sustained skew rate under stable membership is a useful alert — it means views
+are not settling — and a transient spike during churn is not.
+
+---
+
+## 29. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 

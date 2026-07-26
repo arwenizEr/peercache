@@ -26,15 +26,20 @@ End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle),
 and `./examples/m3` (a real three-node cluster over loopback gossip). Each one
 asserts what it demonstrates and all are run by CI.
 
-**Milestone status:** M0 through M3 complete. Namespaces are fully functional on
+**Milestone status:** M0 through M4 complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,
 bounded mailboxes, idle deactivation, an active cap, per-group timers and
 lifecycle events; and nodes form a gossip cluster in which every node computes
 the same owner for a key without coordinating.
 
-What is *not* yet true: there is no transport between nodes. A call for a group
-this node does not own returns `ErrNotOwner` rather than being forwarded. M4
-adds the network hop and the router that makes ownership invisible to callers.
+Ownership is now invisible to callers: a read, a write or a `Call` for data
+owned elsewhere crosses the network and comes back, and the only way to tell is
+latency. Non-owned values are cached under a mandatory TTL, loaders run on the
+owner so a cold key costs the cluster one load rather than one per pod, and
+`Router` turns a flush of messages into one request per owner.
+
+What is *not* yet true: there are no replicas. Losing a pod loses the keys it
+owned, exactly as CLAUDE.md's durability section says. M5 adds replication.
 
 ---
 
@@ -360,6 +365,66 @@ difference between one RPC and ten thousand is not an implementation detail.
 
 Submitting no messages succeeds: the caller's postcondition already holds. There
 is no cross-owner atomicity and no rollback.
+
+---
+
+## Transport
+
+Supply a transport and a listener and the cache serves peers on it:
+
+```go
+l, err := net.Listen("tcp", ":7947")
+tr, err := transport.New(transport.Options{
+    Self: Node{ID: "pod-0", Addr: l.Addr().String()},
+    TLS:  &transport.TLSConfig{CertFile: ..., KeyFile: ..., CAFile: ...},
+})
+cache, err := peercache.New(
+    peercache.WithTransport(tr),
+    peercache.WithListener(l),
+    peercache.WithMembership(gossip),
+)
+```
+
+`New` does not return until the transport is answering, because a node that is
+a cluster member but not yet serving owns part of the keyspace it will refuse
+to answer for — which every peer reads as a broken node rather than a starting
+one.
+
+**The gossip address and the data address are different sockets.** memberlist
+binds its own port for SWIM; the transport binds another for gRPC. Pass the
+data address as `Node.Addr`; peers learn it through gossip metadata. Getting
+this wrong makes the cluster dial memberlist expecting gRPC.
+
+mTLS is off by default and real when switched on: both sides present a
+certificate and both verify one. See
+`docs/decisions/0014-grpc-without-protobuf.md` for why the transport is gRPC
+but the codec is not protobuf.
+
+### `Router`
+
+```go
+router := peercache.NewRouter(cache, func(o Order) string { return o.TenantID }, "apply")
+err := router.Submit(ctx, orders...)
+```
+
+`Submit` groups messages by group key, then groups those by owner, and issues
+one request per owner. Ten thousand messages across three owners cost three
+requests, not ten thousand.
+
+The registered handler receives **the whole batch for one group**, not one
+message — that is what lets a group's messages be applied in a single turn.
+Unpack it with `peercache.Batch[T]`:
+
+```go
+cache.RegisterGroupFunc("apply", func(ctx context.Context, s GroupState, arg []byte) ([]byte, error) {
+    orders, err := peercache.Batch[Order](arg)
+    ...
+})
+```
+
+Failures are reported per group. There is no cross-group atomicity and no
+rollback, so a group that failed is named and the ones beside it have already
+applied.
 
 ---
 
