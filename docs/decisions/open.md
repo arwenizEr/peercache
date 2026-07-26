@@ -557,7 +557,46 @@ to reason from, and they are in `docs/benchmarks.md`.
 
 ---
 
-## 30. Deliberately deferred, per SPEC.md section 5
+## 30. A restarted node owns keys it does not have — M5, mitigated not solved
+
+`Cache.CatchUp` exists and works, and calling it is a documented requirement of
+the restart procedure. What is *not* solved is that a node which skips it
+answers `ErrNotFound` for data that exists elsewhere — confidently, and
+indistinguishably from a genuine miss.
+
+The window is real even when catch-up *is* called, because the node becomes an
+owner the moment it joins while catch-up runs afterwards.
+
+**Picked:** document it loudly — README guarantees, `docs/api.md`, decision 0015
+— and leave the behaviour. The alternatives available in M5 are worse: refusing
+to serve until catch-up completes needs a readiness concept the library does not
+have, and consulting replicas on every miss puts a second lookup on the common
+path to paper over the rare case.
+
+**What would resolve it:** M6's readiness gate. A node that has joined but not
+settled should fail readiness, so traffic does not reach it until it holds what
+it owns. Kubernetes already has the vocabulary for this; the library does not.
+
+---
+
+## 31. The chaos test cannot distinguish a failed write from a lost one — M5, accepted
+
+`TestChaosLosesNoSynchronouslyWrittenKey` records a key as written only when
+`Set` returns nil under synchronous replication, which is a precise promise and
+the one the test holds the cluster to. Writes that fail mid-reconfiguration are
+skipped, and the test cannot tell a write that legitimately failed from one that
+was accepted and then lost in a way that also produced an error.
+
+**Picked:** accept it. The synchronous promise — a returned write is on RF nodes
+— is exactly what is being verified. Verifying the failures too would require
+the test to know which of them were "real", which is the thing under test.
+
+**What would resolve it:** per-write outcome logging, which is M7 territory if
+it happens at all.
+
+---
+
+## 32. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
