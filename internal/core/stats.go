@@ -136,4 +136,9 @@ type Stats struct {
 	ReplicasPulled  int64
 	CatchUpRuns     int64
 	CatchUpFailures int64
+
+	// KeysHandedOff counts keys pushed to a new owner during a graceful
+	// drain. Zero on a node that has never drained; on one that has, it
+	// should equal what it owned when the drain began.
+	KeysHandedOff int64
 }

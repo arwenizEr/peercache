@@ -263,6 +263,30 @@ func (rt *Runtime) Deactivate(id string) {
 	r.evict()
 }
 
+// DeactivateAll releases every activation, keeping the records and their state.
+//
+// It is the group half of a graceful drain: the goroutines exit and their
+// pending turns complete, but a group remains addressable and keeps what it
+// holds, so a read arriving before the process actually stops is still
+// answered.
+//
+// The record list is snapshotted under the lock and evicted outside it. Holding
+// the runtime lock while each activation drains would block every other group's
+// mailbox behind the slowest one, which during shutdown is exactly when the
+// system has the least time to spare.
+func (rt *Runtime) DeactivateAll() {
+	rt.mu.Lock()
+	records := make([]*record, 0, len(rt.records))
+	for _, r := range rt.records {
+		records = append(records, r)
+	}
+	rt.mu.Unlock()
+
+	for _, r := range records {
+		r.evict()
+	}
+}
+
 // enforceCap deactivates least-recently-activated groups until the active count
 // is within MaxActive.
 //

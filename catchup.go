@@ -81,9 +81,16 @@ func (c *cache) CatchUp(ctx context.Context) error {
 	if c.guard == nil || c.transport == nil {
 		// Nothing to catch up from. A single node holds everything it
 		// owns and replicates to nobody.
+		c.readiness.markCaughtUp()
 		return nil
 	}
-	return c.catchup.run(ctx)
+	err := c.catchup.run(ctx)
+	// Marked even when individual peers failed. Catching up from three of
+	// four owners leaves this node far better placed than never trying, and
+	// a readiness gate that never opens because one peer was briefly
+	// unreachable is a gate that gets disabled.
+	c.readiness.markCaughtUp()
+	return err
 }
 
 func (cu *catchUp) run(ctx context.Context) error {

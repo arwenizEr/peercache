@@ -45,6 +45,8 @@ type fabric struct {
 	// mcfg is the detection profile, kept so a revived node uses the same
 	// one the cluster was built with.
 	mcfg testkit.MembershipConfig
+	// activationDelay is kept for the same reason.
+	activationDelay time.Duration
 }
 
 // hardKill removes a node the way an ungraceful termination does: no
@@ -86,7 +88,7 @@ func (f *fabric) revive(t *testing.T, id string) {
 		peercache.WithClock(f.clk),
 		peercache.WithMembership(m),
 		peercache.WithTransport(f.net.Transport(info)),
-		peercache.WithActivationDelay(-1),
+		peercache.WithActivationDelay(f.activationDelay),
 	)
 	if err != nil {
 		t.Fatalf("reviving %s: %v", id, err)
@@ -200,6 +202,19 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 // state the profile they assume.
 func newFabricTuned(t *testing.T, n int, counting bool, mcfg testkit.MembershipConfig) *fabric {
 	t.Helper()
+	return newFabricFull(t, n, counting, mcfg, -1)
+}
+
+// newFabricFull additionally sets the activation delay.
+//
+// Every other constructor disables it, because those tests are about routing
+// and a handover window they are not examining would only make them wait. A
+// test *about* the window has to switch it back on — and one that forgot would
+// find every node permanently settled, which is how the readiness settling test
+// first came to assert nothing at all.
+func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipConfig,
+	activationDelay time.Duration) *fabric {
+	t.Helper()
 
 	seed := testkit.Seed(t)
 	clk := clock.NewFake(clock.Epoch)
@@ -223,6 +238,7 @@ func newFabricTuned(t *testing.T, n int, counting bool, mcfg testkit.MembershipC
 		mcfg.JoinDelay = testkit.DefaultJoinDelay
 	}
 	f.mcfg = mcfg
+	f.activationDelay = activationDelay
 
 	memberships := make(map[string]*testkit.Membership, n)
 	for i := 0; i < n; i++ {
@@ -245,7 +261,7 @@ func newFabricTuned(t *testing.T, n int, counting bool, mcfg testkit.MembershipC
 			peercache.WithClock(clk),
 			peercache.WithMembership(memberships[id]),
 			peercache.WithTransport(tr),
-			peercache.WithActivationDelay(-1),
+			peercache.WithActivationDelay(activationDelay),
 		)
 		if err != nil {
 			t.Fatalf("peercache.New(%s): %v", id, err)

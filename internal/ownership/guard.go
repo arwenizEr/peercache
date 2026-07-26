@@ -340,6 +340,25 @@ func (g *Guard) Close() {
 	<-g.stopped
 }
 
+// Settled reports whether the membership view has been stable for longer than
+// the activation delay.
+//
+// It is the same clock the deferral window uses, asked as a question rather
+// than applied to a key: if this returns true, no group is being deferred for
+// having just moved here, so ownership answers are not about to change under
+// the caller's feet.
+//
+// A negative delay disables deferral, and with it any notion of settling — such
+// a node is always settled, which is correct for the single-node configuration
+// that setting exists for.
+func (g *Guard) Settled() bool {
+	if g.activationDelay < 0 {
+		return true
+	}
+	elapsed := g.clk.Now().UnixNano() - g.changedAt.Load()
+	return elapsed >= int64(g.activationDelay)
+}
+
 // Table returns the ownership table this guard consults.
 //
 // It is exported so the data path can resolve an owner without going through

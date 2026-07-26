@@ -67,6 +67,36 @@ type Cache interface {
 	// rather than applied.
 	CatchUp(ctx context.Context) error
 
+	// Ready reports whether this node should receive traffic, which is a
+	// different question from whether it is a cluster member.
+	//
+	// A node becomes an owner the instant it joins — peers recompute the
+	// ranking and route to it immediately — but it holds nothing until
+	// catch-up runs. In between it answers ErrNotFound for data that exists
+	// elsewhere, which a caller cannot distinguish from a genuine miss.
+	//
+	// Wire this to a Kubernetes readiness probe. The pod stays out of the
+	// service until it has joined, settled, and caught up, and leaves the
+	// service as soon as Drain begins.
+	// Drain hands this node's work away and stops accepting more, without
+	// closing it.
+	//
+	// Wire this to a Kubernetes PreStop hook. It marks the node unready,
+	// announces its departure so peers stop routing to it, pushes the keys
+	// it owns to their new owners, and deactivates its groups — in that
+	// order, because every other order leaves a window in which requests
+	// arrive at a node that has already given away the ability to serve
+	// them.
+	//
+	// It is idempotent and it is not Close: a drained cache still answers
+	// peers that have not yet noticed the departure. Call Close after.
+	Drain(ctx context.Context) error
+
+	Ready() ReadyState
+
+	// WaitReady blocks until this node is ready or ctx ends.
+	WaitReady(ctx context.Context) error
+
 	Stats() Stats
 
 	// Close shuts the cache down. With a live context it drains gracefully:
@@ -171,6 +201,11 @@ func New(opts ...Option) (Cache, error) {
 	c.replicator = newReplicator(c)
 	c.promoter = newPromoter(c)
 	c.catchup = newCatchUp(c)
+	c.readiness = &readiness{cache: c}
+	if resolved.Membership == nil {
+		// Nothing to catch up from, so that condition is met at birth.
+		c.readiness.markCaughtUp()
+	}
 	c.promoter.start(guard)
 
 	// Serve before returning, so that a caller which constructs a cache and
@@ -250,6 +285,14 @@ type cache struct {
 
 	// catchup pulls replicas a restarted node has forgotten it holds.
 	catchup *catchUp
+
+	// readiness answers whether this node should receive traffic, which is
+	// a different question from whether it is a cluster member.
+	readiness *readiness
+
+	// drainRounds and keysHandedOff record graceful shutdown activity.
+	drainRounds   atomic.Int64
+	keysHandedOff atomic.Int64
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -433,6 +476,7 @@ func (c *cache) Stats() Stats {
 		stats.ReplicasPulled = pulled
 		stats.CatchUpRuns = cruns
 		stats.CatchUpFailures = cfailures
+		stats.KeysHandedOff = c.keysHandedOff.Load()
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
