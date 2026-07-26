@@ -124,4 +124,16 @@ type Stats struct {
 	// counters above can be read as a rate, and so a test can wait for a
 	// membership change to have been *acted on* rather than merely observed.
 	PromotionRounds int64
+
+	// ReplicasPulled counts keys obtained by catch-up, CatchUpRuns the
+	// number of times it ran, and CatchUpFailures the peers that could not
+	// be reached during one.
+	//
+	// A restarted node returns with empty memory, and replication only
+	// carries keys written after it came back — so without catch-up, every
+	// key that was quiet when it died stays missing. Failures here mean the
+	// replica set is thinner than its configured factor claims.
+	ReplicasPulled  int64
+	CatchUpRuns     int64
+	CatchUpFailures int64
 }

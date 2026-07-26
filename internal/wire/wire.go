@@ -200,6 +200,40 @@ type ReplicateResponse struct {
 	Conflict bool `msgpack:"conflict"`
 }
 
+// CatchUpRequest asks an owner for the keys this node should be replicating.
+//
+// A restarted node comes back with empty memory and no record of what it was
+// responsible for. It cannot enumerate what it wants, so it names itself and
+// lets each owner work out the answer from the ownership ranking both of them
+// compute identically.
+type CatchUpRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Requester string `msgpack:"requester"`
+	// ReplicationFactor is the *asker's* configured factor. Namespace
+	// options are per-node configuration, so the owner must not assume its
+	// own matches.
+	ReplicationFactor int `msgpack:"replication_factor"`
+	// After and Limit page the response. Without them a catch-up on a large
+	// namespace would build one message proportional to the whole keyspace,
+	// which is the shape of every out-of-memory bug in this file's history.
+	After string `msgpack:"after"`
+	Limit int    `msgpack:"limit"`
+}
+
+// CatchUpResponse carries one page of keys.
+type CatchUpResponse struct {
+	Entries []CatchUpEntry `msgpack:"entries"`
+	More    bool           `msgpack:"more"`
+}
+
+// CatchUpEntry is one key's worth of a catch-up page.
+type CatchUpEntry struct {
+	Key      string `msgpack:"key"`
+	Value    []byte `msgpack:"value"`
+	Stamp    Stamp  `msgpack:"stamp"`
+	TTLNanos int64  `msgpack:"ttl_ns"`
+}
+
 // InvalidateRequest tells a peer that keys it may be caching have changed.
 //
 // It is a latency optimisation and nothing else. CLAUDE.md non-negotiable 6

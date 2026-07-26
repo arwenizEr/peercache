@@ -66,6 +66,11 @@ service Peer {
   // difference is whether the owner waits for the response, not what is sent.
   rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
 
+  // CatchUp asks an owner for every key it holds that the caller should be
+  // replicating. A node that has restarted comes back with empty memory and no
+  // way to learn what it is responsible for except by asking.
+  rpc CatchUp(CatchUpRequest) returns (CatchUpResponse);
+
   // Invalidate tells a peer that a key it may be caching is stale. It is a
   // latency optimisation and nothing more — correctness never depends on
   // one of these arriving. See CLAUDE.md non-negotiable 6.
@@ -215,6 +220,36 @@ message ReplicateResponse {
   // conflict reports that this copy collided with one from a different node in
   // the same epoch. It is counted, never merged.
   bool conflict = 1;
+}
+
+message CatchUpRequest {
+  string namespace = 1;
+  // requester is the node asking. The owner replies with the keys for which
+  // that node ranks as a replica, which it can compute itself — the asker does
+  // not have to enumerate what it wants.
+  string requester = 2;
+  // replication_factor is the asker's configured factor for this namespace.
+  // Sent because namespace options are per-node configuration and the owner
+  // must not assume its own match.
+  int32 replication_factor = 3;
+  // after bounds the response. The owner returns keys sorted and the caller
+  // pages by passing the last key it received, so one catch-up cannot produce
+  // an unbounded message.
+  string after = 4;
+  int32 limit = 5;
+}
+
+message CatchUpResponse {
+  repeated CatchUpEntry entries = 1;
+  // more reports that the owner had further keys beyond the limit.
+  bool more = 2;
+}
+
+message CatchUpEntry {
+  string key = 1;
+  bytes value = 2;
+  Stamp stamp = 3;
+  int64 ttl_ns = 4;
 }
 
 message InvalidateRequest {

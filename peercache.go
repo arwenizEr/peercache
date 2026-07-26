@@ -46,6 +46,27 @@ type Cache interface {
 
 	// Stats returns a snapshot of this node's counters and view of the
 	// cluster.
+	// CatchUp pulls the replicas this node should be holding from their
+	// owners.
+	//
+	// A node that has restarted comes back with empty memory, and
+	// replication only carries keys written after it returned — so every key
+	// that was quiet when it died stays missing until somebody happens to
+	// write it. A replica set silently missing its cold keys is one that
+	// will fail at the moment it is needed.
+	//
+	// It is explicit rather than automatic on join, because a node that has
+	// just started is usually also serving traffic, and pulling an entire
+	// replica set competes with the requests it exists to answer. Call it
+	// after readiness, during a quiet period, or not at all if the namespace
+	// is reconstructible from a loader.
+	//
+	// It is safe to call at any time and alongside ordinary traffic:
+	// incoming pages are subject to the same version check as live
+	// replication, so a page that arrives after a newer write is discarded
+	// rather than applied.
+	CatchUp(ctx context.Context) error
+
 	Stats() Stats
 
 	// Close shuts the cache down. With a live context it drains gracefully:
@@ -149,6 +170,7 @@ func New(opts ...Option) (Cache, error) {
 	c.replicas = replication.NewStore()
 	c.replicator = newReplicator(c)
 	c.promoter = newPromoter(c)
+	c.catchup = newCatchUp(c)
 	c.promoter.start(guard)
 
 	// Serve before returning, so that a caller which constructs a cache and
@@ -225,6 +247,9 @@ type cache struct {
 	// promoter turns replicas into owned keys when membership moves them
 	// here, and drops the ones it moves away.
 	promoter *promoter
+
+	// catchup pulls replicas a restarted node has forgotten it holds.
+	catchup *catchUp
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -404,6 +429,10 @@ func (c *cache) Stats() Stats {
 		stats.KeysPromoted = promoted
 		stats.ReplicasEvicted = evicted
 		stats.PromotionRounds = rounds
+		pulled, cruns, cfailures := c.catchup.counters()
+		stats.ReplicasPulled = pulled
+		stats.CatchUpRuns = cruns
+		stats.CatchUpFailures = cfailures
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {

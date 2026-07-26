@@ -81,6 +81,16 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 			Namespace: "n", Key: "k", Deleted: true,
 			Stamp: wire.Stamp{Epoch: 3, Version: 9}, From: "node-a",
 		}, func() any { return new(wire.ReplicateRequest) }},
+		{"CatchUpRequest", &wire.CatchUpRequest{
+			Namespace: "n", Requester: "node-a", ReplicationFactor: 3,
+			After: "k5", Limit: 100,
+		}, func() any { return new(wire.CatchUpRequest) }},
+		{"CatchUpResponse", &wire.CatchUpResponse{More: true, Entries: []wire.CatchUpEntry{
+			{Key: "a", Value: []byte("v"), Stamp: wire.Stamp{Epoch: 1, Version: 2}, TTLNanos: 5},
+			{Key: "b"},
+		}}, func() any { return new(wire.CatchUpResponse) }},
+		{"CatchUpResponse empty", &wire.CatchUpResponse{},
+			func() any { return new(wire.CatchUpResponse) }},
 		{"ReplicateResponse", &wire.ReplicateResponse{Conflict: true},
 			func() any { return new(wire.ReplicateResponse) }},
 		{"LoadRequest", &wire.LoadRequest{Namespace: "n", Key: "k", Epoch: 2},
@@ -245,6 +255,7 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 	implemented := []string{
 		"Stamp", "GetRequest", "GetResponse", "SetRequest", "SetResponse",
 		"LoadRequest", "LoadResponse", "ReplicateRequest", "ReplicateResponse",
+		"CatchUpRequest", "CatchUpResponse", "CatchUpEntry",
 		"DeleteRequest", "DeleteResponse", "BatchGetRequest", "BatchGetResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
 		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
@@ -281,6 +292,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},
 		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
 		&wire.LoadRequest{}, &wire.LoadResponse{}, &wire.ReplicateRequest{},
+		&wire.CatchUpRequest{}, &wire.CatchUpEntry{},
 	}
 	for _, msg := range types {
 		typ := reflect.TypeOf(msg).Elem()

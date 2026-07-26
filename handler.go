@@ -54,6 +54,8 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 		return h.submit(ctx, req)
 	case transport.MethodReplicate:
 		return h.replicate(ctx, req)
+	case transport.MethodCatchUp:
+		return h.catchUp(ctx, req)
 	case transport.MethodInvalidate:
 		return h.invalidate(ctx, from, req)
 	default:
@@ -372,6 +374,90 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 			"namespace", in.Namespace, "key", in.Key, "from", in.From)
 	}
 	return wire.Encode(&wire.ReplicateResponse{Conflict: conflict})
+}
+
+// catchUp answers a returning node with the keys it should be replicating.
+//
+// The requester does not say which keys it wants — it has forgotten, which is
+// why it is asking. It names itself and this node works out the answer from the
+// same rendezvous ranking both compute, which is also what makes the answer
+// trustworthy: a node cannot ask for keys it does not rank for.
+func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
+	var in wire.CatchUpRequest
+	if err := wire.Decode(req, &in); err != nil {
+		return nil, err
+	}
+	if in.Requester == "" || in.ReplicationFactor < 2 {
+		return wire.Encode(&wire.CatchUpResponse{})
+	}
+	limit := in.Limit
+	if limit <= 0 || limit > catchUpPageSize {
+		limit = catchUpPageSize
+	}
+
+	ns, ok := h.localNamespace(in.Namespace)
+	if !ok {
+		return wire.Encode(&wire.CatchUpResponse{})
+	}
+
+	entries, more := ns.store.Snapshot(in.After, limit, func(key string) bool {
+		if h.cache.guard == nil {
+			return false
+		}
+		// Send a key if the asker ranks anywhere in its replica set —
+		// which includes ranking *first*, as its owner.
+		//
+		// Restricting this to keys the sender still owns was the first
+		// version, and it left the worst case unhandled: a node that
+		// restarts and reclaims ownership of keys it held before. While
+		// it was away another node owned them; on its return that node
+		// is demoted and still holds the data, but by the old rule it
+		// was no longer entitled to send it, so the returning owner came
+		// back to keys that existed elsewhere and could not be fetched.
+		//
+		// What still bounds this is the ranking: a node cannot obtain
+		// keys it has no business holding by asking nicely, because the
+		// sender computes the answer rather than trusting the request.
+		ranked, _, err := h.cache.guard.Table().Replicas(ns.groupKeyFor(key), in.ReplicationFactor)
+		if err != nil {
+			return false
+		}
+		for _, n := range ranked {
+			if n.ID == in.Requester {
+				return true
+			}
+		}
+		return false
+	})
+
+	out := wire.CatchUpResponse{More: more, Entries: make([]wire.CatchUpEntry, 0, len(entries))}
+	now := h.cache.opts.Clock.Now().UnixNano()
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		value, err := ns.decode(e.Value)
+		if err != nil {
+			return nil, err
+		}
+		// The remaining TTL, not the original. A key three seconds from
+		// expiry must not be handed over with a fresh full lifetime, or
+		// a slow transfer would keep resurrecting it.
+		var ttl int64
+		if e.ExpiresAt != 0 {
+			ttl = e.ExpiresAt - now
+			if ttl <= 0 {
+				continue
+			}
+		}
+		out.Entries = append(out.Entries, wire.CatchUpEntry{
+			Key:      e.Key,
+			Value:    ns.encode(value),
+			Stamp:    h.stamp(e.Version),
+			TTLNanos: ttl,
+		})
+	}
+	return wire.Encode(&out)
 }
 
 func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte) ([]byte, error) {

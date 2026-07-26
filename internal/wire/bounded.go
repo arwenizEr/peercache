@@ -308,7 +308,62 @@ func (r *SubmitRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return err
 }
 
+// decodeCatchUpEntries reads a catch-up page without trusting its length.
+func decodeCatchUpEntries(dec *msgpack.Decoder) ([]CatchUpEntry, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxSliceElements {
+		return nil, fmt.Errorf("wire: array of %d elements exceeds the %d cap: %w",
+			n, MaxSliceElements, core.ErrInvalidOption)
+	}
+	var out []CatchUpEntry
+	for i := 0; i < n; i++ {
+		var e CatchUpEntry
+		if err := dec.Decode(&e); err != nil {
+			return nil, fmt.Errorf("wire: catch-up entry %d of %d: %w", i, n, err)
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// EncodeMsgpack implements [msgpack.CustomEncoder].
+func (r CatchUpResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
+	if err := enc.EncodeArrayLen(2); err != nil {
+		return err
+	}
+	if err := enc.EncodeArrayLen(len(r.Entries)); err != nil {
+		return err
+	}
+	for i := range r.Entries {
+		if err := enc.Encode(&r.Entries[i]); err != nil {
+			return err
+		}
+	}
+	return enc.EncodeBool(r.More)
+}
+
+// DecodeMsgpack implements [msgpack.CustomDecoder].
+func (r *CatchUpResponse) DecodeMsgpack(dec *msgpack.Decoder) error {
+	if _, err := dec.DecodeArrayLen(); err != nil {
+		return err
+	}
+	var err error
+	if r.Entries, err = decodeCatchUpEntries(dec); err != nil {
+		return err
+	}
+	r.More, err = dec.DecodeBool()
+	return err
+}
+
 var (
+	_ msgpack.CustomEncoder = CatchUpResponse{}
+	_ msgpack.CustomDecoder = (*CatchUpResponse)(nil)
 	_ msgpack.CustomEncoder = GroupBatch{}
 	_ msgpack.CustomDecoder = (*GroupBatch)(nil)
 	_ msgpack.CustomEncoder = SubmitRequest{}

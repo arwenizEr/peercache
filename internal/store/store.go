@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -261,6 +262,75 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 
 	sh.sets.Add(1)
 	return version
+}
+
+// Snapshot returns up to limit unexpired entries whose keys sort after the
+// given key, in key order, and reports whether more remain.
+//
+// It exists for catch-up, which has to enumerate an owner's keys for a
+// restarted replica. Two properties matter and neither is free.
+//
+// It is *paged*, because a namespace can hold millions of keys and a single
+// response proportional to the keyspace is the shape of every out-of-memory
+// bug this project has already fixed once.
+//
+// It is *sorted*, because paging needs a stable cursor. Sorting a shard's keys
+// per call is real work, which is why this is not on any request path: it runs
+// when a node rejoins, not when a caller reads.
+//
+// The result is a point-in-time sample per shard rather than a consistent
+// snapshot across shards. Catch-up does not need one: anything written during
+// the scan is also being replicated live, so a key missed here arrives by the
+// ordinary path.
+func (s *Store) Snapshot(after string, limit int, want func(key string) bool) ([]SnapshotEntry, bool) {
+	if limit <= 0 {
+		return nil, false
+	}
+
+	var candidates []SnapshotEntry
+	now := s.clk.Now().UnixNano()
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		for key, e := range sh.entries {
+			if key <= after {
+				continue
+			}
+			if e.expiresAt != 0 && now >= e.expiresAt {
+				continue
+			}
+			if want != nil && !want(key) {
+				continue
+			}
+			val := make([]byte, len(e.val))
+			copy(val, e.val)
+			candidates = append(candidates, SnapshotEntry{
+				Key:       key,
+				Value:     val,
+				Version:   e.version,
+				ExpiresAt: e.expiresAt,
+			})
+		}
+		sh.mu.RUnlock()
+	}
+
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Key < candidates[j].Key })
+	if len(candidates) > limit {
+		return candidates[:limit], true
+	}
+	return candidates, false
+}
+
+// SnapshotEntry is one key's worth of a [Store.Snapshot].
+type SnapshotEntry struct {
+	Key   string
+	Value []byte
+	// Version is the owner's version, carried so a replica that is later
+	// promoted continues the sequence rather than restarting it.
+	Version uint64
+	// ExpiresAt is the entry's deadline in Unix nanoseconds, or zero for no
+	// expiry. Sent as an absolute instant rather than a remaining duration
+	// so that a slow transfer does not extend the key's life.
+	ExpiresAt int64
 }
 
 // Restore installs a value at a version chosen by the caller, reporting

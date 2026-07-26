@@ -39,6 +39,9 @@ type fabric struct {
 	// memberships lets a test kill a node the way a crash does.
 	memberships map[string]*testkit.Membership
 	dead        map[string]bool
+	// registry is shared by every membership in the fabric, so a revived
+	// node rejoins the same cluster rather than forming its own.
+	registry *testkit.Registry
 }
 
 // hardKill removes a node the way an ungraceful termination does: no
@@ -61,6 +64,32 @@ func (f *fabric) hardKill(t *testing.T, id string) {
 	}
 	f.memberships[id].Close()
 	f.net.Unregister(id)
+}
+
+// revive brings a killed node back with empty memory, the way a restarted pod
+// returns: same identity, same address, nothing remembered.
+func (f *fabric) revive(t *testing.T, id string) {
+	t.Helper()
+	if !f.dead[id] {
+		t.Fatalf("%s is not dead", id)
+	}
+
+	info := f.nodes[id]
+	m := testkit.NewMembership(info, f.net, f.clk, f.registry, testkit.MembershipConfig{})
+	f.memberships[id] = m
+
+	c, err := peercache.New(
+		peercache.WithNodeID(id),
+		peercache.WithClock(f.clk),
+		peercache.WithMembership(m),
+		peercache.WithTransport(f.net.Transport(info)),
+		peercache.WithActivationDelay(-1),
+	)
+	if err != nil {
+		t.Fatalf("reviving %s: %v", id, err)
+	}
+	f.caches[id] = c
+	f.dead[id] = false
 }
 
 // live returns the IDs of nodes that have not been killed.
@@ -135,6 +164,7 @@ func newFabricWith(t *testing.T, n int, counting bool) *fabric {
 		dead:        make(map[string]bool, n),
 	}
 	reg := testkit.NewRegistry()
+	f.registry = reg
 
 	memberships := make(map[string]*testkit.Membership, n)
 	for i := 0; i < n; i++ {

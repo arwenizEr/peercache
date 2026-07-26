@@ -619,3 +619,98 @@ func TestRestoreRefusesAnOlderVersion(t *testing.T) {
 		t.Fatal("Restore refused a genuinely newer copy")
 	}
 }
+
+// TestSnapshotPagesInKeyOrder is what stops a catch-up on a large namespace
+// building one message proportional to the keyspace.
+//
+// That shape — a response sized by the data rather than by a limit — is the
+// same one that produced this project's worst defect, an unauthenticated
+// remote out-of-memory from a six-byte message. It is worth a test even where
+// the caller is a peer rather than an attacker.
+func TestSnapshotPagesInKeyOrder(t *testing.T) {
+	s, _ := newStore(t)
+
+	const total = 1000
+	for i := 0; i < total; i++ {
+		s.Set(fmt.Sprintf("key-%04d", i), []byte("v"), 0)
+	}
+
+	const page = 128
+	seen := make(map[string]bool, total)
+	after := ""
+	pages := 0
+	for {
+		entries, more := s.Snapshot(after, page, nil)
+		pages++
+		if len(entries) > page {
+			t.Fatalf("a page held %d entries, want at most %d; the limit is not being "+
+				"applied and a catch-up would build a message sized by the keyspace",
+				len(entries), page)
+		}
+		for i, e := range entries {
+			if seen[e.Key] {
+				t.Fatalf("key %q appeared in two pages", e.Key)
+			}
+			seen[e.Key] = true
+			if i > 0 && entries[i-1].Key >= e.Key {
+				t.Fatalf("page is not sorted: %q came before %q", entries[i-1].Key, e.Key)
+			}
+			if e.Key <= after {
+				t.Fatalf("page contains %q, which is not after the cursor %q", e.Key, after)
+			}
+		}
+		if len(entries) > 0 {
+			after = entries[len(entries)-1].Key
+		}
+		if !more || len(entries) == 0 {
+			break
+		}
+		if pages > total {
+			t.Fatal("paging did not terminate")
+		}
+	}
+
+	if len(seen) != total {
+		t.Fatalf("paging returned %d distinct keys, want %d", len(seen), total)
+	}
+	if pages < total/page {
+		t.Fatalf("%d pages for %d keys at a limit of %d; the limit is not bounding "+
+			"anything", pages, total, page)
+	}
+}
+
+// TestSnapshotSkipsExpiredEntries stops catch-up handing over keys that are
+// already dead. A replica receiving one would hold it until its own TTL, which
+// resurrects a key the cluster has already forgotten.
+func TestSnapshotSkipsExpiredEntries(t *testing.T) {
+	s, fc := newStore(t)
+
+	s.Set("alive", []byte("v"), time.Hour)
+	s.Set("doomed", []byte("v"), time.Second)
+	fc.Advance(2 * time.Second)
+
+	entries, _ := s.Snapshot("", 100, nil)
+	for _, e := range entries {
+		if e.Key == "doomed" {
+			t.Fatal("Snapshot returned an expired entry; catch-up would resurrect it on " +
+				"a replica that has no idea it is dead")
+		}
+	}
+	if len(entries) != 1 || entries[0].Key != "alive" {
+		t.Fatalf("Snapshot = %v, want just the unexpired key", entries)
+	}
+}
+
+// TestSnapshotFiltersByCaller pins the predicate catch-up uses to decide who is
+// entitled to a key.
+func TestSnapshotFiltersByCaller(t *testing.T) {
+	s, _ := newStore(t)
+	for i := 0; i < 10; i++ {
+		s.Set(fmt.Sprintf("k%d", i), []byte("v"), 0)
+	}
+
+	entries, _ := s.Snapshot("", 100, func(key string) bool { return key == "k3" || key == "k7" })
+	if len(entries) != 2 {
+		t.Fatalf("Snapshot returned %d entries, want the 2 the filter allowed", len(entries))
+	}
+}
