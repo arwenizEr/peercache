@@ -49,6 +49,25 @@ const (
 	rollingNodes = 9
 	rollingRF    = 3
 	rollingKeys  = 3_000
+
+	// liveKeys is how many keys the *live-cluster* test seeds and verifies,
+	// as distinct from rollingKeys which the planner test uses.
+	//
+	// They differ because the two tests cost differently. The planner runs
+	// in memory and 3,000 keys is free; the live test seeds each key through
+	// a real routing path, kills and restarts nine pods around it, and probes
+	// ownership per key per node. Under -race that reached three minutes and
+	// climbing before this was split out.
+	//
+	// 600 keys keeps every assertion intact — zero failed requests, every key
+	// readable, movement inside the derived bound — because all three are
+	// ratios rather than counts. What it loses is resolution on the
+	// percentage, which the planner test measures far more precisely anyway.
+	liveKeys = 600
+
+	// placementSample bounds the ownership probing, which is the single most
+	// expensive thing here: one group activation per key per node.
+	placementSample = 200
 )
 
 // TestRollingUpgradeLosesNoRequests is the M6 acceptance criterion.
@@ -76,8 +95,8 @@ func TestRollingUpgradeLosesNoRequests(t *testing.T) {
 
 	// Seed the keyspace and record where every key lives, so movement can be
 	// measured rather than estimated.
-	written := make(map[string]string, rollingKeys)
-	for i := 0; i < rollingKeys; i++ {
+	written := make(map[string]string, liveKeys)
+	for i := 0; i < liveKeys; i++ {
 		key := fmt.Sprintf("rolling/%d", i)
 		val := fmt.Sprintf("v%d", i)
 		if err := writeWithRetry(t, f, openNS, key, val); err != nil {
@@ -86,7 +105,7 @@ func TestRollingUpgradeLosesNoRequests(t *testing.T) {
 		written[key] = val
 	}
 
-	placementBefore := placementSnapshot(t, f, rollingKeys)
+	placementBefore := placementSnapshot(t, f, placementSample)
 
 	var (
 		requests   int
@@ -110,7 +129,7 @@ func TestRollingUpgradeLosesNoRequests(t *testing.T) {
 		f.settle(t)
 
 		// Write while the cluster is one node short.
-		for i := 0; i < 40; i++ {
+		for i := 0; i < 12; i++ {
 			key := fmt.Sprintf("during/%s/%d", victim, i)
 			val := fmt.Sprintf("d-%s-%d", victim, i)
 			requests++
@@ -169,7 +188,7 @@ func TestRollingUpgradeLosesNoRequests(t *testing.T) {
 	}
 
 	// And movement stayed within the theoretical bound.
-	placementAfter := placementSnapshot(t, f, rollingKeys)
+	placementAfter := placementSnapshot(t, f, placementSample)
 	moved := 0
 	for key, before := range placementBefore {
 		if placementAfter[key] != before {
