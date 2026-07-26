@@ -320,7 +320,8 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 	// to live. Without a membership authority this node owns the whole
 	// keyspace, and caching a copy of a key it already holds would add a
 	// staleness window for nothing.
-	if c.guard != nil {
+	// A negative L1 TTL means the caller wants no non-owned tier at all.
+	if c.guard != nil && opts.L1TTL > 0 {
 		cache, err := l1.New(l1.Options{
 			Clock:  c.opts.Clock,
 			MaxTTL: opts.L1TTL,

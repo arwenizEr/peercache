@@ -102,7 +102,9 @@ type NamespaceOptions struct {
 	ReplicationFactor int
 	// Codec names the registered codec used for typed values.
 	Codec string
-	// L1TTL bounds how long a non-owned copy may be served. It is a
+	// L1TTL bounds how long a non-owned copy may be served. Negative
+	// disables the non-owned tier entirely, so every read of a key owned
+	// elsewhere is a round trip and nothing is ever served stale. It is a
 	// correctness bound, not a tuning knob: CLAUDE.md decision 6 makes it
 	// the only thing standing between a stale read and an unbounded one.
 	L1TTL time.Duration
@@ -171,7 +173,7 @@ func (o *NamespaceOptions) Validate() error {
 		return fmt.Errorf("peercache: replication factor %d out of range 1..%d: %w",
 			o.ReplicationFactor, MaxReplicationFactor, ErrInvalidOption)
 	}
-	if o.L1TTL <= 0 {
+	if o.L1TTL == 0 {
 		return fmt.Errorf("peercache: L1 TTL must be positive, got %v: %w", o.L1TTL, ErrInvalidOption)
 	}
 	if o.LoaderTimeout <= 0 {

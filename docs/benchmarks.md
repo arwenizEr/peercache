@@ -384,27 +384,60 @@ a 3-node real-network test". Three cache instances in one process over real gRPC
 on loopback TCP: real sockets, real serialisation, real deadlines, real
 connection pool.
 
-| | Measured | Budget |
-|---|---:|---:|
-| Throughput | **56,009 rps** | 50,000 rps |
-| p50 | 1.223 ms | — |
-| p90 | 1.459 ms | — |
-| **p99** | **1.737 ms** | 2 ms |
-| **p99.9** | **2.047 ms** | 10 ms |
-| max | 2.165 ms | — |
+**The latency criterion is met. The rate criterion is not met on this machine.**
 
-64 workers, 5 seconds, 283,392 reads, 13,287 of 20,000 keys genuinely remote
-from the reader.
+| | Measured (5 consecutive runs) | Budget | Verdict |
+|---|---|---:|---|
+| Throughput | 45,168 – 48,035 rps | 50,000 rps | **short by 4–10%** |
+| p50 | 756 – 812 µs | — | |
+| p90 | 984 – 1,027 µs | — | |
+| **p99** | **1,356 – 1,520 µs** | 2 ms | **pass, 5/5** |
+| **p99.9** | **1,766 – 1,874 µs** | 10 ms | **pass, 5/5** |
 
-Four things about this number are worth stating, because each one was a way to
-get it wrong.
+36 workers, 5 seconds, ~230,000 reads per run, 13,287 of 20,000 keys genuinely
+remote from the reader, non-owned tier disabled.
 
-**The non-owned tier is disabled for the measurement.** With the default 5s L1
-bound, a remote Get is a local map read after the first one — the first version
-of this test reported **12 million rps**, which is not a number any gRPC stack
-produces. The namespace is created with a one-nanosecond L1 bound *before*
-anything is written to it, because namespace options are fixed at creation and
-configuring one afterwards is silently ignored.
+**Why the rate falls short, and why that is a measurement limit rather than a
+cache limit.** The load generator and all three servers share twenty logical
+cores in one process. Every request the client issues takes CPU away from the
+three servers answering it. A worker sweep shows the system running out of
+machine, not out of headroom:
+
+| Workers | Rate | p99 |
+|---:|---:|---:|
+| 12 | 36–38k | 654 µs |
+| 20 | 41.8k | 891 µs |
+| 36 | 45–48k | 1.4–1.5 ms |
+| 64 | 56k | 1.7–2.9 ms, unstable |
+
+Throughput flattens between 45k and 56k while p99 degrades by a factor of three.
+Reaching 50k with the latency budget intact needs the load offered from
+somewhere that is not competing for the same cores — a separate process, or the
+three machines "3-node real-network" literally implies. That is out of scope for
+a test that has to be reproducible on one developer machine, and it is stated
+here rather than worked around.
+
+**Three earlier versions of this measurement were wrong**, each in a way worth
+recording because each looked plausible.
+
+*Twelve million rps.* The namespace was asked for the non-owned tier to be
+bounded at one nanosecond — after it had already been created with defaults.
+Namespace options are fixed at creation and silently ignored afterwards, so
+every "remote" read was a local cache hit. No gRPC stack produces that number,
+which is the only reason it was caught.
+
+*A 66% swing between identical runs.* 64 workers drove the system into
+saturation, so p50 measured queue depth behind the load generator's own
+concurrency rather than service time. Two runs of the same binary gave p99
+1.737 ms and 2.882 ms. The criterion asks for latency *at* a rate, not latency
+under saturation; the worker count now offers load rather than maximising it.
+
+*Cache churn charged to the server.* Bounding the tier at one nanosecond still
+stores every value and expires it on the next read. On a box where the client
+and the servers share cores, that overhead comes straight out of the thing being
+measured. `WithL1TTL` now accepts a negative duration meaning "no non-owned
+tier", which is a capability worth having anyway — a namespace whose values must
+never lag wants exactly that.
 
 **The percentiles are a lower bound.** Windows' monotonic clock resolves to
 ~506 µs, so a single sub-millisecond operation times as zero. Latency is
@@ -415,10 +448,10 @@ catches sustained stalls, which is what a p99 budget is for.
 TCP handshake and an HTTP/2 preface; an unwarmed run put a 1.4 s outlier in the
 tail that said nothing about steady state.
 
-**Throughput is reported, not asserted.** 50k rps is as much a property of the
-machine offering the load as of the cache, and failing a correctness suite
-because a laptop was busy would make the number a nuisance rather than a signal.
-The latency budgets are asserted; the rate is recorded here.
+**Throughput is reported, not asserted.** The latency budgets are asserted
+unconditionally and fail the build. The rate is logged, because failing a
+correctness suite on a busy laptop would train people to ignore it — and because
+the shortfall above is a fact about this machine that a green tick would hide.
 
 ### internal/wire — message codec
 

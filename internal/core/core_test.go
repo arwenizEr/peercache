@@ -112,11 +112,28 @@ func TestDefaultNamespaceOptionsAreValid(t *testing.T) {
 	}
 }
 
+// TestNegativeL1TTLDisablesTheTier pins the meaning of a negative bound, which
+// M4 gave a job.
+//
+// Zero is still rejected: it is what an unset field looks like, and silently
+// treating "I forgot" as "I want no caching" would be a trap. Negative is
+// explicit — nobody types minus one by accident — and it means the namespace
+// wants every non-owned read to be a round trip, with nothing ever served
+// stale.
+func TestNegativeL1TTLDisablesTheTier(t *testing.T) {
+	opts := core.DefaultNamespaceOptions()
+	opts.L1TTL = -time.Second
+	if err := opts.Validate(); err != nil {
+		t.Fatalf("Validate with a negative L1 TTL = %v; negative must be accepted as "+
+			"'no non-owned tier'", err)
+	}
+}
+
 func TestNamespaceOptionsValidation(t *testing.T) {
 	tests := map[string]func(*core.NamespaceOptions){
 		"replication factor 0": func(o *core.NamespaceOptions) { o.ReplicationFactor = 0 },
 		"replication factor 4": func(o *core.NamespaceOptions) { o.ReplicationFactor = 4 },
-		"negative L1 TTL":      func(o *core.NamespaceOptions) { o.L1TTL = -time.Second },
+		"zero L1 TTL":          func(o *core.NamespaceOptions) { o.L1TTL = 0 },
 		"nil partitioner":      func(o *core.NamespaceOptions) { o.Partitioner = nil },
 	}
 	for name, mutate := range tests {

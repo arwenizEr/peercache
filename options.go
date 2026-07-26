@@ -169,6 +169,10 @@ func WithCodec(name string) NamespaceOption {
 // latency optimisation and may be lost; this TTL is the only thing that turns
 // an unbounded stale read into a bounded one. Longer means faster and staler,
 // and the staleness is what a caller must reason about.
+// A negative duration disables the non-owned tier for this namespace. Every
+// read of a key owned elsewhere then costs a round trip and nothing is ever
+// served stale — which is the right trade for a namespace whose values must
+// never lag, and the wrong one for almost everything else.
 func WithL1TTL(d time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.L1TTL = d }
 }

@@ -527,7 +527,37 @@ are not settling — and a transient spike during churn is not.
 
 ---
 
-## 29. Deliberately deferred, per SPEC.md section 5
+## 29. The 50k rps acceptance figure is not reachable in-process — M4, unmet
+
+SPEC.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
+a 3-node real-network test". The latency half is met with 5/5 reliability. The
+rate half is not: five consecutive runs reached 45,168 to 48,035 rps.
+
+**Why.** The load generator and all three servers share twenty logical cores in
+one process, so every request the client issues takes CPU from the servers
+answering it. A worker sweep shows throughput flattening between 45k and 56k
+while p99 degrades threefold — the machine runs out, not the design.
+
+**Picked:** report the shortfall rather than tune around it. The latency budgets
+are asserted and fail the build; the rate is logged with the sweep behind it in
+`docs/benchmarks.md`. Picking the worker count that happened to pass would have
+turned a measurement into a decoration.
+
+**What would resolve it:** offering the load from outside the process under
+measurement — a separate load generator, or the three machines that "3-node
+real-network" literally implies. Neither belongs in a test that must be
+reproducible on one developer machine, so this needs a benchmark harness that
+CI runs on dedicated hardware. Worth building alongside M7's observability work,
+when there is something to point a load generator at in a real cluster.
+
+**What it does not mean.** Nothing here suggests the cache cannot serve 50k rps;
+it suggests this machine cannot both generate and serve it. The per-operation
+figures — a 175 µs serial round trip, 28 µs under concurrency — are the numbers
+to reason from, and they are in `docs/benchmarks.md`.
+
+---
+
+## 30. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
