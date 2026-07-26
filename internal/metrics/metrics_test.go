@@ -118,6 +118,8 @@ func TestValuesReachTheOutput(t *testing.T) {
 		ImplicitNamespaces:   3,
 		ReplicationsFailed:   11,
 		KeysHandedOff:        13,
+		MailboxRejections:    17,
+		VersionConflicts:     19,
 	}
 
 	got := make(map[string]float64)
@@ -133,6 +135,8 @@ func TestValuesReachTheOutput(t *testing.T) {
 		"peercache_implicit_namespaces_total":    3,
 		"peercache_replications_failed_total":    11,
 		"peercache_keys_handed_off_total":        13,
+		"peercache_mailbox_rejections_total":     17,
+		"peercache_version_conflicts_total":      19,
 	} {
 		if got[name] != want {
 			t.Errorf("%s = %v, want %v", name, got[name], want)
@@ -159,6 +163,8 @@ func TestCorrectnessMetricsAreCounters(t *testing.T) {
 		"peercache_replications_failed_total",
 		"peercache_replications_dropped_total",
 		"peercache_catchup_failures_total",
+		"peercache_mailbox_rejections_total",
+		"peercache_version_conflicts_total",
 	} {
 		if kinds[name] != metrics.Counter {
 			t.Errorf("%s is a %v, want a counter; rate() and increase() are the "+

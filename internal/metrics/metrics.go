@@ -103,6 +103,14 @@ func Collect(s core.Stats) []Metric {
 			"Namespaces created by an incoming peer write rather than by this node's application. " +
 				"Any non-zero value is a misconfiguration: such a namespace runs at replication factor 1 and cannot be reconfigured.",
 			float64(s.ImplicitNamespaces)},
+		{"peercache_mailbox_rejections_total", Counter,
+			"Calls refused because a group's mailbox was full, reported as ErrGroupOverloaded. " +
+				"A rising value is backpressure working, not a fault — but it is the first sign a group is saturated, and it arrives before the latency does.",
+			float64(s.MailboxRejections)},
+		{"peercache_version_conflicts_total", Counter,
+			"Replicated copies rejected because a newer one was already held. " +
+				"Distinct from split brain: this is one owner's writes arriving out of order, which async replication makes ordinary and the stamp ordering handles. A rising rate means reordering under load.",
+			float64(s.VersionConflicts)},
 
 		// Replication.
 		{"peercache_replications_sent_total", Counter, "Replica copies successfully placed on a peer.", float64(s.ReplicationsSent)},

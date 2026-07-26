@@ -159,4 +159,23 @@ type Stats struct {
 	// The remedy is to open every namespace, with the options you want, on
 	// every node before serving traffic.
 	ImplicitNamespaces int64
+
+	// MailboxRejections counts calls refused because a group's mailbox was
+	// full, reported to the caller as ErrGroupOverloaded.
+	//
+	// SPEC.md's M7 bullet names this as a correctness metric. A rising value
+	// is backpressure working as designed, not a fault — but it is the
+	// signal that a group is saturated, and the only one that arrives before
+	// the latency does.
+	MailboxRejections int64
+
+	// VersionConflicts counts replicated copies rejected because a newer one
+	// was already held.
+	//
+	// Distinct from SplitBrainDetections, which counts two nodes writing one
+	// key under one epoch. This counts one node's writes arriving out of
+	// order, which asynchronous replication makes ordinary and the stamp
+	// ordering handles. A steady low rate is normal; a rising one means
+	// reordering under load.
+	VersionConflicts int64
 }

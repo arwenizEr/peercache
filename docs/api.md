@@ -55,7 +55,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter the earlier milestones built is exported: `MetricsHandler` serves
-33 series in the Prometheus text exposition format, and PeerCache imports no
+35 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -667,13 +667,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 33 series come out of it.
+format with the content type a scraper expects, and 35 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 33 are ordinary levels and rates. These six are not — each counts a
+Most of the 35 are ordinary levels and rates. These eight are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
@@ -685,11 +685,19 @@ window was entered.
 | `peercache_replications_failed_total` | A replica write did not land. Under async replication the caller was told the write succeeded. |
 | `peercache_replications_dropped_total` | A replica write was never attempted, because the queue was full. |
 | `peercache_catchup_failures_total` | A restarted node could not pull the keys it now ranks for and may be serving misses for data that exists. |
+| `peercache_mailbox_rejections_total` | A group's mailbox was full and the call was refused with `ErrGroupOverloaded`. Backpressure working, not a fault — but it is the first sign of saturation and it arrives before the latency does. |
+| `peercache_version_conflicts_total` | A replicated copy was rejected because a newer one was already held. Distinct from split brain: this is one owner's writes arriving out of order. A steady low rate is normal under async replication; a rising one means reordering under load. |
 
-All six are counters, so `rate()` and `increase()` work on them. That is
+All eight are counters, so `rate()` and `increase()` work on them. That is
 deliberate and tested: `TestCorrectnessMetricsAreCounters` fails if one is
 reclassified as a gauge, because "did this happen in the last hour" is a rate
 question and a gauge cannot answer it.
+
+These are the five SPEC.md names as correctness metrics, plus the three this
+implementation found it needed. Transfer failures are covered by
+`peercache_replications_failed_total`: the drain handoff reuses the replication
+path rather than inventing a transfer protocol, so a failed transfer *is* a
+failed replication, and a second counter could only disagree with the first.
 
 ### Latency histograms are off by default
 

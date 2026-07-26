@@ -968,6 +968,28 @@ mutate "a correctness counter is exported as a gauge" \
   '{"peercache_split_brain_detections_total", Gauge,' \
   'TestCorrectnessMetricsAreCounters' ./internal/metrics/
 
+mutate "an out-of-order copy is not counted as a version conflict" \
+  internal/replication/replica.go \
+  '			if existing.Stamp.NewerThan(e.Stamp) {
+				s.versionConflicts.Add(1)
+			}' \
+  '' \
+  'TestVersionConflictsAreCountedButRetransmissionsAreNot' ./internal/replication/
+
+mutate "a retransmission is counted as a version conflict" \
+  internal/replication/replica.go \
+  '			if existing.Stamp.NewerThan(e.Stamp) {
+				s.versionConflicts.Add(1)
+			}' \
+  '			s.versionConflicts.Add(1)' \
+  'TestVersionConflictsAreCountedButRetransmissionsAreNot' ./internal/replication/
+
+mutate "mailbox rejections never reach Stats" \
+  peercache.go \
+  'MailboxRejections: groups.Rejections,' \
+  'MailboxRejections: 0,' \
+  'TestMailboxRejectionsAreCounted' .
+
 mutate "a stats field is exported under the wrong name" \
   internal/metrics/metrics.go \
   '{"peercache_split_brain_detections_total", Counter,' \

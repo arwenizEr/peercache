@@ -61,6 +61,53 @@ func TestAnOlderCopyIsRejected(t *testing.T) {
 	}
 }
 
+// TestVersionConflictsAreCountedButRetransmissionsAreNot covers the metric
+// SPEC.md's M7 bullet names, and the distinction that makes it worth having.
+//
+// A strictly older stamp arriving is a real out-of-order delivery — ordinary
+// under asynchronous replication, handled correctly by the stamp ordering, and
+// still worth a number an operator can watch. An identical stamp is a
+// retransmission and means nothing at all. Counting both would make the metric
+// track retry volume instead of reordering, which is a different question with
+// a much larger and less interesting answer.
+func TestVersionConflictsAreCountedButRetransmissionsAreNot(t *testing.T) {
+	s := replication.NewStore()
+
+	if got := s.VersionConflicts(); got != 0 {
+		t.Fatalf("a fresh store reports %d conflicts, want 0", got)
+	}
+
+	s.Put("ns", "k", entry("owner", 1, 5, "new"))
+	if got := s.VersionConflicts(); got != 0 {
+		t.Fatalf("accepting the first copy counted %d conflicts, want 0", got)
+	}
+
+	// Strictly older: a conflict.
+	s.Put("ns", "k", entry("owner", 1, 4, "old"))
+	if got := s.VersionConflicts(); got != 1 {
+		t.Fatalf("an out-of-order copy counted %d conflicts, want 1", got)
+	}
+
+	// Identical stamp: a retransmission, and not a conflict.
+	s.Put("ns", "k", entry("owner", 1, 5, "again"))
+	if got := s.VersionConflicts(); got != 1 {
+		t.Fatalf("a retransmission counted %d conflicts, want 1; the metric would "+
+			"then measure retry volume rather than reordering", got)
+	}
+
+	// An older epoch is also out of order, whatever its version.
+	s.Put("ns", "k", entry("owner", 0, 900, "older epoch"))
+	if got := s.VersionConflicts(); got != 2 {
+		t.Fatalf("a lower-epoch copy counted %d conflicts, want 2", got)
+	}
+
+	// And an accepted newer copy still does not count.
+	s.Put("ns", "k", entry("owner", 1, 6, "newer"))
+	if got := s.VersionConflicts(); got != 2 {
+		t.Fatalf("accepting a newer copy counted %d conflicts, want 2", got)
+	}
+}
+
 // TestALaterEpochWinsWhateverTheVersion is the same rule the L1 tier follows,
 // and it matters more here.
 //

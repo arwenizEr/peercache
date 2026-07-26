@@ -3,6 +3,7 @@ package replication
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/peercache/peercache/internal/core"
 )
@@ -32,6 +33,21 @@ type Store struct {
 	// at a time and a returning node catches up a namespace at a time.
 	mu sync.RWMutex
 	ns map[string]*namespaceReplicas
+
+	// versionConflicts counts copies rejected because what is already held
+	// is newer.
+	//
+	// SPEC.md's M7 bullet names "version conflicts" as a correctness metric
+	// in its own right, separately from split-brain detections, and the two
+	// are genuinely different questions. A conflict is two nodes writing one
+	// key under one epoch — a correctness failure. This is one node's writes
+	// arriving out of order, which asynchronous replication makes ordinary
+	// and which the stamp ordering then handles correctly.
+	//
+	// It is exported because a rising rate still means something an operator
+	// wants to know: reordering under load, or a replica being fed through a
+	// path that keeps redelivering stale copies. A steady low rate is normal.
+	versionConflicts atomic.Int64
 }
 
 // namespaceReplicas is one namespace's worth of replicated keys.
@@ -111,7 +127,11 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 		}
 		if !e.Stamp.NewerThan(existing.Stamp) {
 			// Equal stamps from the same writer are a retransmission,
-			// which is normal and not worth counting.
+			// which is normal and not worth counting. A strictly older
+			// stamp is a genuine out-of-order delivery, and is.
+			if existing.Stamp.NewerThan(e.Stamp) {
+				s.versionConflicts.Add(1)
+			}
 			return false, conflict
 		}
 	}
@@ -151,6 +171,10 @@ func (s *Store) Delete(namespace, key string) bool {
 	delete(nr.entries, key)
 	return true
 }
+
+// VersionConflicts returns the number of copies rejected because a newer one
+// was already held.
+func (s *Store) VersionConflicts() int64 { return s.versionConflicts.Load() }
 
 // Len reports how many replicated keys this node holds, across namespaces.
 func (s *Store) Len() int {
