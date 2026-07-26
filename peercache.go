@@ -509,6 +509,30 @@ func (c *cache) sweepLoop() {
 			return
 		case <-c.ticker.C():
 			c.sweepOnce()
+			// Reconcile on the same tick.
+			//
+			// Reconciliation is normally driven by membership
+			// changes, which is right and enough for the cases M5
+			// tested. It is not enough for a hand-off: a draining
+			// node announces its departure *before* transferring, so
+			// the receivers' membership change has already happened
+			// when the keys arrive. If the sender is then killed,
+			// there is no further change to react to — the peers
+			// already know it is gone — and the keys sit in the
+			// replica store, owned by a node that is not looking for
+			// them.
+			//
+			// That lost 53 of 300 keys in a graceful drain at
+			// replication factor 3, found by examples/m6 rather than
+			// by any test, because the tests exercised the two
+			// orderings where a change happened to follow.
+			//
+			// A periodic pass is the safety net. Reconciliation is
+			// idempotent and costs a map scan when there is nothing
+			// to do, which is the common case.
+			if c.promoter != nil {
+				c.promoter.reconcile()
+			}
 		}
 	}
 }

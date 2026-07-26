@@ -102,14 +102,26 @@ func (p *promoter) reconcile() {
 		ns, ok := c.namespaceIfExists(name)
 		if !ok {
 			// A namespace this node holds replicas for but has never
-			// been asked about locally. It cannot be promoted into
-			// nothing, so create it: the alternative is holding data
-			// that can never be served.
-			created, isNS := c.Namespace(name).(*namespace)
-			if !isNS || created.err != nil {
-				continue
-			}
-			ns = created
+			// been asked about locally. Skip it — do *not* create it.
+			//
+			// Creating it here was the first version and it was a
+			// trap. Namespace options are fixed at creation and
+			// silently ignored afterwards (open question 26), so a
+			// namespace conjured with defaults gets replication
+			// factor 1 — and the application's later
+			// Namespace(name, WithReplicationFactor(3)) returns that
+			// same crippled handle. The node then evicts replicas it
+			// should hold and never promotes the ones handed to it.
+			//
+			// In examples/m6 that lost 53 of 300 keys in a *graceful*
+			// drain, and it took the example to find it: every test
+			// created its namespaces before anything could race them.
+			//
+			// Skipping costs nothing. The replicas stay in the
+			// replica store, and the next reconciliation after the
+			// application opens the namespace picks them up with the
+			// options it actually asked for.
+			continue
 		}
 
 		rf := ns.opts.ReplicationFactor

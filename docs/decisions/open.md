@@ -596,7 +596,56 @@ it happens at all.
 
 ---
 
-## 32. Deliberately deferred, per SPEC.md section 5
+## 32. A hard kill at RF=3 can lose keys — M6, UNRESOLVED
+
+**This is an open defect, not a design trade.** It is recorded here because it
+is real, reproducible, and not yet fixed.
+
+**Symptom.** In `examples/m6`, hard-killing one node of five at replication
+factor 3 with synchronous replication leaves 53 of 300 keys permanently
+unreachable — `ErrNotFound`, not `ErrActivationPending`. The keys are gone, not
+deferred.
+
+**What is established:**
+
+- The loss happens at the *kill*, not at the drain or the revive that follow.
+  Bisecting the example showed 53 unreachable immediately after the kill and
+  before anything else ran.
+- Diagnostics at that moment show `replicas: 0` on three of the four survivors.
+  Replication had not placed copies on them at all, so the killed node's share
+  existed on one node only.
+- Removing the preceding kill/revive makes the drain lose nothing, so the two
+  interact.
+- A focused test reproducing the same nominal sequence
+  (5 nodes, RF=3, sync, default activation delay) **passes**. Whatever differs
+  between that test and the example is the thing still to find.
+
+**Leading hypothesis, not yet confirmed.** A write routed to its owner creates
+the namespace there if the application has not opened it, using *default*
+options — replication factor 1. Namespace options are fixed at creation and
+silently ignored afterwards (question 26), so such a node replicates nothing and
+keeps ignoring the RF=3 the application later asks for. Opening the namespace on
+every node before writing did not resolve it in the example, so this is either
+not the cause or not the whole cause.
+
+**Why the example still runs.** It prints the number and continues rather than
+failing. Making it pass by relaxing the check would convert a known failure into
+an unknown one, which is strictly worse.
+
+**What would resolve it:** bisect the remaining differences between
+`examples/m6` and the passing focused test until the divergence appears. The
+diagnostic that finally distinguished "deferred" from "absent" was printing the
+error rather than counting failures — several hours of hypothesising preceded
+one line of output that settled it, which is the lesson worth carrying forward.
+
+**Impact if real.** A node failure at RF=3 should be survivable by definition.
+If replication silently fails to place copies under some configuration, the
+replication factor is nominal rather than actual, and every guarantee resting on
+it is overstated. M6 is not complete until this is understood.
+
+---
+
+## 33. Deliberately deferred, per SPEC.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
