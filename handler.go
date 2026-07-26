@@ -362,6 +362,24 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 
+	// If this node already owns the key, take it straight into the owned
+	// store instead of filing it as a replica.
+	//
+	// This is the hand-off path. A draining node announces its departure
+	// first, so by the time its keys arrive the ranking already names the
+	// receiver as owner — and a key filed as a replica would sit there until
+	// the *next* membership change reconciled it. At RF=1 there is no next
+	// change and no replica set to belong to, so it would be evicted
+	// instead: a graceful shutdown would lose exactly the data it was trying
+	// to save. A mutation audit found that, by way of a test that passed
+	// while drain did nothing at all.
+	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && h.ownsKey(ns, in.Key) {
+		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
+			h.cache.keysAdopted.Add(1)
+		}
+		return wire.Encode(&wire.ReplicateResponse{})
+	}
+
 	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
 		Value:    in.Value,
 		Stamp:    in.Stamp,
@@ -476,6 +494,15 @@ func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte
 		}
 	}
 	return wire.Encode(&wire.InvalidateResponse{})
+}
+
+// ownsKey reports whether this node owns a key under the current view.
+func (h *peerHandler) ownsKey(ns *namespace, key string) bool {
+	if h.cache.guard == nil {
+		return true
+	}
+	owner, _, err := h.cache.guard.Table().Owner(ns.groupKeyFor(key))
+	return err == nil && owner.ID == h.cache.self().ID
 }
 
 // assertOwned refuses a key this node does not own.

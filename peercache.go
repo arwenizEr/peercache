@@ -293,6 +293,9 @@ type cache struct {
 	// drainRounds and keysHandedOff record graceful shutdown activity.
 	drainRounds   atomic.Int64
 	keysHandedOff atomic.Int64
+	// keysAdopted counts keys taken directly into the owned store because
+	// this node already owned them when they arrived — the hand-off path.
+	keysAdopted atomic.Int64
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -477,6 +480,7 @@ func (c *cache) Stats() Stats {
 		stats.CatchUpRuns = cruns
 		stats.CatchUpFailures = cfailures
 		stats.KeysHandedOff = c.keysHandedOff.Load()
+		stats.KeysAdopted = c.keysAdopted.Load()
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {

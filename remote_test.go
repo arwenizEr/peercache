@@ -83,6 +83,17 @@ func (f *fabric) revive(t *testing.T, id string) {
 	m := testkit.NewMembership(info, f.net, f.clk, f.registry, f.mcfg)
 	f.memberships[id] = m
 
+	// Announce the arrival, which is what a starting pod does and what
+	// clears the departure its peers recorded when it left gracefully.
+	//
+	// Without this a node that drained is remembered as departed and never
+	// re-admitted: it sees the full cluster while every peer sees one fewer,
+	// forever. That asymmetry is exactly what a rolling upgrade produces,
+	// and it is why this is here rather than in the test that found it.
+	if err := m.Join(nil); err != nil {
+		t.Fatalf("rejoining %s: %v", id, err)
+	}
+
 	c, err := peercache.New(
 		peercache.WithNodeID(id),
 		peercache.WithClock(f.clk),

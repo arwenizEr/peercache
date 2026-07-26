@@ -141,4 +141,8 @@ type Stats struct {
 	// drain. Zero on a node that has never drained; on one that has, it
 	// should equal what it owned when the drain began.
 	KeysHandedOff int64
+	// KeysAdopted counts keys received from a draining peer that this node
+	// already owned, and so took directly into its owned store rather than
+	// filing as replicas.
+	KeysAdopted int64
 }
