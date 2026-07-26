@@ -61,7 +61,7 @@ jobs:
         # latency. See the skip in TestLocalGetP99AtOneMillionKeys.
         env:
           PEERCACHE_LATENCY_GATE: "1"
-        run: go test . -run TestLocalGetP99AtOneMillionKeys -count=1 -p 1
+        run: go test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1
 
       - name: examples run
         run: |

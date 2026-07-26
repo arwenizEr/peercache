@@ -6,6 +6,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,8 +87,47 @@ type Gossip struct {
 }
 
 // nodeMeta is what this node advertises about itself through gossip.
+//
+// The RPC address is here and not implied by the gossip address, because they
+// are different sockets. memberlist binds its own port for SWIM; the peer
+// transport binds another for gRPC. A node that assumed they were the same
+// dialled memberlist's port expecting gRPC and got "error reading server
+// preface: EOF" — which is what a protocol talking to the wrong listener looks
+// like, and took a real-network test to surface at all.
 type nodeMeta struct {
 	Epoch core.Epoch
+	// RPCAddr is where peers should dial this node for data requests. Empty
+	// means the caller supplied no transport address, in which case peers
+	// fall back to the gossip address.
+	RPCAddr string
+}
+
+// encode renders the metadata for the wire as "epoch|rpcaddr".
+//
+// Deliberately hand-rolled and tiny. memberlist caps node metadata at 512
+// bytes and gossips it with every probe, so this is one of the few places where
+// a compact encoding is worth more than a self-describing one.
+func (m nodeMeta) encode() string {
+	return strconv.FormatUint(uint64(m.Epoch), 10) + "|" + m.RPCAddr
+}
+
+// decodeNodeMeta parses what encode produced.
+//
+// A value with no separator is an epoch from a peer running a build that
+// predates the RPC address, which is exactly what a rolling upgrade looks like.
+// It is accepted rather than rejected: losing the address means falling back to
+// the gossip address, whereas rejecting the peer would drop it from the view.
+func decodeNodeMeta(raw string) nodeMeta {
+	epochText, addr, found := strings.Cut(raw, "|")
+	epoch, err := strconv.ParseUint(epochText, 10, 64)
+	if err != nil {
+		return nodeMeta{}
+	}
+	out := nodeMeta{Epoch: core.Epoch(epoch)}
+	if found {
+		out.RPCAddr = addr
+	}
+	return out
 }
 
 // New starts gossiping and returns the authority.
@@ -148,7 +188,13 @@ func New(opts Options) (*Gossip, error) {
 	// join too, but not necessarily before the caller asks — and a node is
 	// unconditionally a member of its own cluster, so answering "no members"
 	// in that window would be wrong rather than merely early.
-	g.self.Addr = g.localAddr
+	// Self.Addr stays as the caller supplied it: it is the address peers
+	// dial for data, and overwriting it with the gossip address would point
+	// the whole cluster's data path at the SWIM port.
+	if g.self.Addr == "" {
+		g.self.Addr = g.localAddr
+	}
+	g.meta.Store(&nodeMeta{RPCAddr: g.self.Addr})
 	g.members[g.self.ID] = g.self.Clone()
 
 	go g.consume(events)
@@ -206,7 +252,7 @@ func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
 		epoch := core.Epoch(g.epoch.Load())
 		if transition {
 			epoch = core.Epoch(g.epoch.Add(1))
-			g.meta.Store(&nodeMeta{Epoch: epoch})
+			g.meta.Store(&nodeMeta{Epoch: epoch, RPCAddr: g.self.Addr})
 			if g.list != nil {
 				// Best effort: republishing is how peers learn
 				// our epoch, and failing is not fatal.
@@ -221,9 +267,19 @@ func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
 		// state is not.
 		node := core.Node{ID: event.Node.Name, Addr: event.Node.Address()}
 		if len(event.Node.Meta) > 0 {
+			meta := decodeNodeMeta(string(event.Node.Meta))
 			// The peer's advertised epoch, which is how its staleness
 			// becomes visible without a round trip.
-			node.Meta = map[string]string{metaEpochKey: string(event.Node.Meta)}
+			node.Meta = map[string]string{
+				metaEpochKey: strconv.FormatUint(uint64(meta.Epoch), 10),
+			}
+			// Where to dial it for data. Falling back to the gossip
+			// address keeps a peer usable during a rolling upgrade
+			// from a build that did not advertise one.
+			if meta.RPCAddr != "" {
+				node.Addr = meta.RPCAddr
+				node.Meta[metaRPCAddrKey] = meta.RPCAddr
+			}
 		}
 		g.apply(kind, node)
 		g.emit(core.MembershipChange{Kind: kind, Node: node, Epoch: epoch})
@@ -363,7 +419,7 @@ type delegate Gossip
 // NodeMeta implements [memberlist.Delegate]: the epoch, encoded compactly.
 func (d *delegate) NodeMeta(limit int) []byte {
 	meta := (*Gossip)(d).meta.Load()
-	encoded := strconv.FormatUint(uint64(meta.Epoch), 10)
+	encoded := meta.encode()
 	if len(encoded) > limit {
 		return nil
 	}
@@ -405,6 +461,11 @@ func (g *Gossip) PeerEpoch(id string) (core.Epoch, bool) {
 	}
 	return core.Epoch(parsed), true
 }
+
+// metaRPCAddrKey is where a peer's data-transport address is kept in
+// [core.Node.Meta]. It duplicates [core.Node.Addr] so that a caller can tell an
+// advertised address from a fallback to the gossip address.
+const metaRPCAddrKey = "peercache.rpc_addr"
 
 // metaEpochKey is where a peer's advertised epoch is kept in [core.Node.Meta].
 const metaEpochKey = "epoch"

@@ -47,8 +47,9 @@ var realTimePackages = []string{
 // memberlist's own timers where no injected clock reaches.
 //
 // They are listed by name rather than by directory so that the exemption cannot
-// spread. cluster_test.go is the only test in the repository that runs two real
-// caches against real gossip — it exists because every other M3 test verifies a
+// spread. acceptance_m4_test.go measures latency over real gRPC, which no
+// injected clock can time. cluster_test.go is the only test in the repository
+// that runs two real caches against real gossip — it exists because every other M3 test verifies a
 // seam in isolation and none of them proves the seams are connected. examples/m3
 // demonstrates the same thing to a reader.
 //
@@ -58,6 +59,7 @@ var realTimePackages = []string{
 // at all.
 var realTimeFiles = []string{
 	"cluster_test.go",
+	"acceptance_m4_test.go",
 	"examples/m3/main.go",
 }
 

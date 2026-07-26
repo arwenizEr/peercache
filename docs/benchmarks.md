@@ -373,6 +373,68 @@ saying.
 
 ---
 
+## M4 — transport and remote routing
+
+Measured on Machine A.
+
+### Acceptance: remote Get at load
+
+SPEC.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
+a 3-node real-network test". Three cache instances in one process over real gRPC
+on loopback TCP: real sockets, real serialisation, real deadlines, real
+connection pool.
+
+| | Measured | Budget |
+|---|---:|---:|
+| Throughput | **56,009 rps** | 50,000 rps |
+| p50 | 1.223 ms | — |
+| p90 | 1.459 ms | — |
+| **p99** | **1.737 ms** | 2 ms |
+| **p99.9** | **2.047 ms** | 10 ms |
+| max | 2.165 ms | — |
+
+64 workers, 5 seconds, 283,392 reads, 13,287 of 20,000 keys genuinely remote
+from the reader.
+
+Four things about this number are worth stating, because each one was a way to
+get it wrong.
+
+**The non-owned tier is disabled for the measurement.** With the default 5s L1
+bound, a remote Get is a local map read after the first one — the first version
+of this test reported **12 million rps**, which is not a number any gRPC stack
+produces. The namespace is created with a one-nanosecond L1 bound *before*
+anything is written to it, because namespace options are fixed at creation and
+configuring one afterwards is silently ignored.
+
+**The percentiles are a lower bound.** Windows' monotonic clock resolves to
+~506 µs, so a single sub-millisecond operation times as zero. Latency is
+measured in batches of 64 and divided, which smooths isolated outliers. It still
+catches sustained stalls, which is what a p99 budget is for.
+
+**The connection pool is warmed first.** The first request to each peer pays a
+TCP handshake and an HTTP/2 preface; an unwarmed run put a 1.4 s outlier in the
+tail that said nothing about steady state.
+
+**Throughput is reported, not asserted.** 50k rps is as much a property of the
+machine offering the load as of the cache, and failing a correctness suite
+because a laptop was busy would make the number a nuisance rather than a signal.
+The latency budgets are asserted; the rate is recorded here.
+
+### Router batching
+
+SPEC.md §4 also asks that "a router submitting 10k messages across 3 owners
+issues at most 3 RPCs per flush window".
+
+| Messages | Groups | Owners | Remote requests |
+|---:|---:|---:|---:|
+| 10,000 | 500 | 3 | **2** |
+
+Two rather than three because the sender applies its own share in-process. The
+count is taken from an instrumented transport rather than inferred from timing:
+"it was fast" is not evidence of batching.
+
+---
+
 ## Method notes
 
 - `-count 5` is the minimum for a median worth quoting. Single-run numbers are

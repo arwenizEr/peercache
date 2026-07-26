@@ -40,7 +40,7 @@ test-race:
 ## which reports the machine's load, not the cache's latency. Measured idle it
 ## is 478ns; measured alongside everything else, 1.87us.
 latency:
-	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run TestLocalGetP99AtOneMillionKeys -count=1 -p 1 -timeout $(TIMEOUT)
+	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1 -timeout $(TIMEOUT)
 
 vet:
 	$(GO) vet $(PKGS)
