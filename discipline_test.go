@@ -60,6 +60,7 @@ var realTimePackages = []string{
 var realTimeFiles = []string{
 	"cluster_test.go",
 	"acceptance_m4_test.go",
+	"lossfabric_test.go",
 	"examples/m3/main.go",
 	"examples/m4/main.go",
 }

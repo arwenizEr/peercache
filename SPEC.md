@@ -356,7 +356,10 @@ It is the most useful documentation in the project.
   automatically merged.
 - State is not durable. Ungraceful pod termination loses that pod's owned data
   and any replicas not yet caught up.
-- Async replication has a data-loss window of approximately X ms under normal
-  conditions (fill in from M5 measurements).
+- Async replication has a data-loss window averaging approximately 0.1 ms under
+  normal conditions, with a p99 under 1.5 ms (measured at M5; see
+  docs/benchmarks.md). A write acknowledged in that window exists on one node
+  only. Synchronous replication closes it entirely, at the cost of bounding a
+  group's write rate by its slowest replica.
 - Reads of non-owned keys may be stale by up to the configured L1 TTL.
 - Throughput degrades to single-pod capacity for a single hot group.

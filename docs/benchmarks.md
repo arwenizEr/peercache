@@ -522,6 +522,66 @@ count is taken from an instrumented transport rather than inferred from timing:
 
 ---
 
+## M5 — replication
+
+Measured on Machine A.
+
+### The asynchronous data-loss window
+
+SPEC.md §4 requires this be "measured and documented" rather than an unknown,
+and §6 has a placeholder waiting for it.
+
+**What it is.** Between an asynchronous write returning to its caller and the
+last replica holding it, the value exists on exactly one node. Kill that node
+inside the window and the write is gone despite having reported success.
+
+| Measurement | Value |
+|---|---:|
+| **Mean window per write** | **≈101 µs** |
+| Batch of 2000 writes: acknowledged | 201 ms |
+| Batch of 2000 writes: fully replicated | 203 ms |
+| Per-write p90 | 506 µs |
+| Per-write p99 | 1.46 ms |
+| Per-write max | 7.55 ms |
+
+Three nodes over real gRPC on loopback, RF=3, 300 individual samples plus a
+2000-write batch.
+
+**Read the batch figure, not the percentiles.** Windows' monotonic clock
+resolves to ~498 µs, so a single sub-millisecond window times as zero — the
+reported p50 of 0s means "below one tick", not "instant", and the p90 of 506 µs
+is one tick rather than a measurement. Timing a whole batch and dividing gives a
+mean the clock can actually resolve, which is where 101 µs comes from.
+
+**The 7.55 ms maximum is the honest tail.** It is a scheduling outlier rather
+than a queue: the batch shows the replicator drains 2000 writes within 2 ms of
+the last acknowledgement, so the queue is not the constraint at this rate.
+
+**Synchronous mode has no window at all**, by construction — the write does not
+return until the replicas hold it. `TestSyncModeHasNoWindow` asserts that with
+no waiting of any kind: the copies must exist the instant `Set` returns.
+
+### Chaos
+
+SPEC.md §4: "a chaos test that kills a random node every 2 seconds for 60
+seconds loses no key that was written with sync replication."
+
+| Configuration | Result |
+|---|---|
+| 5 nodes, RF=3, sync, kill+restart every 2 s for 60 s | **30 kills, 30 restarts, 600 keys, 0 lost** |
+| 4 nodes, RF=2, sync, two kills in succession | 83 kept, 17 lost, **0 corrupted** |
+
+The second row is deliberate. At RF=2 a key lives on two nodes and killing both
+loses it; a suite that only demonstrated RF=3 would imply a guarantee
+replication does not make. What is asserted at RF=2 is that survivors are
+*correct* — losing data there is acceptable, corrupting it is not.
+
+Detection is configured faster than the kill cadence (300 ms against 2 s). A
+cluster that kills every two seconds while taking three to notice never
+converges, and the test would measure permanent confusion rather than recovery.
+
+---
+
 ## Method notes
 
 - `-count 5` is the minimum for a median worth quoting. Single-run numbers are
