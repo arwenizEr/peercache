@@ -1,0 +1,275 @@
+package replication
+
+import (
+	"fmt"
+	"sync"
+
+	"github.com/peercache/peercache/internal/core"
+)
+
+// Store holds copies of keys this node does not own.
+//
+// It is deliberately separate from the owned store rather than a flag on an
+// entry, for three reasons that all became clear while designing promotion.
+//
+// Ownership moves. A key can be owned, then replicated, then owned again as
+// members come and go, and a single store would have to rewrite a per-entry
+// flag on every membership change — touching every key to record something that
+// is derivable from the ownership table in nanoseconds.
+//
+// The two have different lifetimes. Owned entries expire on their own TTL;
+// replica entries live until the owner says otherwise or this node stops being
+// a replica for them. Sweeping them together would need two policies in one
+// loop.
+//
+// And [Stats.ReplicaKeys] has to mean something. An operator asking "how much
+// of this pod's memory is data it does not own" gets an answer from a separate
+// map and a guess from a shared one.
+//
+// A Store is safe for concurrent use.
+type Store struct {
+	// shards are keyed by namespace, because promotion happens a namespace
+	// at a time and a returning node catches up a namespace at a time.
+	mu sync.RWMutex
+	ns map[string]*namespaceReplicas
+}
+
+// namespaceReplicas is one namespace's worth of replicated keys.
+type namespaceReplicas struct {
+	mu      sync.RWMutex
+	entries map[string]Entry
+}
+
+// Entry is one replicated value and the stamp the owner issued for it.
+//
+// The stamp is what makes a replica usable after promotion: a node that becomes
+// the owner of a key must be able to continue the version sequence rather than
+// restart it, or every caller holding a cached copy would see the version go
+// backwards. See [core.Stamp] and docs/decisions/open.md question 18.
+type Entry struct {
+	Value []byte
+	Stamp core.Stamp
+	// TTLNanos is the TTL the owner applied, carried so that a promoted
+	// replica expires the key on the owner's schedule rather than starting
+	// the clock again from the moment it was promoted.
+	TTLNanos int64
+	// From is the node that sent this copy. It is what makes split-brain
+	// detectable: two different nodes writing the same key under the same
+	// epoch means two of them believe they own it.
+	From string
+}
+
+// NewStore returns an empty replica store.
+func NewStore() *Store {
+	return &Store{ns: make(map[string]*namespaceReplicas)}
+}
+
+// namespaceFor returns the per-namespace map, creating it if needed.
+func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if ok {
+		return nr
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if nr, ok := s.ns[namespace]; ok {
+		return nr
+	}
+	nr = &namespaceReplicas{entries: make(map[string]Entry)}
+	s.ns[namespace] = nr
+	return nr
+}
+
+// Put stores a replicated value, reporting whether it was accepted and whether
+// accepting it revealed a conflict.
+//
+// A copy is rejected if what is already held is newer, by [core.Stamp]
+// ordering. That is not merely an optimisation: replication is asynchronous by
+// default, so two updates to one key can arrive out of order, and a late
+// delivery of an old value must not undo a new one.
+//
+// conflict reports that a *different* node wrote this key under the *same*
+// epoch. Under one owner per group that cannot happen, so it is direct evidence
+// that two nodes believed they owned the same key at the same time — the
+// split-brain SPEC.md §4 requires be detected and counted. It is reported, not
+// resolved: CLAUDE.md is explicit that conflicting writes are not automatically
+// merged.
+func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
+	nr := s.namespaceFor(namespace)
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+
+	existing, held := nr.entries[key]
+	if held {
+		if existing.Stamp.Epoch == e.Stamp.Epoch && existing.From != "" && e.From != "" &&
+			existing.From != e.From {
+			conflict = true
+		}
+		if !e.Stamp.NewerThan(existing.Stamp) {
+			// Equal stamps from the same writer are a retransmission,
+			// which is normal and not worth counting.
+			return false, conflict
+		}
+	}
+	nr.entries[key] = e
+	return true, conflict
+}
+
+// Get returns a replicated value.
+func (s *Store) Get(namespace, key string) (Entry, bool) {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return Entry{}, false
+	}
+
+	nr.mu.RLock()
+	defer nr.mu.RUnlock()
+	e, held := nr.entries[key]
+	return e, held
+}
+
+// Delete removes a replicated key.
+func (s *Store) Delete(namespace, key string) bool {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	if _, held := nr.entries[key]; !held {
+		return false
+	}
+	delete(nr.entries, key)
+	return true
+}
+
+// Len reports how many replicated keys this node holds, across namespaces.
+func (s *Store) Len() int {
+	s.mu.RLock()
+	namespaces := make([]*namespaceReplicas, 0, len(s.ns))
+	for _, nr := range s.ns {
+		namespaces = append(namespaces, nr)
+	}
+	s.mu.RUnlock()
+
+	total := 0
+	for _, nr := range namespaces {
+		nr.mu.RLock()
+		total += len(nr.entries)
+		nr.mu.RUnlock()
+	}
+	return total
+}
+
+// Namespaces returns the namespaces holding at least one replica, so that
+// promotion and catch-up can iterate without knowing what exists.
+func (s *Store) Namespaces() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.ns))
+	for name := range s.ns {
+		out = append(out, name)
+	}
+	return out
+}
+
+// Drain removes and returns every replica in a namespace whose key satisfies
+// keep, and reports the rest.
+//
+// This is the promotion path. A node that has become the owner of keys it held
+// as replicas takes them out of here and puts them in its owned store, and the
+// two must not both hold the same key: a key present in both would be served
+// from whichever the read path consulted first, which is not a decision anybody
+// made.
+//
+// Removal and return happen under one lock so that a concurrent Put cannot slip
+// a copy in behind the drain and leave it stranded in the replica store after
+// this node has taken ownership.
+func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]Entry {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+
+	var taken map[string]Entry
+	for key, e := range nr.entries {
+		if !keep(key) {
+			continue
+		}
+		if taken == nil {
+			taken = make(map[string]Entry)
+		}
+		taken[key] = e
+		delete(nr.entries, key)
+	}
+	return taken
+}
+
+// Evict removes every replica in a namespace that this node should no longer
+// hold, reporting how many it dropped.
+//
+// A node stops being a replica for a key when membership changes, and keeping
+// the copy afterwards is not free: it is memory nobody will read and a value
+// that will drift further from the truth with every write it does not receive.
+func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+
+	dropped := 0
+	for key := range nr.entries {
+		if stillMine(key) {
+			continue
+		}
+		delete(nr.entries, key)
+		dropped++
+	}
+	return dropped
+}
+
+// Keys returns the keys held for a namespace, sorted for determinism.
+//
+// Used by catch-up, which compares what a node holds against what it should
+// hold. Allocating a slice per call is acceptable because catch-up runs on a
+// membership change, not on a request.
+func (s *Store) Keys(namespace string) []string {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	nr.mu.RLock()
+	defer nr.mu.RUnlock()
+	out := make([]string, 0, len(nr.entries))
+	for key := range nr.entries {
+		out = append(out, key)
+	}
+	return out
+}
+
+// String implements [fmt.Stringer] for debugging.
+func (s *Store) String() string {
+	return fmt.Sprintf("replication.Store(%d keys across %d namespaces)", s.Len(), len(s.Namespaces()))
+}
