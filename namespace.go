@@ -8,6 +8,7 @@ import (
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/l1"
 	"github.com/peercache/peercache/internal/singleflight"
 	"github.com/peercache/peercache/internal/store"
 )
@@ -89,6 +90,14 @@ type namespace struct {
 	store  *store.Store
 	framer *codec.Framer
 	flight singleflight.Group
+
+	// l1 caches copies of keys this node does not own. Nil when there is no
+	// membership authority, because a cluster of one owns everything and a
+	// second copy of a local key would only be a way to serve it stale.
+	//
+	// Built in M1 and connected here in M4, which is when the first
+	// non-owned read exists — see docs/decisions/open.md question 13.
+	l1 *l1.Cache
 }
 
 // status returns the error every operation on this handle should report, or nil

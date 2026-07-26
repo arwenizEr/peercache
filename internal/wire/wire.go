@@ -17,28 +17,10 @@ const Encoding = codec.NameMsgPack
 
 // Stamp is an owner-issued (epoch, version) pair.
 //
-// Version alone is not a cluster-wide monotonic counter: a key's version
-// restarts at 1 when its store entry is reclaimed, so a version can decrease
-// over a key's lifetime (docs/decisions/open.md question 18). Comparison is
-// therefore lexicographic on (Epoch, Version), and even that is only an
-// optimisation — a non-owned copy's TTL is the real staleness bound.
-type Stamp struct {
-	Epoch   uint64 `msgpack:"epoch"`
-	Version uint64 `msgpack:"version"`
-}
-
-// NewerThan reports whether s supersedes other.
-//
-// Epoch dominates: a stamp issued under a later membership view wins whatever
-// the versions say, because the version sequences either side of an ownership
-// change are unrelated. Within one epoch, the version orders writes by the same
-// owner, which is the only situation where it means anything.
-func (s Stamp) NewerThan(other Stamp) bool {
-	if s.Epoch != other.Epoch {
-		return s.Epoch > other.Epoch
-	}
-	return s.Version > other.Version
-}
+// It is [core.Stamp] under a local name, so that the protocol and the storage
+// tiers compare versions by the same rule rather than by two implementations
+// that agree until one of them is edited.
+type Stamp = core.Stamp
 
 // GetRequest asks an owner for one key.
 type GetRequest struct {

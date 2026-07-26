@@ -12,6 +12,7 @@ import (
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/l1"
 	"github.com/peercache/peercache/internal/ownership"
 	"github.com/peercache/peercache/internal/store"
 )
@@ -253,6 +254,22 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		return ns
 	}
 	ns.store = st
+
+	// The non-owned tier only exists once there is somewhere else for a key
+	// to live. Without a membership authority this node owns the whole
+	// keyspace, and caching a copy of a key it already holds would add a
+	// staleness window for nothing.
+	if c.guard != nil {
+		cache, err := l1.New(l1.Options{
+			Clock:  c.opts.Clock,
+			MaxTTL: opts.L1TTL,
+		})
+		if err != nil {
+			ns.err = err
+			return ns
+		}
+		ns.l1 = cache
+	}
 	return ns
 }
 

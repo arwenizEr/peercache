@@ -116,11 +116,11 @@ func TestStampOrdering(t *testing.T) {
 		a, b  wire.Stamp
 		newer bool
 	}{
-		{"same everything", wire.Stamp{1, 1}, wire.Stamp{1, 1}, false},
-		{"higher version, same epoch", wire.Stamp{1, 2}, wire.Stamp{1, 1}, true},
-		{"lower version, same epoch", wire.Stamp{1, 1}, wire.Stamp{1, 2}, false},
-		{"higher epoch beats higher version", wire.Stamp{2, 1}, wire.Stamp{1, 99}, true},
-		{"lower epoch loses despite higher version", wire.Stamp{1, 99}, wire.Stamp{2, 1}, false},
+		{"same everything", wire.Stamp{Epoch: 1, Version: 1}, wire.Stamp{Epoch: 1, Version: 1}, false},
+		{"higher version, same epoch", wire.Stamp{Epoch: 1, Version: 2}, wire.Stamp{Epoch: 1, Version: 1}, true},
+		{"lower version, same epoch", wire.Stamp{Epoch: 1, Version: 1}, wire.Stamp{Epoch: 1, Version: 2}, false},
+		{"higher epoch beats higher version", wire.Stamp{Epoch: 2, Version: 1}, wire.Stamp{Epoch: 1, Version: 99}, true},
+		{"lower epoch loses despite higher version", wire.Stamp{Epoch: 1, Version: 99}, wire.Stamp{Epoch: 2, Version: 1}, false},
 		{"zero against zero", wire.Stamp{}, wire.Stamp{}, false},
 	}
 	for _, tc := range cases {
@@ -135,7 +135,7 @@ func TestStampOrdering(t *testing.T) {
 // TestStampOrderingIsAStrictOrder checks the property rather than the cases: no
 // stamp supersedes itself, and two distinct stamps cannot both win.
 func TestStampOrderingIsAStrictOrder(t *testing.T) {
-	stamps := []wire.Stamp{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 5}, {5, 2}}
+	stamps := []wire.Stamp{{Epoch: 0, Version: 0}, {Epoch: 0, Version: 1}, {Epoch: 1, Version: 0}, {Epoch: 1, Version: 1}, {Epoch: 2, Version: 5}, {Epoch: 5, Version: 2}}
 	for _, a := range stamps {
 		if a.NewerThan(a) {
 			t.Fatalf("Stamp%v supersedes itself", a)

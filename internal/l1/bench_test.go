@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/clock"
+	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/l1"
 )
 
@@ -40,7 +41,7 @@ func BenchmarkGetHit(b *testing.B) {
 	ks := benchKeys(keys)
 	value := make([]byte, 64)
 	for i, k := range ks {
-		c.Put(k, value, uint64(i+1), time.Hour)
+		c.Put(k, value, core.Stamp{Version: uint64(i + 1)}, time.Hour)
 	}
 
 	b.ReportAllocs()
@@ -59,7 +60,7 @@ func BenchmarkGetHitParallel(b *testing.B) {
 	ks := benchKeys(keys)
 	value := make([]byte, 64)
 	for i, k := range ks {
-		c.Put(k, value, uint64(i+1), time.Hour)
+		c.Put(k, value, core.Stamp{Version: uint64(i + 1)}, time.Hour)
 	}
 
 	b.ReportAllocs()
@@ -99,7 +100,7 @@ func BenchmarkPut(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Put(ks[i%keys], value, uint64(i+1), time.Hour)
+		c.Put(ks[i%keys], value, core.Stamp{Version: uint64(i + 1)}, time.Hour)
 	}
 }
 
@@ -110,12 +111,12 @@ func BenchmarkInvalidateOlderThan(b *testing.B) {
 	ks := benchKeys(keys)
 	value := make([]byte, 64)
 	for i, k := range ks {
-		c.Put(k, value, uint64(i+1), time.Hour)
+		c.Put(k, value, core.Stamp{Version: uint64(i + 1)}, time.Hour)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.InvalidateOlderThan(ks[i%keys], 1)
+		c.InvalidateOlderThan(ks[i%keys], core.Stamp{Version: 1})
 	}
 }

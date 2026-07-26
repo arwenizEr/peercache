@@ -41,23 +41,23 @@ func TestPutGet(t *testing.T) {
 	if _, _, ok := c.Get("absent"); ok {
 		t.Fatal("Get of an absent key reported present")
 	}
-	if !c.Put("k", []byte("v"), 1, time.Second) {
+	if !c.Put("k", []byte("v"), core.Stamp{Version: 1}, time.Second) {
 		t.Fatal("Put reported that it did not store")
 	}
 
-	got, version, ok := c.Get("k")
+	got, stamp, ok := c.Get("k")
 	if !ok {
 		t.Fatal("Get after Put reported absent")
 	}
-	if string(got) != "v" || version != 1 {
-		t.Fatalf("Get = %q v%d, want \"v\" v1", got, version)
+	if string(got) != "v" || stamp.Version != 1 {
+		t.Fatalf("Get = %q v%d, want \"v\" v1", got, stamp.Version)
 	}
 }
 
 func TestPutCopiesTheCallersBuffer(t *testing.T) {
 	c, _ := newCache(t)
 	buf := []byte("original")
-	c.Put("k", buf, 1, time.Second)
+	c.Put("k", buf, core.Stamp{Version: 1}, time.Second)
 	copy(buf, "MUTATED!")
 
 	got, _, _ := c.Get("k")
@@ -83,7 +83,7 @@ func TestEveryEntryIsTTLBounded(t *testing.T) {
 	}
 	for name, ttl := range tests {
 		key := name
-		c.Put(key, []byte("v"), 1, ttl)
+		c.Put(key, []byte("v"), core.Stamp{Version: 1}, ttl)
 	}
 
 	fc.Advance(c.MaxTTL())
@@ -99,7 +99,7 @@ func TestDefaultTTLApplies(t *testing.T) {
 		o.MaxTTL = time.Minute
 		o.DefaultTTL = 5 * time.Second
 	})
-	c.Put("k", []byte("v"), 1, 0)
+	c.Put("k", []byte("v"), core.Stamp{Version: 1}, 0)
 
 	fc.Advance(4 * time.Second)
 	if _, _, ok := c.Get("k"); !ok {
@@ -116,7 +116,7 @@ func TestDefaultTTLIsClampedToMaxTTL(t *testing.T) {
 		o.MaxTTL = time.Second
 		o.DefaultTTL = time.Hour
 	})
-	c.Put("k", []byte("v"), 1, 0)
+	c.Put("k", []byte("v"), core.Stamp{Version: 1}, 0)
 
 	fc.Advance(2 * time.Second)
 	if _, _, ok := c.Get("k"); ok {
@@ -135,7 +135,7 @@ func TestUnrepresentableTTLSaturates(t *testing.T) {
 		o.DefaultTTL = time.Hour
 	})
 
-	if !c.Put("k", []byte("v"), 1, time.Duration(math.MaxInt64)) {
+	if !c.Put("k", []byte("v"), core.Stamp{Version: 1}, time.Duration(math.MaxInt64)) {
 		t.Fatal("Put rejected the maximum TTL")
 	}
 	if _, _, ok := c.Get("k"); !ok {
@@ -153,7 +153,7 @@ func TestUnrepresentableTTLSaturates(t *testing.T) {
 // likely.
 func TestExpiredEntriesAreDroppedOnRead(t *testing.T) {
 	c, fc := newCache(t)
-	c.Put("k", []byte("v"), 1, time.Second)
+	c.Put("k", []byte("v"), core.Stamp{Version: 1}, time.Second)
 	if c.Len() != 1 {
 		t.Fatalf("Len = %d, want 1", c.Len())
 	}
@@ -174,24 +174,24 @@ func TestExpiredEntriesAreDroppedOnRead(t *testing.T) {
 // resident.
 func TestOlderVersionIsRejected(t *testing.T) {
 	c, _ := newCache(t)
-	c.Put("k", []byte("new"), 5, time.Second)
+	c.Put("k", []byte("new"), core.Stamp{Version: 5}, time.Second)
 
-	if c.Put("k", []byte("old"), 4, time.Second) {
+	if c.Put("k", []byte("old"), core.Stamp{Version: 4}, time.Second) {
 		t.Fatal("an older version overwrote a newer one")
 	}
-	if c.Put("k", []byte("same"), 5, time.Second) {
+	if c.Put("k", []byte("same"), core.Stamp{Version: 5}, time.Second) {
 		t.Fatal("an equal version overwrote the resident entry")
 	}
 
-	got, version, _ := c.Get("k")
-	if string(got) != "new" || version != 5 {
-		t.Fatalf("Get = %q v%d, want \"new\" v5", got, version)
+	got, stamp, _ := c.Get("k")
+	if string(got) != "new" || stamp.Version != 5 {
+		t.Fatalf("Get = %q v%d, want \"new\" v5", got, stamp.Version)
 	}
 	if got := c.Stats().Rejects; got != 2 {
 		t.Fatalf("Stats().Rejects = %d, want 2", got)
 	}
 
-	if !c.Put("k", []byte("newer"), 6, time.Second) {
+	if !c.Put("k", []byte("newer"), core.Stamp{Version: 6}, time.Second) {
 		t.Fatal("a newer version was rejected")
 	}
 	if got, _, _ := c.Get("k"); string(got) != "newer" {
@@ -206,15 +206,15 @@ func TestOlderVersionIsRejected(t *testing.T) {
 // that, which is precisely why expiry is not optional.
 func TestExpiredEntryDoesNotBlockAnOlderVersion(t *testing.T) {
 	c, fc := newCache(t)
-	c.Put("k", []byte("stale"), 99, time.Second)
+	c.Put("k", []byte("stale"), core.Stamp{Version: 99}, time.Second)
 
 	fc.Advance(2 * time.Second)
-	if !c.Put("k", []byte("fresh, restarted at v1"), 1, time.Second) {
+	if !c.Put("k", []byte("fresh, restarted at v1"), core.Stamp{Version: 1}, time.Second) {
 		t.Fatal("an expired entry blocked a lower-versioned replacement forever")
 	}
-	got, version, ok := c.Get("k")
-	if !ok || version != 1 || string(got) != "fresh, restarted at v1" {
-		t.Fatalf("Get = %q v%d ok=%v", got, version, ok)
+	got, stamp, ok := c.Get("k")
+	if !ok || stamp.Version != 1 || string(got) != "fresh, restarted at v1" {
+		t.Fatalf("Get = %q v%d ok=%v", got, stamp.Version, ok)
 	}
 }
 
@@ -244,19 +244,19 @@ func TestConcurrentPutsNeverLeaveAnOlderVersion(t *testing.T) {
 			go func(version uint64) {
 				defer wg.Done()
 				start.Wait()
-				c.Put(k, value, version, time.Minute)
+				c.Put(k, value, core.Stamp{Version: version}, time.Minute)
 			}(uint64(w + 1))
 		}
 		start.Done()
 		wg.Wait()
 
-		_, version, ok := c.Get(k)
+		_, stamp, ok := c.Get(k)
 		if !ok {
 			t.Fatalf("round %d: the key vanished", round)
 		}
-		if version != writers {
+		if stamp.Version != uint64(writers) {
 			t.Fatalf("round %d: resident version is %d, want the highest written (%d); "+
-				"a concurrent Put overwrote a newer entry", round, version, writers)
+				"a concurrent Put overwrote a newer entry", round, stamp.Version, writers)
 		}
 	}
 }
@@ -280,7 +280,7 @@ func TestExpiryDeleteDoesNotDropAFreshPut(t *testing.T) {
 
 		// An entry that is already expired, so every Get takes the
 		// expiry-delete path.
-		c.Put(k, []byte("stale"), 1, time.Second)
+		c.Put(k, []byte("stale"), core.Stamp{Version: 1}, time.Second)
 		fc.Advance(2 * time.Second)
 
 		var wg sync.WaitGroup
@@ -296,7 +296,7 @@ func TestExpiryDeleteDoesNotDropAFreshPut(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			start.Wait()
-			c.Put(k, value, 2, time.Hour) // installs a fresh, live entry
+			c.Put(k, value, core.Stamp{Version: 2}, time.Hour) // installs a fresh, live entry
 		}()
 		start.Done()
 		wg.Wait()
@@ -304,19 +304,19 @@ func TestExpiryDeleteDoesNotDropAFreshPut(t *testing.T) {
 		// Whatever the interleaving, the fresh entry must survive: the
 		// Put either landed before the delete, in which case the
 		// re-check sees a live entry and leaves it, or after it.
-		got, version, ok := c.Get(k)
+		got, stamp, ok := c.Get(k)
 		if !ok {
 			t.Fatalf("round %d: the fresh entry was deleted by an expiry sweep", round)
 		}
-		if version != 2 || string(got) != "fresh" {
-			t.Fatalf("round %d: got %q v%d, want \"fresh\" v2", round, got, version)
+		if stamp.Version != 2 || string(got) != "fresh" {
+			t.Fatalf("round %d: got %q v%d, want \"fresh\" v2", round, got, stamp.Version)
 		}
 	}
 }
 
 func TestInvalidate(t *testing.T) {
 	c, _ := newCache(t)
-	c.Put("k", []byte("v"), 1, time.Second)
+	c.Put("k", []byte("v"), core.Stamp{Version: 1}, time.Second)
 	c.Invalidate("k")
 
 	if _, _, ok := c.Get("k"); ok {
@@ -331,25 +331,25 @@ func TestInvalidate(t *testing.T) {
 // invalidation must not throw away a value newer than the one it refers to.
 func TestInvalidateOlderThanKeepsNewerCopies(t *testing.T) {
 	c, _ := newCache(t)
-	c.Put("k", []byte("v10"), 10, time.Second)
+	c.Put("k", []byte("v10"), core.Stamp{Version: 10}, time.Second)
 
-	if c.InvalidateOlderThan("k", 10) {
+	if c.InvalidateOlderThan("k", core.Stamp{Version: 10}) {
 		t.Fatal("an invalidation for the resident version removed it")
 	}
-	if c.InvalidateOlderThan("k", 9) {
+	if c.InvalidateOlderThan("k", core.Stamp{Version: 9}) {
 		t.Fatal("an invalidation for an older version removed a newer copy")
 	}
-	if _, version, ok := c.Get("k"); !ok || version != 10 {
-		t.Fatalf("the newer copy was lost: v%d ok=%v", version, ok)
+	if _, stamp, ok := c.Get("k"); !ok || stamp.Version != 10 {
+		t.Fatalf("the newer copy was lost: v%d ok=%v", stamp.Version, ok)
 	}
 
-	if !c.InvalidateOlderThan("k", 11) {
+	if !c.InvalidateOlderThan("k", core.Stamp{Version: 11}) {
 		t.Fatal("an invalidation for a newer version did not remove the stale copy")
 	}
 	if _, _, ok := c.Get("k"); ok {
 		t.Fatal("the stale copy survived")
 	}
-	if c.InvalidateOlderThan("absent", 1) {
+	if c.InvalidateOlderThan("absent", core.Stamp{Version: 1}) {
 		t.Fatal("InvalidateOlderThan reported removing an absent key")
 	}
 }
@@ -359,7 +359,7 @@ func TestCapacityIsBounded(t *testing.T) {
 	c, _ := newCache(t, func(o *l1.Options) { o.Capacity = capacity })
 
 	for i := 0; i < capacity*10; i++ {
-		c.Put(fmt.Sprintf("k:%d", i), []byte("v"), 1, time.Minute)
+		c.Put(fmt.Sprintf("k:%d", i), []byte("v"), core.Stamp{Version: 1}, time.Minute)
 	}
 	// Eviction is asynchronous in the underlying library; yield until it has
 	// caught up rather than asserting on a transient overshoot.
@@ -374,7 +374,7 @@ func TestCapacityIsBounded(t *testing.T) {
 func TestClear(t *testing.T) {
 	c, _ := newCache(t)
 	for i := 0; i < 10; i++ {
-		c.Put(fmt.Sprintf("k:%d", i), []byte("v"), 1, time.Minute)
+		c.Put(fmt.Sprintf("k:%d", i), []byte("v"), core.Stamp{Version: 1}, time.Minute)
 	}
 	c.Clear()
 	if got := c.Len(); got != 0 {
@@ -384,7 +384,7 @@ func TestClear(t *testing.T) {
 
 func TestStatsCountExpiredReadsAsMisses(t *testing.T) {
 	c, fc := newCache(t)
-	c.Put("k", []byte("v"), 1, time.Second)
+	c.Put("k", []byte("v"), core.Stamp{Version: 1}, time.Second)
 
 	c.Get("k")
 	fc.Advance(2 * time.Second)
@@ -435,11 +435,11 @@ func TestConcurrentAccessIsSafe(t *testing.T) {
 				key := fmt.Sprintf("k:%d", i%256)
 				switch i % 4 {
 				case 0:
-					c.Put(key, []byte("v"), uint64(i), time.Minute)
+					c.Put(key, []byte("v"), core.Stamp{Version: uint64(i)}, time.Minute)
 				case 1:
 					c.Get(key)
 				case 2:
-					c.InvalidateOlderThan(key, uint64(i))
+					c.InvalidateOlderThan(key, core.Stamp{Version: uint64(i)})
 				case 3:
 					c.Invalidate(key)
 				}
@@ -447,4 +447,78 @@ func TestConcurrentAccessIsSafe(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
+}
+
+// TestANewOwnerSupersedesAHigherVersion is why the L1 tier compares stamps
+// rather than versions.
+//
+// A key's version lives with its store entry and restarts at 1 when that entry
+// is reclaimed. When ownership moves, the new owner very often reconstructs the
+// key from a loader and issues version 1 for a value that is genuinely the
+// freshest in the cluster. Comparing versions alone would reject it and serve
+// the stale copy until the TTL expired — a staleness window measured in the
+// cache's TTL rather than in the network round trip it should have been.
+//
+// Open question 18 predicted this and said M4 would have to carry the epoch.
+// This is that.
+func TestANewOwnerSupersedesAHigherVersion(t *testing.T) {
+	c, _ := newCache(t)
+
+	// Cached from the old owner, deep into its version sequence.
+	if !c.Put("k", []byte("from the old owner"), core.Stamp{Epoch: 4, Version: 900}, time.Minute) {
+		t.Fatal("the first Put was rejected")
+	}
+
+	// Ownership moves. The new owner rebuilt the key and calls it v1.
+	if !c.Put("k", []byte("from the new owner"), core.Stamp{Epoch: 5, Version: 1}, time.Minute) {
+		t.Fatal("a value from a later epoch was rejected because its version was lower; " +
+			"version sequences either side of an ownership change are unrelated, so " +
+			"the epoch has to win")
+	}
+
+	got, stamp, ok := c.Get("k")
+	if !ok {
+		t.Fatal("the key vanished")
+	}
+	if string(got) != "from the new owner" || stamp.Epoch != 5 || stamp.Version != 1 {
+		t.Fatalf("Get = %q %+v, want the new owner's value at epoch 5 version 1", got, stamp)
+	}
+}
+
+// TestAnOlderEpochNeverWins is the same rule in the other direction. A late
+// response from the previous owner must not overwrite the new owner's value,
+// however high its version.
+func TestAnOlderEpochNeverWins(t *testing.T) {
+	c, _ := newCache(t)
+
+	if !c.Put("k", []byte("current"), core.Stamp{Epoch: 5, Version: 1}, time.Minute) {
+		t.Fatal("the first Put was rejected")
+	}
+	if c.Put("k", []byte("stale but high-versioned"), core.Stamp{Epoch: 4, Version: 900}, time.Minute) {
+		t.Fatal("a value from an earlier epoch overwrote a newer one; a slow reply from the " +
+			"previous owner would undo the handover")
+	}
+	if got, _, _ := c.Get("k"); string(got) != "current" {
+		t.Fatalf("Get = %q, want the current owner's value", got)
+	}
+}
+
+// TestInvalidationRespectsTheEpoch checks the same ordering on the eviction
+// path: an invalidation from a superseded owner must not evict a newer copy.
+func TestInvalidationRespectsTheEpoch(t *testing.T) {
+	c, _ := newCache(t)
+	c.Put("k", []byte("v"), core.Stamp{Epoch: 5, Version: 1}, time.Minute)
+
+	if c.InvalidateOlderThan("k", core.Stamp{Epoch: 4, Version: 999}) {
+		t.Fatal("an invalidation from an earlier epoch evicted a newer copy")
+	}
+	if _, _, ok := c.Get("k"); !ok {
+		t.Fatal("the entry was removed by a stale invalidation")
+	}
+	if !c.InvalidateOlderThan("k", core.Stamp{Epoch: 6, Version: 1}) {
+		t.Fatal("an invalidation from a later epoch failed to evict")
+	}
+	if _, _, ok := c.Get("k"); ok {
+		t.Fatal("the entry survived a legitimate invalidation")
+	}
 }

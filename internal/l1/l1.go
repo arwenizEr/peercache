@@ -57,8 +57,12 @@ type Options struct {
 
 // entry is one cached copy of a key owned elsewhere.
 type entry struct {
-	val       []byte
-	version   uint64
+	val []byte
+	// stamp is the owner's (epoch, version) pair rather than a bare
+	// version. A version restarts when the owner reclaims its store entry,
+	// so comparing versions across an ownership change can reject a fresh
+	// value as stale — see docs/decisions/open.md question 18.
+	stamp     core.Stamp
 	expiresAt int64
 }
 
@@ -140,11 +144,11 @@ func (c *Cache) stripeFor(key string) *sync.Mutex {
 // rather than a hint.
 //
 // The returned slice is the stored one; do not modify it.
-func (c *Cache) Get(key string) ([]byte, uint64, bool) {
+func (c *Cache) Get(key string) ([]byte, core.Stamp, bool) {
 	e, ok := c.inner.Get(key)
 	if !ok {
 		c.misses.Add(1)
-		return nil, 0, false
+		return nil, core.Stamp{}, false
 	}
 	if c.clk.Now().UnixNano() >= e.expiresAt {
 		// Drop it here rather than waiting for capacity pressure: an
@@ -163,25 +167,29 @@ func (c *Cache) Get(key string) ([]byte, uint64, bool) {
 		stripe.Unlock()
 
 		c.misses.Add(1)
-		return nil, 0, false
+		return nil, core.Stamp{}, false
 	}
 	c.hits.Add(1)
-	return e.val, e.version, true
+	return e.val, e.stamp, true
 }
 
-// Put caches val under key with the owner-issued version.
+// Put caches val under key with the owner-issued stamp.
 //
 // ttl is clamped into (0, MaxTTL]: a non-positive value becomes the configured
 // default, and anything larger than MaxTTL becomes MaxTTL. There is deliberately
 // no way to store an unbounded entry.
 //
-// A Put whose version is not newer than the stored one is rejected. Without
-// that check, an invalidation and a repopulation racing on the network could
-// leave the older value resident — the exact failure that version stamping
-// exists to prevent.
+// A Put whose stamp is not newer than the stored one is rejected. Without that
+// check, an invalidation and a repopulation racing on the network could leave
+// the older value resident — the exact failure that version stamping exists to
+// prevent.
+//
+// "Newer" is [core.Stamp.NewerThan]: the epoch dominates the version, so a
+// value from a new owner supersedes one from the previous owner even if the new
+// owner's version sequence has restarted at 1.
 //
 // It reports whether the value was stored.
-func (c *Cache) Put(key string, val []byte, version uint64, ttl time.Duration) bool {
+func (c *Cache) Put(key string, val []byte, stamp core.Stamp, ttl time.Duration) bool {
 	if ttl <= 0 {
 		ttl = c.defaultTTL
 	}
@@ -201,7 +209,7 @@ func (c *Cache) Put(key string, val []byte, version uint64, ttl time.Duration) b
 	now := c.clk.Now().UnixNano()
 	if existing, ok := c.inner.Get(key); ok {
 		live := now < existing.expiresAt
-		if live && version <= existing.version {
+		if live && !stamp.NewerThan(existing.stamp) {
 			c.rejects.Add(1)
 			return false
 		}
@@ -210,7 +218,7 @@ func (c *Cache) Put(key string, val []byte, version uint64, ttl time.Duration) b
 	c.puts.Add(1)
 	return c.inner.Set(key, entry{
 		val:       stored,
-		version:   version,
+		stamp:     stamp,
 		expiresAt: saturatingDeadline(now, ttl),
 	})
 }
@@ -237,20 +245,20 @@ func saturatingDeadline(now int64, ttl time.Duration) int64 {
 // best effort; this is not.
 func (c *Cache) Invalidate(key string) { c.inner.Delete(key) }
 
-// InvalidateOlderThan removes key if the resident copy predates version,
+// InvalidateOlderThan removes key if the resident copy predates stamp,
 // reporting whether it removed anything.
 //
 // It exists so that an invalidation which arrives after a newer value has
 // already been cached does not throw that newer value away. Losing a fresh copy
 // costs a round trip; keeping a stale one costs correctness, so the asymmetry
 // matters.
-func (c *Cache) InvalidateOlderThan(key string, version uint64) bool {
+func (c *Cache) InvalidateOlderThan(key string, stamp core.Stamp) bool {
 	stripe := c.stripeFor(key)
 	stripe.Lock()
 	defer stripe.Unlock()
 
 	e, ok := c.inner.Get(key)
-	if !ok || e.version >= version {
+	if !ok || !stamp.NewerThan(e.stamp) {
 		return false
 	}
 	c.inner.Delete(key)
