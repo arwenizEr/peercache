@@ -368,6 +368,71 @@ risk is real and is written down here rather than remembered.
 
 ---
 
+## M6 — a bug that was not in the library
+
+The hardest defect of the milestone took most of a day and turned out not to be
+a defect in the code at all. It is recorded because the *shape* of it recurs:
+silent under-configuration that reports success.
+
+### The symptom
+
+`examples/m6` hard-killed one node of five at replication factor 3 with
+synchronous replication, and 53 of 300 keys became permanently unreachable —
+`ErrNotFound`, not deferred. A node failure at RF=3 is supposed to be
+survivable by definition, so this read as a serious replication bug.
+
+### The cause
+
+A write routed to its owner creates the namespace there if that node's
+application has not opened it, using *default* options — replication factor 1.
+Namespace options are fixed at creation and silently ignored afterwards, so such
+an owner replicates nothing for that namespace, permanently.
+
+In the example, one of five nodes had opened the namespace. The other four
+created it implicitly on their first routed write. The cluster placed **68 of the
+400 copies RF=3 implies — 17%** — and every write returned success, because
+every write *had* succeeded.
+
+### How it was eventually found
+
+By bisecting, after a long detour. What settled it was printing the replication
+counters per node: only one node had sent anything, which took one command and
+was unambiguous. Everything before that was reading code and reasoning about
+what should happen.
+
+### Three process failures worth more than the bug
+
+**A fix that silently did not apply.** The correct cause was identified early, a
+fix was written, the behaviour did not change, and the hypothesis was discarded.
+The fix had never been applied — a string replacement whose anchor does not
+match is a no-op, not an error. This is the third time in this project and the
+second time it sent an investigation down a wrong path. Every generated edit is
+now verified by reading the file back before drawing any conclusion from the
+result.
+
+**Announcing a root cause before confirming it.** Twice. Both times the next
+measurement contradicted it.
+
+**Reasoning where measuring was available.** The empirical bisect — remove one
+step, re-run, see if the symptom survives — worked immediately every single time
+it was used, and was reached for last rather than first.
+
+### The resolution
+
+The creation still happens; refusing it would break routed writes to a node
+during legitimate startup ordering. What changed is that it is now *visible*:
+`Stats().ImplicitNamespaces` counts it and each occurrence logs the namespace
+and the replication factor it is stuck with.
+`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` asserts both the
+shortfall under the misconfiguration and the exact expected count when every
+node is configured.
+
+The operational rule — open every namespace, with the options you want, on every
+node, before serving — is now in the README guarantees and is the first of the
+four things `deploy/README.md` says must be right.
+
+---
+
 ## Automated audit
 
 `scripts/mutation-audit.sh` applies each mutation below, runs only the test that

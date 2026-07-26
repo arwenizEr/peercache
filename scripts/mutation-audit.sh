@@ -796,12 +796,6 @@ mutate "unchanged keys are never counted" \
   '' \
   'TestNoChangeMeansNoMoves' ./internal/rebalance/
 
-mutate "an identical view restarts the settling clock" \
-  internal/ownership/guard.go \
-  'if sameView(g.table.current.Load(), nodes) {
-		return
-	}' \
-  '' \
   'TestRollingUpgradeLosesNoRequests' .
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

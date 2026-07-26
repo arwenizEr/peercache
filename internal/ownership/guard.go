@@ -234,23 +234,17 @@ func (g *Guard) CanActivateAt(groupKey string, epoch core.Epoch) error {
 // looks like, one detection per peer — is therefore treated as a single
 // transition away from the last stable view, rather than as several transitions
 // between views that are all equally post-change.
+// An earlier version skipped updates whose membership was identical, on the
+// theory that gossip re-delivering the current view should not restart the
+// activation delay. It was added while chasing an unrelated bug, did not fix
+// that bug, and was reverted after a mutation audit showed what it cost: with
+// identical views skipped, the settled-view logic below is exercised so rarely
+// that breaking it deliberately no longer fails any test.
+//
+// The optimisation may still be worth having. It is not worth having untested,
+// and it would need its own test proving that a repeated view does not defer
+// groups — which is the test that would have caught this immediately.
 func (g *Guard) Update(nodes []core.Node, epoch core.Epoch) {
-	// An identical view is not a change.
-	//
-	// Gossip re-delivers the current membership for all sorts of reasons —
-	// a metadata refresh, a peer reconnecting, an endpoint registering — and
-	// treating each as a transition restarts the activation delay every
-	// time. A cluster with any background churn would then never report
-	// itself settled, every newly acquired group would stay deferred
-	// indefinitely, and readiness would never open.
-	//
-	// Found through examples/m6, where a node unregistering from the fabric
-	// re-notified a view nobody had changed and reopened a three-second
-	// deferral window across the cluster.
-	if sameView(g.table.current.Load(), nodes) {
-		return
-	}
-
 	now := g.clk.Now().UnixNano()
 	if now-g.changedAt.Load() >= int64(g.activationDelay) {
 		g.settled.Store(g.table.current.Load())
@@ -264,36 +258,6 @@ func (g *Guard) Update(nodes []core.Node, epoch core.Epoch) {
 	if fn != nil {
 		fn()
 	}
-}
-
-// sameView reports whether a snapshot already holds exactly these members.
-//
-// Compared by ID only. An address change matters to the transport but not to
-// placement, and reopening the deferral window for one would defer groups that
-// have not moved.
-func sameView(snap *snapshot, nodes []core.Node) bool {
-	live := 0
-	for _, n := range nodes {
-		if !n.IsZero() {
-			live++
-		}
-	}
-	if snap == nil || len(snap.nodes) != live {
-		return false
-	}
-	have := make(map[string]bool, len(snap.nodes))
-	for _, sn := range snap.nodes {
-		have[sn.node.ID] = true
-	}
-	for _, n := range nodes {
-		if n.IsZero() {
-			continue
-		}
-		if !have[n.ID] {
-			return false
-		}
-	}
-	return true
 }
 
 // Watch applies membership changes from authority until [Guard.Close].

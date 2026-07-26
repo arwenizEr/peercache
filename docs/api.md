@@ -26,7 +26,7 @@ End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle),
 and `./examples/m3` (a real three-node cluster over loopback gossip). Each one
 asserts what it demonstrates and all are run by CI.
 
-**Milestone status:** M0 through M5 complete. Namespaces are fully functional on
+**Milestone status:** M0 through M6 complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,
 bounded mailboxes, idle deactivation, an active cap, per-group timers and
 lifecycle events; and nodes form a gossip cluster in which every node computes
@@ -44,9 +44,13 @@ is asynchronous by default with a measured ≈0.1 ms exposure window, and
 `WithSyncReplication()` closes that window at the cost of the group's write
 rate.
 
-What is *not* yet true: nothing rebalances on purpose. A node joining or leaving
-moves ownership immediately rather than transferring state in a planned,
-resumable way, and there is no graceful drain on shutdown. M6 adds both.
+A node can now be added or removed on purpose: `Drain` hands its keys to their
+new owners before it stops, `Ready` keeps traffic off a node that has joined but
+cannot yet serve, and planning moves only the share the ranking reassigns.
+`deploy/` has manifests wiring both to Kubernetes probes.
+
+What is *not* yet true: there are no metrics beyond `Stats()`, no tracing, and
+no Prometheus or OTel export. M7 adds them.
 
 ---
 
@@ -486,6 +490,56 @@ nodes under one membership epoch. One group has one owner, so this cannot happen
 unless two nodes believed they owned the same key — the partition case. It is
 counted and never merged; choosing between conflicting writes is the
 application's business.
+
+---
+
+## Lifecycle
+
+Two calls, both intended for Kubernetes probes. See `deploy/README.md`.
+
+### `Ready` — the readiness probe
+
+```go
+st := cache.Ready()
+if !st.Ready {
+    http.Error(w, st.String(), http.StatusServiceUnavailable)
+    return
+}
+```
+
+False until the node has joined, its view has been stable for longer than the
+activation delay, and `CatchUp` has completed at least once. Permanently false
+once `Drain` begins.
+
+This exists because membership and readiness are different facts. A node becomes
+an owner the instant it joins — peers recompute the ranking immediately — but
+holds nothing until catch-up runs, and in between answers `ErrNotFound` for data
+that exists elsewhere. The gate keeps clients away until the two agree.
+
+`ReadyState` is a struct rather than a bool because the remedies differ: waiting
+for gossip needs patience, an uncaught-up node needs `CatchUp`, a draining one
+needs to be left alone. `String()` is written for a probe response body.
+
+### `Drain` — the PreStop hook
+
+```go
+ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+defer cancel()
+err := cache.Drain(ctx)
+```
+
+Marks the node unready, announces its departure so peers stop routing to it,
+pushes the keys it owns to their new owners, and deactivates its groups — in
+that order, because every other order leaves a window where requests arrive at a
+node that has already given away the ability to serve them.
+
+Idempotent, and *not* `Close`: a drained cache still answers peers that have not
+yet noticed. Call `Close` after. `terminationGracePeriodSeconds` must exceed how
+long a drain takes.
+
+At RF≥2 the hand-off is mostly a latency optimisation — replication and
+promotion already cover the data. At RF=1 it is the only thing between a
+graceful shutdown and losing that node's entire share.
 
 ---
 
