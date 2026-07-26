@@ -624,6 +624,70 @@ converges, and the test would measure permanent confusion rather than recovery.
 
 ---
 
+## M6 — rebalancing
+
+Measured on Machine A.
+
+### internal/rebalance — move planning
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `ComputeRemoval` 1,000 keys | 1,573,722 | 1,393,516 | 10,013 |
+| `ComputeRemoval` 100,000 keys | 214,843,400 | 142,598,096 | 1,000,031 |
+| `ComputeByClusterSize` 3 nodes, 10k keys | 8,697,977 | 6,880,090 | 100,000 |
+| `ComputeByClusterSize` 9 nodes, 10k keys | 18,547,776 | 14,041,829 | 100,018 |
+| `ComputeByClusterSize` 32 nodes, 10k keys | 54,324,683 | 38,362,840 | 100,014 |
+| `ComputeNoChange` 10k keys | 26,178,133 | 13,923,856 | 100,020 |
+| `ExpectedMoveFraction` | 0.38 | 0 | 0 |
+
+**Read these knowing what the planner is.** `rebalance.Compute` is not called by
+anything at runtime — the promoter reconciles incrementally, per key, using
+`Table.Owner` and `Table.Replicas` directly. Planning is an analysis API: it is
+what lets a test assert that a membership change moves only the share the
+ranking reassigns, and what `examples/m6` uses to show the figure. So 215 ms for
+100,000 keys does not delay a node's reaction to a failure, because no node does
+this when a peer dies.
+
+**It is nonetheless expensive** — roughly 10 allocations per key, because
+`Replicas` builds and sorts a fresh ranking per call and clones each node. Two
+calls per key (before and after) explains the shape. If planning ever moves onto
+a runtime path, that is the thing to fix first: a ranking that could be computed
+without allocating would take an order of magnitude off it.
+
+**Cost scales with cluster size**, roughly 3x from 3 nodes to 32, which is
+rendezvous hashing working as designed: placement is a maximum over all members,
+so every member is scored.
+
+**An unchanged view costs nearly as much as a changed one** (26 ms against
+18 ms for 10k keys). The planner still ranks every key twice to discover that
+nothing moved. That is acceptable for an analysis API and would not be for a
+runtime one.
+
+### The rolling-upgrade acceptance
+
+SPEC.md §4: "a simulated rolling upgrade of a 9-node cluster under sustained
+write load completes with zero failed client requests and moves no more than the
+theoretically required key count ±10%."
+
+| | Measured | Budget |
+|---|---|---|
+| Pods upgraded | 9 of 9 | 9 |
+| Client requests failed | **0** of 360 | 0 |
+| Retries needed | 149 | — |
+| Keys handed off | 4,732 | — |
+| Keys permanently rehomed | **0** of 3,000 | — |
+| Transfers vs theoretical | **18,000 vs 18,000** | ±10% |
+
+"Zero failed requests" is measured after the retry the errors explicitly ask
+for. During a handover the old owner returns `ErrNotOwner` and the new one
+`ErrActivationPending`; both are retryable and a caller that gives up after one
+attempt sees a failure. The 149 retries are the honest cost.
+
+The theoretical figure is derived rather than assumed: nine pods, each leaving
+and rejoining, at rf/9 of the keyspace per change.
+
+---
+
 ## Method notes
 
 - `-count 5` is the minimum for a median worth quoting. Single-run numbers are
