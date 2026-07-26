@@ -71,8 +71,28 @@ func (c *cache) Metrics() []Metric {
 func (c *cache) WriteMetrics(w io.Writer) error {
 	var sb strings.Builder
 	metrics.WriteText(&sb, c.Metrics())
+	if c.remoteLatency != nil {
+		metrics.WriteHistogram(&sb, "peercache_remote_duration_seconds",
+			"Latency of operations served by a peer, in seconds.", c.remoteLatency)
+	}
 	_, err := io.WriteString(w, sb.String())
 	return err
+}
+
+// RemoteLatency returns quantiles of remote operation latency in nanoseconds,
+// or zeros when [WithLatencyHistograms] is not set.
+//
+// Each value is a bucket's upper bound, so it overestimates by at most the
+// bucket width — a p99 of 2ms means "at most 2ms". That is stated rather than
+// implied, because a percentile presented as exact when it is bucketed is the
+// kind of number people build budgets on.
+func (c *cache) RemoteLatency() (p50, p99, p999 uint64) {
+	if c.remoteLatency == nil {
+		return 0, 0, 0
+	}
+	return c.remoteLatency.Quantile(0.50),
+		c.remoteLatency.Quantile(0.99),
+		c.remoteLatency.Quantile(0.999)
 }
 
 // MetricsHandler returns an http.Handler serving the Prometheus text format.

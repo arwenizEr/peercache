@@ -69,7 +69,19 @@ func (r *router) invoke(ctx context.Context, node core.Node, method string, req 
 	if err != nil {
 		return fmt.Errorf("peercache: dialling %s: %w", node.ID, err)
 	}
+	// Timed only when histograms are enabled. The clock read is cheap
+	// (~6ns) but pointless on the local path, and this is the remote one
+	// where a millisecond round trip makes it free by comparison.
+	var started int64
+	if r.cache.remoteLatency != nil {
+		started = r.cache.opts.Clock.Now().UnixNano()
+	}
 	out, err := client.Invoke(ctx, method, body)
+	if r.cache.remoteLatency != nil {
+		if elapsed := r.cache.opts.Clock.Now().UnixNano() - started; elapsed >= 0 {
+			r.cache.remoteLatency.Observe(uint64(elapsed))
+		}
+	}
 	if err != nil {
 		return err
 	}

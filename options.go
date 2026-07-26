@@ -49,6 +49,21 @@ func WithLogger(l Logger) Option {
 // WithTransport injects the peer fabric. A nil transport means single-node
 // operation with no networking at all, which is a supported configuration and
 // not an error.
+// WithLatencyHistograms records the distribution of remote operation latencies
+// and exports them as Prometheus histograms.
+//
+// It is off by default because the cost was measured rather than assumed: an
+// observation is 15.8ns uncontended and 36.9ns under concurrency, against a
+// local read path M1 measured at 515ns. That is ~7%, and on a platform whose
+// clock resolves to ~500us a sub-microsecond operation times as zero regardless
+// — so the local path would pay for nothing.
+//
+// Only remote operations are instrumented, where a millisecond round trip
+// dwarfs the observation and the clock can actually resolve it.
+func WithLatencyHistograms() Option {
+	return func(o *core.Options) { o.LatencyHistograms = true }
+}
+
 // WithListener supplies the listener the peer transport serves on.
 //
 // Bind the port yourself and pass it in: a bind failure then surfaces where the

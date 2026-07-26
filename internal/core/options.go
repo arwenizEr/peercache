@@ -14,6 +14,20 @@ import (
 // their own rather than reserving space now, because an option that exists and
 // does nothing is worse documentation than an option that does not exist.
 type Options struct {
+	// LatencyHistograms records the distribution of remote operation
+	// latencies, exported as Prometheus histograms.
+	//
+	// Off by default, and the reason is measurement rather than caution. An
+	// observation costs 15.8ns uncontended and 36.9ns under concurrency,
+	// which is ~7% of the 515ns local read path M1 measured — and on a
+	// platform whose monotonic clock resolves to ~500us, timing a
+	// sub-microsecond operation records zeros anyway. Paying 7% for zeros is
+	// not a trade worth making silently.
+	//
+	// Remote operations are a different case: a 1.7ms round trip is far
+	// above any platform's clock resolution and 37ns is noise against it.
+	// So this instruments the remote path only, and says so.
+	LatencyHistograms bool
 	// NodeID uniquely identifies this node. Required.
 	NodeID string
 	// Listener is what the peer transport serves on.

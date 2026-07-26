@@ -15,6 +15,7 @@ import (
 	"github.com/peercache/peercache/internal/codec"
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/l1"
+	"github.com/peercache/peercache/internal/metrics"
 	"github.com/peercache/peercache/internal/ownership"
 	"github.com/peercache/peercache/internal/replication"
 	"github.com/peercache/peercache/internal/store"
@@ -112,6 +113,12 @@ type Cache interface {
 	// MetricsHandler serves the same output over HTTP with the right content
 	// type, which is the part everybody gets wrong once.
 	MetricsHandler() http.Handler
+
+	// RemoteLatency returns p50, p99 and p99.9 of remote operation latency
+	// in nanoseconds, or zeros unless WithLatencyHistograms is set. Values
+	// are bucket upper bounds, so each is an over-estimate by at most the
+	// bucket width.
+	RemoteLatency() (p50, p99, p999 uint64)
 
 	Stats() Stats
 
@@ -218,6 +225,9 @@ func New(opts ...Option) (Cache, error) {
 	c.promoter = newPromoter(c)
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
+	if resolved.LatencyHistograms {
+		c.remoteLatency = &metrics.Histogram{}
+	}
 	if resolved.Membership == nil {
 		// Nothing to catch up from, so that condition is met at birth.
 		c.readiness.markCaughtUp()
@@ -305,6 +315,12 @@ type cache struct {
 	// readiness answers whether this node should receive traffic, which is
 	// a different question from whether it is a cluster member.
 	readiness *readiness
+
+	// remoteLatency records remote operation latencies when
+	// WithLatencyHistograms is set. Nil otherwise, and every call site
+	// checks — an unconditional method call on a nil-checked pointer is
+	// cheaper than a branch inside a method that does nothing.
+	remoteLatency *metrics.Histogram
 
 	// drainRounds and keysHandedOff record graceful shutdown activity.
 	drainRounds   atomic.Int64
