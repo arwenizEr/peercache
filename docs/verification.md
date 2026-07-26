@@ -263,6 +263,76 @@ and named for what it is.
 
 ---
 
+## M5 — three bugs the tests found and review would not have
+
+M5 added replication, and every defect in it was found by a test failing rather
+than by reading the code. Two of them were invisible to any single-node test and
+one was invisible to any test that did not kill a process.
+
+### Remote writes were never replicated
+
+The peer handler wrote straight to the store, bypassing fan-out and invalidation
+entirely. Only keys written *through their own owner* got copies — in a
+five-node cluster, roughly a fifth of them.
+
+`TestKillingAnOwnerPromotesAReplica` found it by failing to read back two thirds
+of the keyspace after a kill. The fix was to route a remote write through the
+same `localSet` a local write uses, which is the general lesson: two write paths
+that are supposed to behave identically will not, and the one used less is the
+one that breaks.
+
+Worth noting how nearly this was missed. The first version of that test killed
+the node it had written *through*, whose keys were written locally and therefore
+replicated correctly. A mutation exposed that: disabling remote replication left
+the test passing. The test now kills a non-writer.
+
+### The promoter raced the ownership table
+
+The promoter watched membership on its own, alongside the guard, and two
+independent watchers of one authority have no ordering between them. The
+promoter could reconcile before the table held the new view: it saw the dead
+node still owning its keys, promoted nothing, and then waited forever for an
+event that had already been delivered.
+
+The symptom was a test that hung. The cause was a design that assumed the
+scheduler would be kind. Promotion now runs from `Guard.OnUpdate`, after the
+table is current by construction.
+
+### A restarted node owns keys it does not have
+
+The worst of the three, and the one with operational consequences rather than
+merely correctness ones.
+
+Replication is a stream of writes, not a state transfer. A node that restarts
+receives only what is written after it returns — while the ownership ranking
+hands it back its keys immediately. It then answers `ErrNotFound`, with total
+confidence, for data sitting safely on the node that covered for it.
+
+In the chaos run that presented as **558 of 600 keys lost, none of them actually
+gone**. A caller cannot tell that apart from a genuine miss, which makes it
+worse than the node being unavailable.
+
+`Cache.CatchUp` already existed and nothing called it. What the chaos test
+established is that calling it is a *required* step in the restart procedure
+rather than an optimisation — a distinction that only shows up when processes
+actually die. It is now stated in the README guarantees, `docs/api.md`, decision
+0015, and demonstrated in `examples/m5`.
+
+### And two tests that were wrong rather than the code
+
+An eviction test asserted that killing a node causes survivors to drop replicas.
+It never happens: removing a node only moves keys *up* the ranking, so survivors
+gain copies or get promoted and none are pushed out. Eviction happens on *join*.
+The test was replaced with one asserting the invariant that does hold.
+
+A promotion test claimed to check that a promoted key keeps its version
+sequence, while only comparing values. A mutation restarting the sequence at 1
+passed it. The test was renamed for what it can actually see, and the version
+property is asserted where it is visible — at the store level, where the
+mutation is caught.
+
+---
+
 ## Automated audit
 
 `scripts/mutation-audit.sh` applies each mutation below, runs only the test that
@@ -271,7 +341,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all fifty-nine invariants:
+Latest run, all seventy-seven invariants:
 
 ```
 === store ===
@@ -352,13 +422,33 @@ caught   the client does not verify the server       -- TestMutualTLSRejectsAnUn
 caught   the TLS floor drops to 1.0                  -- TestTLSFloorIsEnforced
 caught   gossip advertises the SWIM port             -- TestGossipAdvertisesTheRPCAddress
 
+=== replication ===
+caught   an older replica copy overwrites a newer one -- TestAnOlderCopyIsRejected
+caught   the replica store ignores the epoch         -- TestALaterEpochWinsWhateverTheVersion
+caught   split brain is not detected                 -- TestTwoOwnersInOneEpochIsAConflict
+caught   any writer change counts as a split brain   -- TestDifferentEpochsAreNotAConflict
+caught   Drain leaves a stranded copy behind         -- TestDrainTakesOnlyWhatItClaims
+caught   promotion restarts the version sequence     -- TestRestoreContinuesTheVersionSequence
+caught   Restore overwrites a newer value            -- TestRestoreRefusesAnOlderVersion
+caught   snapshot ignores its page limit             -- TestSnapshotPagesInKeyOrder
+caught   snapshot ignores the paging cursor          -- TestSnapshotPagesInKeyOrder
+caught   snapshot hands over expired keys            -- TestSnapshotSkipsExpiredEntries
+caught   sync replication does not wait              -- TestSyncReplicationPlacesCopiesBeforeReturning
+caught   async replication waits for its replicas    -- TestAsyncReplicationDoesNotBlockTheWrite
+caught   replication does nothing at all             -- TestChaosLosesNoSynchronouslyWrittenKey
+caught   deletions are not replicated                -- TestADeletionReplicates
+caught   a remote write skips replication            -- TestKillingAnOwnerPromotesAReplica
+caught   promotion drains nothing                    -- TestKillingAnOwnerPromotesAReplica
+caught   catch-up sends whatever is asked for        -- TestCatchUpOnlySendsKeysTheAskerRanksFor
+caught   catch-up does not reconcile what it pulled  -- TestARestartedNodeRecoversItsColdReplicas
+
 === routing ===
 caught   the router batches per group, not per owner -- TestRouterIssuesOneRequestPerOwner
 caught   a batch is applied one message at a time    -- TestRouterSubmit
 caught   every node runs its own loader              -- TestTheLoaderRunsOnlyOnTheOwner
 caught   enqueueing an invalidation blocks when full -- TestInvalidationBacklogIsDroppedNotQueued
 
-caught: 59   vacuous: 0   skipped: 0
+caught: 77   vacuous: 0   skipped: 0
 tree clean
 ```
 

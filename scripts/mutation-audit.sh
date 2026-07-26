@@ -28,6 +28,26 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# Restore every mutated file on *any* exit, including Ctrl-C and a crash.
+#
+# This is not belt-and-braces. A run that died between applying a mutation and
+# reverting it left the mutant in the tree, a later `git add -A` swept it into a
+# commit, and the backpressure guarantee — a full mailbox rejects rather than
+# blocks — was silently deleted from the shipping code for three commits. It was
+# caught by `go test -race` hanging for twenty minutes, not by review.
+#
+# The trap makes the revert unconditional. `git checkout --` on a clean tree is
+# a no-op, so running it on every exit costs nothing and closes the window.
+mutated=""
+cleanup() {
+  if [ -n "$mutated" ]; then
+    echo "restoring mutated files: $mutated" >&2
+    # shellcheck disable=SC2086
+    git checkout -- $mutated 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
 caught=0
 vacuous=0
 skipped=0
@@ -39,6 +59,7 @@ skipped=0
 mutate() {
   local name="$1" file="$2" from="$3" to="$4" test="$5" pkg="$6"
 
+  mutated="$mutated $file"
   if ! python - "$file" "$from" "$to" <<'PY'
 import sys
 path, frm, to = sys.argv[1], sys.argv[2], sys.argv[3]
