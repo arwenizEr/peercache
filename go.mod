@@ -3,12 +3,14 @@ module github.com/peercache/peercache
 go 1.25.0
 
 require (
+	github.com/anishathalye/porcupine v1.3.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/hashicorp/memberlist v0.5.1
 	github.com/maypok86/otter v1.2.4
 	github.com/pierrec/lz4/v4 v4.1.27
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.uber.org/goleak v1.3.0
+	google.golang.org/grpc v1.82.1
 )
 
 require (
@@ -32,6 +34,5 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
-	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
