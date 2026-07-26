@@ -50,10 +50,20 @@ var (
 	// under a stale epoch is worse than no hint.
 	ErrNotOwner = core.ErrNotOwner
 
-	// ErrStateEscaped means a [GroupState] was used outside the actor turn
-	// that produced it. SPEC.md section 3.3 requires this be detected
-	// rather than left as undefined behaviour, and detected without a
-	// panic.
+	// ErrStateEscaped names the condition where a [GroupState] is used
+	// outside the actor turn that produced it.
+	//
+	// Nothing returns it, and nothing can. SPEC.md section 3.3 requires the
+	// condition be caught without a panic, and it is — but the goroutine
+	// committing the violation is not inside a Call, so there is no caller to
+	// hand an error to. The offending method does nothing and
+	// Stats().StateEscapes counts it; peercache_state_escapes_total exports
+	// it.
+	//
+	// It remains exported because removing a sentinel breaks anyone who
+	// matched on it, and because it is the canonical name for a condition the
+	// documentation has to be able to refer to. Do not write code that waits
+	// for it. See docs/decisions/open.md question 36.
 	ErrStateEscaped = core.ErrStateEscaped
 
 	// ErrNoLoader means [Namespace.GetOrLoad] was called on a namespace

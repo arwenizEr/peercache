@@ -26,13 +26,13 @@ import (
 
 // localConfig returns a memberlist profile tuned for a loopback test: fast
 // probes, short timeouts, no compression.
+// It delegates the port choice to testkit rather than asking for port 0,
+// because on Windows port 0 lands inside a reserved block often enough to fail
+// a run and cannot retry its way out — see testkit.FreeLoopbackPort. This
+// function kept its own copy of that logic through M6 and M7 and failed both
+// times; there is now one implementation.
 func localConfig(name string) *memberlist.Config {
-	cfg := memberlist.DefaultLocalConfig()
-	cfg.Name = name
-	cfg.BindAddr = "127.0.0.1"
-	cfg.BindPort = 0 // ephemeral
-	cfg.AdvertisePort = 0
-	return cfg
+	return testkit.LocalGossipConfig(name)
 }
 
 // newGossipRetrying starts a gossip node, retrying if the OS hands out a port

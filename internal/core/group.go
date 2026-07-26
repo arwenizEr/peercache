@@ -13,9 +13,14 @@ import (
 // entire payoff of moving computation to the data.
 //
 // A GroupState is valid only for the duration of one turn. Retaining it and
-// using it later is a use-after-free in all but name; the implementation
-// carries a generation counter and turns a violation into [ErrStateEscaped] in
-// the calling layer rather than a panic.
+// using it later is a use-after-free in all but name. The implementation
+// carries a generation counter, and a method called on a stale state does
+// nothing and increments Stats().StateEscapes.
+//
+// It is deliberately not an error return. The goroutine holding an escaped
+// state is not inside a Call, so there is no caller to return one to — see
+// internal/actor/state.go. [ErrStateEscaped] exists for callers that matched on
+// it and is never returned by this package; the counter is the signal.
 type GroupState interface {
 	ID() string
 	Get(key string) ([]byte, bool)

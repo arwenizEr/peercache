@@ -54,9 +54,10 @@ var (
 	// table.
 	ErrNotOwner = errors.New("peercache: not the owner of this key")
 
-	// ErrStateEscaped means a GroupState was used outside the actor turn
-	// that produced it. SPEC.md §3.3 requires this be caught rather than
-	// left as undefined behaviour, and caught without a panic.
+	// ErrStateEscaped names the condition where a GroupState is used outside
+	// the actor turn that produced it. Nothing returns it: the violating
+	// goroutine is not inside a Call, so the method no-ops and Stats()
+	// counts it instead. Kept as the canonical name for the condition.
 	ErrStateEscaped = errors.New("peercache: group state used outside its turn")
 
 	// ErrNoLoader means GetOrLoad was called on a namespace constructed

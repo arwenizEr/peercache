@@ -43,6 +43,13 @@ const m4RemoteBudgetP999 = 10 * time.Millisecond
 // m4TargetRPS is the offered load the criterion names.
 const m4TargetRPS = 50_000
 
+// m4ThroughputFloor is a regression floor, not the acceptance criterion.
+//
+// Set well below the 45k-48k range measured in docs/benchmarks.md so runner
+// noise cannot trip it. Its job is to catch a collapse, which is what the
+// unasserted criterion above could not do.
+const m4ThroughputFloor = 20_000
+
 // grpcNode is one cache serving real gRPC on loopback.
 type grpcNode struct {
 	id     string
@@ -338,5 +345,26 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 		t.Logf("NOTE: achieved %.0f rps, below the %d rps the criterion names. "+
 			"The latency budgets above still hold at this rate; see docs/benchmarks.md.",
 			rps, m4TargetRPS)
+	}
+
+	// A regression floor, which the paragraph above deliberately does not
+	// provide.
+	//
+	// The M8 audit found that this test could not fail on throughput at all:
+	// the criterion's number was logged and nothing was asserted, so a change
+	// that cut the rate by a factor of ten would have passed silently while
+	// the file still claimed to cover a 50k rps criterion. Reporting a number
+	// nobody checks is indistinguishable from not measuring it.
+	//
+	// The floor is set well below the measured range (45k-48k on the machine
+	// in docs/benchmarks.md) precisely so that runner noise cannot trip it.
+	// It is not the criterion and does not pretend to be — it catches the
+	// order-of-magnitude regression that the criterion, being unasserted,
+	// could not.
+	if rps < m4ThroughputFloor {
+		t.Errorf("achieved %.0f rps, below the %d rps regression floor. This is not "+
+			"the %d rps criterion — it is the floor that catches a collapse. Either "+
+			"the transport regressed badly or this machine is too loaded to measure on",
+			rps, m4ThroughputFloor, m4TargetRPS)
 	}
 }

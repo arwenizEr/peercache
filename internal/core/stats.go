@@ -160,6 +160,20 @@ type Stats struct {
 	// every node before serving traffic.
 	ImplicitNamespaces int64
 
+	// StateEscapes counts uses of a GroupState outside the turn that issued
+	// it. Any non-zero value is an application bug.
+	//
+	// The runtime cannot report this as an error: the goroutine holding an
+	// escaped state is not inside a Call, so there is nobody to return to.
+	// The methods no-op and the violation is counted instead — silence would
+	// be wrong and a panic in someone else's goroutine would be worse — which
+	// makes this counter the only way the bug is ever visible.
+	//
+	// internal/actor/state.go said this was exported from M7. It was not; the
+	// counter stopped at actor.Counters and reached neither Stats nor the
+	// metrics output. Found by the M8 audit.
+	StateEscapes int64
+
 	// MailboxRejections counts calls refused because a group's mailbox was
 	// full, reported to the caller as ErrGroupOverloaded.
 	//

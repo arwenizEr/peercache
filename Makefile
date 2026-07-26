@@ -45,6 +45,8 @@ test-race:
 ## is 478ns; measured alongside everything else, 1.87us.
 latency:
 	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1 -timeout $(TIMEOUT)
+	@echo '--- async replication loss window (separate process: its cluster perturbs the budgets above) ---'
+	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1 -timeout $(TIMEOUT)
 
 vet:
 	$(GO) vet $(PKGS)

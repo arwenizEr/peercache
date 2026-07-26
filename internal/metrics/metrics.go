@@ -103,6 +103,10 @@ func Collect(s core.Stats) []Metric {
 			"Namespaces created by an incoming peer write rather than by this node's application. " +
 				"Any non-zero value is a misconfiguration: such a namespace runs at replication factor 1 and cannot be reconfigured.",
 			float64(s.ImplicitNamespaces)},
+		{"peercache_state_escapes_total", Counter,
+			"Uses of a group state outside the turn that issued it. " +
+				"Any non-zero value is an application bug: a group function retained its state and used it later, and those calls silently did nothing. There is no error for this — the caller is not inside a Call — so this counter is the only way it is ever visible.",
+			float64(s.StateEscapes)},
 		{"peercache_mailbox_rejections_total", Counter,
 			"Calls refused because a group's mailbox was full, reported as ErrGroupOverloaded. " +
 				"A rising value is backpressure working, not a fault — but it is the first sign a group is saturated, and it arrives before the latency does.",

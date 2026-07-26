@@ -30,7 +30,9 @@ import (
 // SPEC.md section 3.3 asks for a panic-free error path when this is violated.
 // There is a subtlety: the goroutine holding an escaped State is not inside a
 // Call, so there is nobody to return an error to. The methods therefore behave
-// as no-ops and the violation is counted, which M7 exports. Silence would be
+// as no-ops and the violation is counted. The counter reaches Stats().StateEscapes
+// and peercache_state_escapes_total — which it did not until M8, despite this
+// comment having claimed so since M7. Silence would be
 // wrong; a panic in someone else's goroutine would be worse.
 type State struct {
 	rec *record

@@ -491,6 +491,7 @@ func (c *cache) Stats() Stats {
 		// Outside the guard block below: a single node with no membership
 		// still has groups, still has mailboxes, and can still saturate one.
 		MailboxRejections: groups.Rejections,
+		StateEscapes:      groups.Escapes,
 	}
 	if c.replicas != nil {
 		stats.VersionConflicts = c.replicas.VersionConflicts()
