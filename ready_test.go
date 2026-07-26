@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 	"github.com/peercache/peercache/internal/ownership"
 	"github.com/peercache/peercache/internal/testkit"
 )
+
+// readyPollStep advances the fake clock past WaitReady's internal poll, which
+// is measured on the injected clock like everything else in this library.
+const readyPollStep = 50 * time.Millisecond
 
 // TestASingleNodeIsReadyImmediately guards the configuration most applications
 // start with. A cache with no membership authority owns everything, has nobody
@@ -194,13 +199,29 @@ func TestWaitReadyReturnsWhenTheContextEnds(t *testing.T) {
 	go func() { done <- f.caches[victim].WaitReady(ctx) }()
 
 	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("WaitReady = %v, want a context error", err)
+
+	// Bounded by yields rather than by a wall-clock timer. The library
+	// forbids time.After outside internal/clock precisely so that a test
+	// cannot wait on real time, and the discipline test caught this one —
+	// which is the rule working.
+	const maxYields = 5_000_000
+	for i := 0; ; i++ {
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("WaitReady = %v, want a context error", err)
+			}
+			return
+		default:
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("WaitReady did not return when its context was cancelled")
+		if i > maxYields {
+			t.Fatalf("WaitReady had not returned after %d yields following cancellation; "+
+				"a startup path that blocks forever is a pod that never reports at all",
+				maxYields)
+		}
+		// The poll is on the injected clock, so nudge it along.
+		f.clk.Advance(readyPollStep)
+		runtime.Gosched()
 	}
 }
 
