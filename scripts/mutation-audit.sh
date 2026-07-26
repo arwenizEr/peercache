@@ -706,6 +706,103 @@ mutate "catch-up does not reconcile what it pulled" \
   'defer c.promoter.reconcile()' \
   '' \
   'TestARestartedNodeRecoversItsColdReplicas' .
+# ---------------------------------------------------------------- M6
+
+mutate "readiness ignores catch-up" \
+  ready.go \
+  'if !st.CaughtUp {
+		st.Reason = "replicas not yet pulled; call CatchUp"
+		return st
+	}' \
+  '' \
+  'TestANodeIsNotReadyBeforeCatchUp' .
+
+mutate "readiness ignores whether the view has settled" \
+  ready.go \
+  'st.Settled = c.guard.Settled()
+	if !st.Settled {
+		st.Reason = "membership has not settled"
+		return st
+	}' \
+  'st.Settled = true' \
+  'TestANodeIsNotReadyWhileMembershipMoves' .
+
+mutate "a draining node still reports ready" \
+  ready.go \
+  'case st.Draining:
+		st.Reason = "draining"
+		return st' \
+  'case false:
+		return st' \
+  'TestDrainingIsPermanentlyNotReady' .
+
+mutate "Settled always says yes" \
+  internal/ownership/guard.go \
+  'elapsed := g.clk.Now().UnixNano() - g.changedAt.Load()
+	return elapsed >= int64(g.activationDelay)' \
+  'return true' \
+  'TestANodeIsNotReadyWhileMembershipMoves' .
+
+mutate "drain does not hand off its keys" \
+  drain.go \
+  'if err := c.handOff(ctx); err != nil {
+		problems = errors.Join(problems, err)
+	}' \
+  '' \
+  'TestDrainSavesDataWithoutReplication' .
+
+mutate "drain does not announce its departure" \
+  drain.go \
+  'if err := c.opts.Membership.Leave(ctx); err != nil {' \
+  'if err := error(nil); err != nil {' \
+  'TestDrainStopsPeersRoutingImmediately' .
+
+mutate "handed-off keys are not adopted by their new owner" \
+  handler.go \
+  'if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
+			h.cache.keysAdopted.Add(1)
+		}
+		return wire.Encode(&wire.ReplicateResponse{})' \
+  'return wire.Encode(&wire.ReplicateResponse{})' \
+  'TestDrainSavesDataWithoutReplication' .
+
+mutate "an implicitly created namespace is not counted" \
+  handler.go \
+  'if !existed {
+		h.cache.implicitNamespaces.Add(1)' \
+  'if false {
+		h.cache.implicitNamespaces.Add(1)' \
+  'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' .
+
+mutate "the plan counts promotions as moves" \
+  internal/rebalance/plan.go \
+  'if _, held := was[n.ID]; held {' \
+  'if false {' \
+  'TestRemovingANodeMovesOnlyItsShare' ./internal/rebalance/
+
+mutate "an empty view plans an evacuation" \
+  internal/rebalance/plan.go \
+  'if newErr != nil {
+			continue
+		}' \
+  '' \
+  'TestAnEmptyNewViewPlansNothing' ./internal/rebalance/
+
+mutate "unchanged keys are never counted" \
+  internal/rebalance/plan.go \
+  'if !moved {
+			plan.Unchanged++
+		}' \
+  '' \
+  'TestNoChangeMeansNoMoves' ./internal/rebalance/
+
+mutate "an identical view restarts the settling clock" \
+  internal/ownership/guard.go \
+  'if sameView(g.table.current.Load(), nodes) {
+		return
+	}' \
+  '' \
+  'TestRollingUpgradeLosesNoRequests' .
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 
