@@ -485,7 +485,7 @@ counts, codec names) and skipped for the ones where it is not.
 
 ---
 
-## 27. Windows reserves ephemeral ports, so socket tests flake — M4, handled in M6
+## 27. Windows reserves ephemeral ports, so socket tests flake — M4, handled in M6, completed in M7
 
 `internal/membership` and the gRPC transport tests bind port 0 and let the OS
 choose. On this Windows host the choice sometimes lands in a range Hyper-V has
@@ -516,6 +516,14 @@ ephemeral range is not carved up. Recorded here so that a future flake is
 recognised rather than investigated twice.
 
 ---
+
+**M7 addendum.** The M6 fix was applied to `internal/membership`'s tests only.
+The root package's `cluster_test.go` builds gossip nodes through its own helper
+and kept failing — latent for a milestone, surfaced by M7's `-count=2` gate.
+Both now call `testkit.RetryBind` and `testkit.IsPortRefused`, one exported
+implementation, so a third caller inherits the fix instead of rediscovering the
+bug. Recorded because the failure mode is general: a correct fix applied to some
+of the places that need it reads, in the commit log, exactly like a complete one.
 
 ## 28. `EpochSkew` is observed but nothing acts on it — M4, deliberate
 

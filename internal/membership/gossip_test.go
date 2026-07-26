@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/membership"
+	"github.com/peercache/peercache/internal/testkit"
 )
 
 // These are integration tests over loopback, and they are honestly real-time:
@@ -56,31 +56,12 @@ func newGossipRetrying(t *testing.T, id string) (*membership.Gossip, error) {
 // newGossipAt is newGossipRetrying for a node with an explicit address.
 func newGossipAt(t *testing.T, self core.Node) (*membership.Gossip, error) {
 	t.Helper()
-	const attempts = 12
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		g, err := membership.New(membership.Options{
+	return testkit.RetryBind(func() (*membership.Gossip, error) {
+		return membership.New(membership.Options{
 			Self:   self,
 			Config: localConfig(self.ID),
 		})
-		if err == nil {
-			return g, nil
-		}
-		lastErr = err
-		if !isPortRefused(err) {
-			return nil, err
-		}
-	}
-	return nil, lastErr
-}
-
-// isPortRefused reports whether an error is the OS declining a port it just
-// handed out, rather than a real failure.
-func isPortRefused(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "access permissions") ||
-		strings.Contains(msg, "address already in use") ||
-		strings.Contains(msg, "Only one usage of each socket address")
+	})
 }
 
 func newGossip(t *testing.T, id string) *membership.Gossip {

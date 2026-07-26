@@ -1,8 +1,10 @@
 # Public API
 
-Every symbol here exists and compiles today. Anything belonging to a milestone
-that has not run yet returns `ErrNotImplemented`, which is a typed, testable
-declaration of scaffolding rather than a comment nobody greps for.
+Every symbol here exists, compiles and is implemented. `ErrNotImplemented` no
+longer marks unbuilt scaffolding — it now reports only an RPC method this binary
+does not recognise, which is what a peer running a newer build looks like during
+a rolling upgrade, or a cache asked to reach another node with no transport
+configured.
 
 Every public symbol below has a runnable example in `example_test.go`, compiled
 and output-checked by `go test`:
@@ -20,13 +22,16 @@ and output-checked by `go test`:
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
+| `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
 
-End-to-end programs: `go run ./examples/m0` (skeleton and lifecycle),
-`./examples/m1` (the local data path), `./examples/m2` (the group actor runtime)
-and `./examples/m3` (a real three-node cluster over loopback gossip). Each one
-asserts what it demonstrates and all are run by CI.
+End-to-end programs, one per milestone: `go run ./examples/m0` (skeleton and
+lifecycle), `m1` (the local data path), `m2` (the group actor runtime), `m3` (a
+real three-node cluster over loopback gossip), `m4` (remote routing), `m5`
+(replication and failure), `m6` (rebalancing and drain) and `m7` (the scrape
+endpoint and the counters that matter). Each one asserts what it demonstrates
+and all are run by CI.
 
-**Milestone status:** M0 through M6 complete. Namespaces are fully functional on
+**Milestone status:** all seven complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,
 bounded mailboxes, idle deactivation, an active cap, per-group timers and
 lifecycle events; and nodes form a gossip cluster in which every node computes
@@ -49,8 +54,14 @@ new owners before it stops, `Ready` keeps traffic off a node that has joined but
 cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
-What is *not* yet true: there are no metrics beyond `Stats()`, no tracing, and
-no Prometheus or OTel export. M7 adds them.
+Every counter the earlier milestones built is exported: `MetricsHandler` serves
+33 series in the Prometheus text exposition format, and PeerCache imports no
+metrics client library to do it. Latency histograms are available behind
+`WithLatencyHistograms()` and off by default, for a reason that is a measurement
+rather than an opinion — see Observability below.
+
+What is *not* true: there is no tracing, no per-namespace label breakdown, and
+no durability. The last of those is a design decision, not a gap.
 
 ---
 

@@ -513,6 +513,29 @@ as malformed — so a lost overflow bucket does not merely omit a sample, it
 invalidates the whole histogram. `TestTheInfBucketMatchesTheCount` asserts that,
 and that the last finite bucket has not swallowed the overflow instead.
 
+### A fix applied to one package and not the other, latent since M6
+
+The `-count=2` gate failed on `TestTwoNodesAgreeOnOwnership` and
+`TestJoiningNodeDefersNewlyAcquiredGroups`:
+
+```
+Failed to start UDP listener on "127.0.0.1" port 51029: bind: An attempt was
+made to access a socket in a way forbidden by its access permissions.
+```
+
+That is the Windows reserved ephemeral range (50510-51109 on this machine),
+which M6 already diagnosed and fixed — in `internal/membership`, whose tests got
+a bounded retry. The root package's `cluster_test.go` builds its gossip nodes
+through its own helper and never received it. Two tests, binding real sockets
+through a second code path, latent for a milestone.
+
+This is the same shape as the nil-context finding two sections up, and the same
+shape as the `//nolint` comments in the first draft of its test: a correct fix
+applied to some of the places that needed it. The remedy is not more care. It is
+one exported helper — `testkit.RetryBind` and `testkit.IsPortRefused` — that
+both packages now call, so the next caller inherits the fix rather than
+rediscovering the bug.
+
 ### And the M7 example was reporting two numbers it had not earned
 
 `examples/m7` printed `peercache_replications_sent_total 573` next to the
@@ -539,114 +562,107 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all seventy-seven invariants:
+Latest run, all ninety-six invariants:
 
 ```
-=== store ===
-caught   Set no longer copies the caller's buffer   -- TestSetCopiesTheCallersBuffer
-caught   Get copies instead of aliasing             -- TestGetReturnsTheStoredSlice
-caught   read-path expiry disabled                  -- TestExpiryIsObservedOnRead
-caught   shard selection collapses to one shard     -- TestKeysSpreadAcrossShards
-caught   TTL deadline overflow reintroduced         -- TestUnrepresentableTTLDoesNotExpireImmediately
-caught   store version stops incrementing           -- TestVersionsIncrementPerKey
+caught   Set no longer copies the caller's buffer                           -- TestSetCopiesTheCallersBuffer
+caught   Get copies instead of aliasing                                     -- TestGetReturnsTheStoredSlice
+caught   read-path expiry disabled                                          -- TestExpiryIsObservedOnRead
+caught   shard selection collapses to one shard                             -- TestKeysSpreadAcrossShards
+caught   TTL deadline overflow reintroduced                                 -- TestUnrepresentableTTLDoesNotExpireImmediately
+caught   L1 accepts an older version                                        -- TestOlderVersionIsRejected
+caught   L1 stops clamping TTL to MaxTTL                                    -- TestEveryEntryIsTTLBounded
+caught   L1 write stripe removed                                            -- TestConcurrentPutsNeverLeaveAnOlderVersion
+caught   frame parser accepts an unknown code                               -- TestUnframeRejectsCorruptInput
+caught   namespaces share one store                                         -- TestNamespacesAreIsolated
+caught   singleflight bypassed                                              -- TestGetOrLoadCollapsesConcurrentMisses
+caught   store version stops incrementing                                   -- TestVersionsIncrementPerKey
+caught   L1 invalidation ignores the resident version                       -- TestInvalidateOlderThanKeepsNewerCopies
+caught   loader panic is no longer contained                                -- TestPanickingLoaderBecomesAnError
+caught   completed flights are never released                               -- TestSequentialCallsDoNotCollapse
+caught   fake clock drops the creation-order tie-break                      -- TestFakeEqualDeadlinesFireInCreationOrder
+caught   namespace skips the context check                                  -- TestCancelledContextIsReportedFirst
+caught   loader runs without the namespace deadline                         -- TestLoaderTimeoutIsTheNamespacesNotTheCallers
+caught   escaped group state is honoured instead of ignored                 -- TestEscapedStateIsInertAndCounted
+caught   a full mailbox blocks instead of rejecting                         -- TestFullMailboxRejectsRatherThanBlocking
+caught   a group function panic is no longer contained                      -- TestPanickingGroupFuncDoesNotWedgeTheGroup
+caught   deactivation discards group state                                  -- TestDeactivationPreservesState
+caught   deactivation discards the timer schedule                           -- TestDeactivationPreservesPendingTimers
+caught   a group with pending timers is idle-deactivated                    -- TestDeactivationPreservesPendingTimers
+caught   the active-group cap is ignored                                    -- TestActiveCapEvictsLeastRecentlyActivated
+caught   rescheduling a timer name accumulates duplicates                   -- TestReschedulingATimerReplacesIt
+caught   the Items snapshot aliases group state                             -- TestItemsSnapshotDoesNotAliasGroupState
+caught   ownership ignores the node identity                                -- TestOwnershipIsUniform
+caught   ownership hashes with a bare XOR                                   -- TestOwnershipIsUniform
+caught   the replica ranking is unsorted                                    -- TestReplicasAreARankedPrefix
+caught   an unknown membership claims everything                            -- TestGuardWithNoMembershipOwnsNothing
+caught   the guard activates groups it does not own                         -- TestGuardRefusesGroupsItDoesNotOwn
+caught   newly acquired groups activate immediately                         -- TestGuardDefersOnlyNewlyAcquiredGroups
+caught   the guard compares against the previous view, not the settled one  -- TestPartitionedMinorityStopsActivating
+caught   a stale epoch is accepted                                          -- TestStaleEpochIsRefused
+caught   a caller ahead of this node is not deferred                        -- TestFutureEpochDefersRatherThanRefusing
+caught   the epoch is checked before ownership                              -- TestNotOwnerBeatsStaleEpoch
+caught   local activation does not use the current epoch                    -- TestCanActivateUsesTheCurrentEpoch
+caught   gossip metadata updates advance the epoch                          -- TestEpochDoesNotRunAway
+caught   the gossip event goroutine is never released                       -- TestCloseLeavesNoGoroutines
+caught   the guard is built but never consulted                             -- TestTwoNodesAgreeOnOwnership
+caught   the guard never learns the membership                              -- TestJoiningNodeDefersNewlyAcquiredGroups
+caught   a length prefix buys an allocation                                 -- TestALengthPrefixCannotBuyAnAllocation
+caught   the L1 tier compares versions, ignoring the epoch                  -- TestANewOwnerSupersedesAHigherVersion
+caught   invalidation compares versions, ignoring the epoch                 -- TestInvalidationRespectsTheEpoch
+caught   the epoch does not dominate the version                            -- TestStampOrdering
+caught   the transport codec drops the body                                 -- TestRoundTripOverLoopback
+caught   a caller does not identify itself                                  -- TestRoundTripOverLoopback
+caught   sentinel errors do not survive the hop                             -- TestSentinelErrorsSurviveTheHop
+caught   Unavailable is read as a deferred activation                       -- TestUnavailableDefaultsToUnreachable
+caught   connections are not pooled                                         -- TestDialPoolsConnections
+caught   the server does not verify client certificates                     -- TestMutualTLSRejectsAnImpostorCA
+caught   the client does not verify the server                              -- TestMutualTLSRejectsAnUntrustedServer
+caught   the TLS floor drops to 1.0                                         -- TestTLSFloorIsEnforced
+caught   the router batches per group rather than per owner                 -- TestRouterIssuesOneRequestPerOwner
+caught   a group batch is applied one message at a time                     -- TestRouterSubmit
+caught   every node runs its own loader                                     -- TestTheLoaderRunsOnlyOnTheOwner
+caught   gossip advertises the SWIM port as the RPC address                 -- TestGossipAdvertisesTheRPCAddress
+caught   enqueueing an invalidation blocks when the queue is full           -- TestInvalidationBacklogIsDroppedNotQueued
+caught   an older replica copy overwrites a newer one                       -- TestAnOlderCopyIsRejected
+caught   the replica store compares versions, ignoring the epoch            -- TestALaterEpochWinsWhateverTheVersion
+caught   split brain is not detected                                        -- TestTwoOwnersInOneEpochIsAConflict
+caught   any writer change counts as a split brain                          -- TestDifferentEpochsAreNotAConflict
+caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
+caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
+caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion
+caught   snapshot ignores its page limit                                    -- TestSnapshotPagesInKeyOrder
+caught   snapshot ignores the paging cursor                                 -- TestSnapshotPagesInKeyOrder
+caught   snapshot hands over expired keys                                   -- TestSnapshotSkipsExpiredEntries
+caught   sync replication does not wait                                     -- TestSyncReplicationPlacesCopiesBeforeReturning
+caught   async replication waits for its replicas                           -- TestAsyncReplicationDoesNotBlockTheWrite
+caught   replication does nothing at all                                    -- TestChaosLosesNoSynchronouslyWrittenKey
+caught   deletions are not replicated                                       -- TestADeletionReplicates
+caught   a remote write skips replication                                   -- TestKillingAnOwnerPromotesAReplica
+caught   promotion drains nothing                                           -- TestKillingAnOwnerPromotesAReplica
+caught   catch-up sends whatever is asked for                               -- TestCatchUpOnlySendsKeysTheAskerRanksFor
+caught   catch-up does not reconcile what it pulled                         -- TestARestartedNodeRecoversItsColdReplicas
+caught   readiness ignores catch-up                                         -- TestANodeIsNotReadyBeforeCatchUp
+caught   readiness ignores whether the view has settled                     -- TestANodeIsNotReadyWhileMembershipMoves
+caught   a draining node still reports ready                                -- TestDrainingIsPermanentlyNotReady
+caught   Settled always says yes                                            -- TestANodeIsNotReadyWhileMembershipMoves
+caught   drain does not hand off its keys                                   -- TestDrainSavesDataWithoutReplication
+caught   drain does not announce its departure                              -- TestDrainStopsPeersRoutingImmediately
+caught   handed-off keys are not adopted by their new owner                 -- TestDrainSavesDataWithoutReplication
+caught   an implicitly created namespace is not counted                     -- TestAnImplicitNamespaceIsCountedAndReplicatesNothing
+caught   the plan counts promotions as moves                                -- TestRemovingANodeMovesOnlyItsShare
+caught   an empty view plans an evacuation                                  -- TestAnEmptyNewViewPlansNothing
+caught   unchanged keys are never counted                                   -- TestNoChangeMeansNoMoves
+caught   drain hands off nothing                                            -- TestDrainHandsOffKeysNothingElseWouldSave
+caught   drain transfers before announcing departure                        -- TestDrainAnnouncesDepartureBeforeTransferring
+caught   quantile rounds down instead of up                                 -- TestQuantileRoundsUp
+caught   snapshot buckets are exclusive, not cumulative                     -- TestBucketsAreCumulative
+caught   the overflow bucket is dropped                                     -- TestTheInfBucketMatchesTheCount
+caught   histogram bounds emitted in nanoseconds, not seconds               -- TestHistogramTextFormat
+caught   a correctness counter is exported as a gauge                       -- TestCorrectnessMetricsAreCounters
+caught   a stats field is exported under the wrong name                     -- TestEveryStatsFieldIsExported
 
-=== L1 ===
-caught   L1 accepts an older version                -- TestOlderVersionIsRejected
-caught   L1 stops clamping TTL to MaxTTL            -- TestEveryEntryIsTTLBounded
-caught   L1 write stripe removed                    -- TestConcurrentPutsNeverLeaveAnOlderVersion
-caught   invalidation ignores the resident version  -- TestInvalidateOlderThanKeepsNewerCopies
-
-=== codec ===
-caught   frame parser accepts an unknown code       -- TestUnframeRejectsCorruptInput
-
-=== singleflight ===
-caught   loader panic is no longer contained        -- TestPanickingLoaderBecomesAnError
-caught   completed flights are never released       -- TestSequentialCallsDoNotCollapse
-
-=== clock ===
-caught   drops the creation-order tie-break         -- TestFakeEqualDeadlinesFireInCreationOrder
-
-=== namespace ===
-caught   namespaces share one store                 -- TestNamespacesAreIsolated
-caught   singleflight bypassed                      -- TestGetOrLoadCollapsesConcurrentMisses
-caught   namespace skips the context check          -- TestCancelledContextIsReportedFirst
-caught   loader runs without the namespace deadline -- TestLoaderTimeoutIsTheNamespacesNotTheCallers
-caught   Items snapshot aliases group state         -- TestItemsSnapshotDoesNotAliasGroupState
-
-=== actor runtime ===
-caught   escaped group state is honoured            -- TestEscapedStateIsInertAndCounted
-caught   a full mailbox blocks instead of rejecting -- TestFullMailboxRejectsRatherThanBlocking
-caught   a group function panic is not contained    -- TestPanickingGroupFuncDoesNotWedgeTheGroup
-caught   deactivation discards group state          -- TestDeactivationPreservesState
-caught   deactivation discards the timer schedule   -- TestDeactivationPreservesPendingTimers
-caught   pending timers no longer block idle exit   -- TestDeactivationPreservesPendingTimers
-caught   the active-group cap is ignored            -- TestActiveCapEvictsLeastRecentlyActivated
-caught   rescheduling a name accumulates timers     -- TestReschedulingATimerReplacesIt
-
-=== ownership ===
-caught   ownership ignores the key                  -- TestOwnershipIsUniform
-caught   node identity no longer decorrelates       -- TestOwnershipIsUniform
-caught   an empty membership owns everything        -- TestEmptyMembershipOwnsNothing
-caught   the epoch stops advancing                  -- TestUpdateAdvancesTheEpoch
-caught   zero nodes enter the view                  -- TestUpdateIgnoresZeroNodes
-caught   the replica ranking is unsorted            -- TestReplicasAreARankedPrefix
-caught   an unknown membership claims everything    -- TestGuardWithNoMembershipOwnsNothing
-caught   the guard activates groups it does not own -- TestGuardRefusesGroupsItDoesNotOwn
-caught   newly acquired groups activate immediately -- TestGuardDefersOnlyNewlyAcquiredGroups
-caught   compares the previous view, not the settled -- TestPartitionedMinorityStopsActivating
-caught   a stale epoch is accepted                  -- TestStaleEpochIsRefused
-caught   a caller ahead of this node is not deferred -- TestFutureEpochDefersRatherThanRefusing
-caught   the epoch is checked before ownership      -- TestNotOwnerBeatsStaleEpoch
-caught   local activation ignores the current epoch -- TestCanActivateUsesTheCurrentEpoch
-
-=== membership and wiring ===
-caught   gossip metadata updates advance the epoch  -- TestEpochDoesNotRunAway
-caught   the gossip event goroutine is never released -- TestCloseLeavesNoGoroutines
-caught   the guard is built but never consulted     -- TestTwoNodesAgreeOnOwnership
-caught   the guard never learns the membership      -- TestJoiningNodeDefersNewlyAcquiredGroups
-
-=== wire and transport ===
-caught   a length prefix buys an allocation          -- TestALengthPrefixCannotBuyAnAllocation
-caught   the L1 tier compares versions, not stamps   -- TestANewOwnerSupersedesAHigherVersion
-caught   invalidation compares versions, not stamps  -- TestInvalidationRespectsTheEpoch
-caught   the epoch does not dominate the version     -- TestStampOrdering
-caught   the transport codec drops the body          -- TestRoundTripOverLoopback
-caught   a caller does not identify itself           -- TestRoundTripOverLoopback
-caught   sentinel errors do not survive the hop      -- TestSentinelErrorsSurviveTheHop
-caught   Unavailable is read as a deferred activation -- TestUnavailableDefaultsToUnreachable
-caught   connections are not pooled                  -- TestDialPoolsConnections
-caught   the server does not verify client certs     -- TestMutualTLSRejectsAnImpostorCA
-caught   the client does not verify the server       -- TestMutualTLSRejectsAnUntrustedServer
-caught   the TLS floor drops to 1.0                  -- TestTLSFloorIsEnforced
-caught   gossip advertises the SWIM port             -- TestGossipAdvertisesTheRPCAddress
-
-=== replication ===
-caught   an older replica copy overwrites a newer one -- TestAnOlderCopyIsRejected
-caught   the replica store ignores the epoch         -- TestALaterEpochWinsWhateverTheVersion
-caught   split brain is not detected                 -- TestTwoOwnersInOneEpochIsAConflict
-caught   any writer change counts as a split brain   -- TestDifferentEpochsAreNotAConflict
-caught   Drain leaves a stranded copy behind         -- TestDrainTakesOnlyWhatItClaims
-caught   promotion restarts the version sequence     -- TestRestoreContinuesTheVersionSequence
-caught   Restore overwrites a newer value            -- TestRestoreRefusesAnOlderVersion
-caught   snapshot ignores its page limit             -- TestSnapshotPagesInKeyOrder
-caught   snapshot ignores the paging cursor          -- TestSnapshotPagesInKeyOrder
-caught   snapshot hands over expired keys            -- TestSnapshotSkipsExpiredEntries
-caught   sync replication does not wait              -- TestSyncReplicationPlacesCopiesBeforeReturning
-caught   async replication waits for its replicas    -- TestAsyncReplicationDoesNotBlockTheWrite
-caught   replication does nothing at all             -- TestChaosLosesNoSynchronouslyWrittenKey
-caught   deletions are not replicated                -- TestADeletionReplicates
-caught   a remote write skips replication            -- TestKillingAnOwnerPromotesAReplica
-caught   promotion drains nothing                    -- TestKillingAnOwnerPromotesAReplica
-caught   catch-up sends whatever is asked for        -- TestCatchUpOnlySendsKeysTheAskerRanksFor
-caught   catch-up does not reconcile what it pulled  -- TestARestartedNodeRecoversItsColdReplicas
-
-=== routing ===
-caught   the router batches per group, not per owner -- TestRouterIssuesOneRequestPerOwner
-caught   a batch is applied one message at a time    -- TestRouterSubmit
-caught   every node runs its own loader              -- TestTheLoaderRunsOnlyOnTheOwner
-caught   enqueueing an invalidation blocks when full -- TestInvalidationBacklogIsDroppedNotQueued
-
-caught: 77   vacuous: 0   skipped: 0
+caught: 96   vacuous: 0   skipped: 0
 tree clean
 ```
 
@@ -657,12 +673,13 @@ the deadline rules. Not everything is audited — the p99 criterion is mutated b
 hand because a single run costs a minute, and the reference-model and fuzz tests
 audit themselves by construction.
 
-The last two are a different kind of mutation, added in M3, and worth calling
-out. Every other entry breaks logic inside a package and is caught by that
-package's own tests. Those two break *wiring* — they leave `internal/ownership`
-untouched and correct, and only stop `peercache.New` from connecting it to the
-membership authority or to activation. Nothing in `internal/ownership` notices,
-because from its point of view nothing is wrong.
+Two of them are a different kind of mutation, added in M3, and worth calling
+out: "the guard is built but never consulted" and "the guard never learns the
+membership". Every other entry breaks logic inside a package and is caught by
+that package's own tests. Those two break *wiring* — they leave
+`internal/ownership` untouched and correct, and only stop `peercache.New` from
+connecting it to the membership authority or to activation. Nothing in
+`internal/ownership` notices, because from its point of view nothing is wrong.
 
 They are the reason `cluster_test.go` exists. Before it, thirteen ownership
 invariants were verified inside a package the library could have stopped calling

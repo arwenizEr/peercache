@@ -8,12 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/memberlist"
-
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/membership"
+	"github.com/peercache/peercache/internal/testkit"
 )
 
 // These are the only tests in the repository that run two real cache instances
@@ -66,15 +65,16 @@ type clusterNode struct {
 func newClusterNode(t *testing.T, id string, activationDelay time.Duration) *clusterNode {
 	t.Helper()
 
-	cfg := memberlist.DefaultLocalConfig()
-	cfg.Name = id
-	cfg.BindAddr = "127.0.0.1"
-	cfg.BindPort = 0
-	cfg.AdvertisePort = 0
-
-	g, err := membership.New(membership.Options{
-		Self:   core.Node{ID: id},
-		Config: cfg,
+	// Retry a bind the OS refuses after handing out the port. These two
+	// tests bind real sockets, and on Windows the ephemeral range overlaps a
+	// reserved one — see testkit.IsPortRefused. internal/membership got this
+	// fix in M6; this call site did not, and failed under -count=2 in M7's
+	// gate. The helper is shared now so there is one place to fix.
+	g, err := testkit.RetryBind(func() (*membership.Gossip, error) {
+		return membership.New(membership.Options{
+			Self:   core.Node{ID: id},
+			Config: testkit.LocalGossipConfig(id),
+		})
 	})
 	if err != nil {
 		t.Fatalf("membership.New(%s): %v", id, err)

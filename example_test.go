@@ -483,3 +483,68 @@ func ExampleNewRouter() {
 	// acme: 3
 	// globex: 3
 }
+
+// ExampleCache_WriteMetrics shows the observability surface added in M7.
+//
+// PeerCache imports no metrics client library; it exports values and renders
+// the Prometheus text exposition format itself. The reasoning is in
+// docs/decisions/0017-metrics-without-a-client-library.md.
+func ExampleCache_WriteMetrics() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		panic(err)
+	}
+	defer cache.Close(context.Background())
+
+	ctx := context.Background()
+	orders := cache.Namespace("orders")
+	if err := orders.Set(ctx, "order/1", []byte("paid"), 0); err != nil {
+		panic(err)
+	}
+	if _, err := orders.Get(ctx, "order/1"); err != nil {
+		panic(err)
+	}
+	if _, err := orders.Get(ctx, "order/absent"); !errors.Is(err, peercache.ErrNotFound) {
+		panic(err)
+	}
+
+	var buf bytes.Buffer
+	if err := cache.WriteMetrics(&buf); err != nil {
+		panic(err)
+	}
+
+	// Print a few series rather than all 33, so the example stays readable.
+	want := map[string]bool{
+		"peercache_members":                      true,
+		"peercache_owned_keys":                   true,
+		"peercache_hits_total":                   true,
+		"peercache_misses_total":                 true,
+		"peercache_split_brain_detections_total": true,
+		"peercache_implicit_namespaces_total":    true,
+	}
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if name, _, ok := strings.Cut(line, " "); ok && want[name] {
+			fmt.Println(line)
+		}
+	}
+
+	// The same output over HTTP, with the content type a scraper expects:
+	//
+	//	mux.Handle("/metrics", cache.MetricsHandler())
+
+	// The two counters printed as zero are the point of the exercise. Both
+	// report a window this system is documented as having, and an operator
+	// alerts on them leaving zero — implicit_namespaces in particular, which
+	// is a silent misconfiguration that looks exactly like a data-loss bug.
+
+	// Series come out sorted by name, which is why this block is alphabetical
+	// rather than in the order the fields are declared.
+
+	// Output:
+	// peercache_hits_total 1
+	// peercache_implicit_namespaces_total 0
+	// peercache_members 1
+	// peercache_misses_total 1
+	// peercache_owned_keys 1
+	// peercache_split_brain_detections_total 0
+}
