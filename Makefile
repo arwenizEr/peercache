@@ -6,12 +6,12 @@ BENCHTIME ?= 1s
 BENCHCOUNT ?= 5
 TIMEOUT ?= 300s
 
-.PHONY: all ci test test-race examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
+.PHONY: all ci test test-race latency examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
 
 all: fmt vet lint test-race
 
 ## ci runs exactly what the pipeline runs, so a green local run means a green CI run.
-ci: vet lint test test-race examples bench
+ci: vet lint test test-race latency examples bench
 
 ## examples runs every example to completion. Compiling them is not enough:
 ## each one asserts the behaviour it demonstrates, and an example that is only
@@ -31,6 +31,16 @@ test:
 ## run under -race, and -count=2 catches state that leaks between runs.
 test-race:
 	$(GO) test $(PKGS) -race -count=2 -timeout $(TIMEOUT)
+
+## latency gates the M1 p99 acceptance criterion, alone.
+##
+## It cannot share a machine with the rest of the suite. `go test ./...` runs
+## packages concurrently, and from M4 that means measuring a sub-microsecond
+## budget while gRPC servers and gossip clusters compete for the same cores —
+## which reports the machine's load, not the cache's latency. Measured idle it
+## is 478ns; measured alongside everything else, 1.87us.
+latency:
+	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run TestLocalGetP99AtOneMillionKeys -count=1 -p 1 -timeout $(TIMEOUT)
 
 vet:
 	$(GO) vet $(PKGS)

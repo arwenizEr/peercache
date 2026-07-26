@@ -54,6 +54,15 @@ jobs:
       # Each example asserts the behaviour it demonstrates and exits non-zero
       # if it is wrong. Compiling them is not enough: M1 made the M0 example's
       # assertions false and nothing noticed, because nothing ran them.
+      - name: latency gate
+        # Alone, and without the race detector. A sub-microsecond budget
+        # measured while other packages' gRPC servers and gossip clusters
+        # compete for the same cores reports the runner's load, not the cache's
+        # latency. See the skip in TestLocalGetP99AtOneMillionKeys.
+        env:
+          PEERCACHE_LATENCY_GATE: "1"
+        run: go test . -run TestLocalGetP99AtOneMillionKeys -count=1 -p 1
+
       - name: examples run
         run: |
           go run ./examples/m0
