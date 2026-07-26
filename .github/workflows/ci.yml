@@ -72,6 +72,7 @@ jobs:
           go run ./examples/m4
           go run ./examples/m5
           go run ./examples/m6
+          go run ./examples/m7
 
       # internal/l1/eval is a nested module, so `go test ./...` never sees it.
       # Compiling it keeps the cache-library comparison from rotting into

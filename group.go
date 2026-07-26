@@ -96,6 +96,7 @@ func (g *group) status() error {
 }
 
 func (g *group) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -118,6 +119,7 @@ func (g *group) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (g *group) Set(ctx context.Context, key string, val []byte) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -132,6 +134,7 @@ func (g *group) Set(ctx context.Context, key string, val []byte) error {
 }
 
 func (g *group) Delete(ctx context.Context, key string) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -146,6 +149,7 @@ func (g *group) Delete(ctx context.Context, key string) error {
 }
 
 func (g *group) Keys(ctx context.Context) ([]string, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -163,6 +167,7 @@ func (g *group) Keys(ctx context.Context) ([]string, error) {
 }
 
 func (g *group) Items(ctx context.Context) (map[string][]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -201,6 +206,7 @@ func (g *group) Items(ctx context.Context) (map[string][]byte, error) {
 // wants to work with a group it does not own uses Call and the work happens
 // there.
 func (g *group) Call(ctx context.Context, fn string, arg []byte) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -239,6 +245,7 @@ func (g *group) Call(ctx context.Context, fn string, arg []byte) ([]byte, error)
 }
 
 func (g *group) Flush(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

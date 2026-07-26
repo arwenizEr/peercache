@@ -152,6 +152,7 @@ func (n *namespace) decode(stored []byte) ([]byte, error) {
 }
 
 func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -224,6 +225,7 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 }
 
 func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -320,6 +322,7 @@ func (n *namespace) stamp(version uint64) core.Stamp {
 }
 
 func (n *namespace) Delete(ctx context.Context, key string) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -372,6 +375,7 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 }
 
 func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -413,6 +417,7 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 // that can use half an answer should not be denied it because one owner was
 // slow, and a caller that cannot will check the error.
 func (n *namespace) BatchGet(ctx context.Context, keys []string) (map[string][]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -518,6 +523,7 @@ func (n *namespace) remoteBatchGet(ctx context.Context, batch *ownerBatch, out m
 }
 
 func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -549,6 +555,7 @@ func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time
 // database behind it, which is the stampede single-flighting exists to prevent,
 // reintroduced at cluster scale.
 func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

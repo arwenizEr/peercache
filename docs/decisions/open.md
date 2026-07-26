@@ -672,3 +672,76 @@ Not open questions. Listed so that nobody reopens them by accident:
 - Group sharding for hot keys. The limitation is documented instead.
 - Protobuf and CBOR codecs beyond the registry hook.
 - Snappy and Zstd beyond the compression interface.
+
+---
+
+## 34. A nil context panicked at every API boundary — M7, resolved
+
+Every context-taking method in the public API began by calling `ctx.Err()`.
+`context.Context` is an interface, so `Close(nil)` was a nil-pointer dereference
+inside the actor runtime — a panic crossing an API boundary, which CLAUDE.md
+forbids without carving out an exception for caller error.
+
+It was found by accident: a throwaway program written to count exported metric
+series used `defer c.Close(nil)` and died. Eighteen exported methods had the
+same hole. No test had ever passed a nil context, because nobody writes that on
+purpose — which is precisely why it survived seven milestones.
+
+**Resolved** by normalising nil to `context.Background()` at each of the
+eighteen, with the reasoning in `context.go` and `TestNilContextDoesNotPanic`
+covering all of them exhaustively rather than representatively.
+
+The judgement call worth recording is *Background* over *a returned error*. Go's
+own guidance is not to pass nil, so this is a caller bug either way. But a nil
+context carries no deadline, no cancellation and no values, which is exactly
+what Background is — and returning an error would have made `Close(nil)` a
+no-op that leaves goroutines running, converting a cosmetic mistake into a leak.
+The bug is still the caller's to find; it just does not take the process with
+it. Reversible if it ever hides something real.
+
+---
+
+## 35. The mutation audit silently skipped an entry for two milestones — M7, resolved
+
+`scripts/mutation-audit.sh` contained an orphaned argument list — a `mutate`
+entry whose `mutate` line had been lost in an edit, leaving its arguments as a
+top-level command. The script runs under `set -u` but not `set -e`, so bash
+reported "command not found" on a stderr the run discards and carried on. The
+entry sat in the file looking audited and never ran. It was M6's acceptance
+criterion.
+
+Reconstructing it made things worse before better: the criterion could not have
+caught either mutation anyway. `TestRollingUpgradeLosesNoRequests` runs at
+replication factor 2 with synchronous replication, so deleting `Drain`'s handoff
+entirely — and separately, reversing the step order that drain.go's comment
+calls "the whole design" — both left it passing. The replicas held every key.
+The test proved replication worked and said nothing about drain.
+
+**Resolved** by `TestDrainHandsOffKeysNothingElseWouldSave` and
+`TestDrainAnnouncesDepartureBeforeTransferring`, both at replication factor 1
+where the handoff is the only copy, and both confirmed to catch their mutations.
+
+The guard against a recurrence went through three attempts, which is the part
+worth recording:
+
+1. `command_not_found_handle` — bash runs it in a context where `exit` does not
+   stop the script. Verified not to work.
+2. The same handler signalling the parent with `kill -TERM $$` — the existing
+   cleanup trap absorbed it and execution continued. Also verified not to work.
+3. A static check that runs before anything is mutated, joining backslash
+   continuations into logical lines and requiring every line carrying a
+   `'TestSomething'` argument to begin with `mutate`.
+
+The third needed a real quote-aware scan rather than a regex, because most
+arguments here are multi-line Go snippets inside single quotes and a naive
+line-joiner flags fifty-nine false positives. A first version checked only the
+shape of the last line, which missed the case where the `mutate` line alone is
+deleted and the continuation chain starts at the filename — bash runs that just
+as silently. Both variants are now confirmed detected.
+
+**The lesson is the general one.** A verification tool that fails open is worse
+than no verification tool: it produces the paperwork of coverage without the
+coverage. This is the second time this script has done real damage — the first
+was a crashed run leaving a mutant in the tree that shipped for three commits
+(question 32) — and both failures were silence rather than error. Anything that
+exists to catch mistakes must be loud when it cannot.

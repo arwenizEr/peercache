@@ -19,6 +19,93 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 
+# Refuse to run if an entry has lost its `mutate` line.
+#
+# This file is a long list of `mutate` calls with backslash-continued argument
+# lists. A bad edit that drops the `mutate` leaves the arguments behind as a
+# command of their own: bash runs it, fails with "not found" on a stderr nobody
+# reads, and carries on. The entry then sits in this file looking audited while
+# never running. That happened to M6's acceptance criterion and was not noticed
+# until M7.
+#
+# Neither `set -e` nor a command_not_found_handle catches it. The failure is one
+# of a list of top-level commands whose exit statuses this script deliberately
+# ignores, and bash runs the not-found handler in a context where `exit` does
+# not stop the script — both were tried.
+#
+# So the check is static, structural, and runs before anything is mutated:
+# backslash continuations are joined into logical lines, and every logical line
+# carrying a 'TestSomething' argument must begin with `mutate`. Checking the
+# shape of the last line instead is not enough — deleting only the `mutate` line
+# leaves a continuation chain starting at the filename, which bash runs just as
+# silently and which a last-line check does not see.
+if ! python - "$0" <<'PY'
+import re, sys
+
+BACKSLASH = chr(92)
+
+
+def logical_lines(text):
+    """Split shell source into logical lines, respecting quotes and continuations.
+
+    Splitting on backslash-terminated lines alone is not enough: most arguments
+    here are multi-line Go snippets inside single quotes, and a newline in one
+    of those does not end the command.
+    """
+    out, buf, start, line = [], [], 1, 1
+    in_s = in_d = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            line += 1
+            if in_s or in_d:            # newline inside a quoted argument
+                buf.append(" ")
+                i += 1
+                continue
+            if buf and buf[-1] == BACKSLASH:   # line continuation
+                buf.pop()
+                buf.append(" ")
+                i += 1
+                continue
+            out.append((start, "".join(buf)))
+            buf, start = [], line
+            i += 1
+            continue
+        if ch == "#" and not in_s and not in_d and (not buf or buf[-1].isspace()):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if ch == "'" and not in_d:
+            in_s = not in_s
+        elif ch == '"' and not in_s:
+            in_d = not in_d
+        elif ch == BACKSLASH and in_d and i + 1 < n:
+            buf.append(ch)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        buf.append(ch)
+        i += 1
+    if buf:
+        out.append((start, "".join(buf)))
+    return out
+
+
+testarg = re.compile(r"'Test[A-Za-z0-9_|]*'")
+bad = [(n, t.strip()) for n, t in logical_lines(open(sys.argv[1], encoding="utf-8").read())
+       if testarg.search(t) and not t.strip().startswith("mutate ")]
+if bad:
+    for n, text in bad:
+        print("  line %d: %s" % (n, text[:100]), file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "refusing to run: an entry above is not attached to a 'mutate' command," >&2
+  echo "so it would be silently skipped. Restore its 'mutate' line." >&2
+  exit 1
+fi
+
 # Refuse to run on a dirty tree. Reverting is done with `git checkout --`, which
 # would silently discard uncommitted work in the files being mutated.
 if [ -n "$(git status --porcelain)" ]; then
@@ -796,7 +883,95 @@ mutate "unchanged keys are never counted" \
   '' \
   'TestNoChangeMeansNoMoves' ./internal/rebalance/
 
-  'TestRollingUpgradeLosesNoRequests' .
+# --- M6 lifecycle: the entry that was truncated -------------------------------
+#
+# What stood here was an orphaned argument list with no `mutate` in front of it,
+# left by a bad edit. Under `set -u` without `set -e` that line is a command
+# named TestRollingUpgradeLosesNoRequests, which fails with "not found" on
+# stderr the run discards, and the script carries on. So M6's acceptance
+# criterion sat in this file looking audited and was not.
+#
+# Reconstructing it found that the criterion could not have caught either
+# mutation anyway: it runs at replication factor 2 with synchronous replication,
+# so the replicas hold every key and deleting the handoff costs it nothing. The
+# two tests below were written for M7 to close that, at replication factor 1
+# where the handoff is the only copy.
+mutate "drain hands off nothing" \
+  drain.go \
+  '	// Step 3: push what this node owns to whoever owns it now.
+	if err := c.handOff(ctx); err != nil {
+		problems = errors.Join(problems, err)
+	}' \
+  '' \
+  'TestDrainHandsOffKeysNothingElseWouldSave' .
+
+mutate "drain transfers before announcing departure" \
+  drain.go \
+  '	var problems error
+	if err := c.opts.Membership.Leave(ctx); err != nil {
+		problems = errors.Join(problems, fmt.Errorf("peercache: announcing departure: %w", err))
+		c.opts.Logger.Warn("could not announce departure; peers will detect the failure instead",
+			"error", err)
+	}
+
+	// Step 3: push what this node owns to whoever owns it now.
+	if err := c.handOff(ctx); err != nil {
+		problems = errors.Join(problems, err)
+	}' \
+  '	var problems error
+	if err := c.handOff(ctx); err != nil {
+		problems = errors.Join(problems, err)
+	}
+
+	if err := c.opts.Membership.Leave(ctx); err != nil {
+		problems = errors.Join(problems, fmt.Errorf("peercache: announcing departure: %w", err))
+		c.opts.Logger.Warn("could not announce departure; peers will detect the failure instead",
+			"error", err)
+	}' \
+  'TestDrainAnnouncesDepartureBeforeTransferring' .
+
+# --- M7 observability ---------------------------------------------------------
+#
+# A metric that reports the wrong number is worse than no metric: it is an
+# alerting rule that does not fire and a dashboard that says the system is fine.
+
+mutate "quantile rounds down instead of up" \
+  internal/metrics/histogram.go \
+  'want := uint64(math.Ceil(q * float64(total)))' \
+  'want := uint64(math.Floor(q * float64(total)))' \
+  'TestQuantileRoundsUp' ./internal/metrics/
+
+mutate "snapshot buckets are exclusive, not cumulative" \
+  internal/metrics/histogram.go \
+  '		cumulative += h.buckets[i].Load()
+		buckets = append(buckets, Bucket{UpperBound: bound, Count: cumulative})' \
+  '		buckets = append(buckets, Bucket{UpperBound: bound, Count: h.buckets[i].Load()})' \
+  'TestBucketsAreCumulative' ./internal/metrics/
+
+mutate "the overflow bucket is dropped" \
+  internal/metrics/histogram.go \
+  '	h.buckets[len(bucketBounds)].Add(1)' \
+  '' \
+  'TestTheInfBucketMatchesTheCount' ./internal/metrics/
+
+mutate "histogram bounds emitted in nanoseconds, not seconds" \
+  internal/metrics/histogram.go \
+  "sb.WriteString(strconv.FormatFloat(float64(b.UpperBound)/1e9, 'g', -1, 64))" \
+  'sb.WriteString(strconv.FormatUint(b.UpperBound, 10))' \
+  'TestHistogramTextFormat' ./internal/metrics/
+
+mutate "a correctness counter is exported as a gauge" \
+  internal/metrics/metrics.go \
+  '{"peercache_split_brain_detections_total", Counter,' \
+  '{"peercache_split_brain_detections_total", Gauge,' \
+  'TestCorrectnessMetricsAreCounters' ./internal/metrics/
+
+mutate "a stats field is exported under the wrong name" \
+  internal/metrics/metrics.go \
+  '{"peercache_split_brain_detections_total", Counter,' \
+  '{"peercache_split_brains_total", Counter,' \
+  'TestEveryStatsFieldIsExported' ./internal/metrics/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 

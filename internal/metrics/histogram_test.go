@@ -16,6 +16,58 @@ import (
 // Over-reporting a p99 makes an operator investigate a latency that was
 // actually better. Under-reporting one lets a breach pass unnoticed, which is
 // the failure that matters.
+// TestTheInfBucketMatchesTheCount covers samples above the top bound.
+//
+// The audit found this uncovered: dropping the overflow bucket from Observe
+// left TestQuantilesBoundTheTruth passing, because that test never observes
+// anything above 10s and because Quantile returns the last bound whether it
+// reached it through the buckets or by falling off the end of them.
+//
+// Snapshot is where the difference shows. Prometheus requires the +Inf bucket
+// to equal the observation count, and a scraper that sees otherwise reports the
+// series as malformed — so a lost overflow bucket is not merely a missing
+// sample, it invalidates the whole histogram.
+func TestTheInfBucketMatchesTheCount(t *testing.T) {
+	var h metrics.Histogram
+
+	for i := 0; i < 50; i++ {
+		h.Observe(300)
+	}
+	// Above the last bound of 10s. Something has gone very wrong for a cache
+	// operation to take a minute, which is exactly when the metric has to
+	// still be readable.
+	for i := 0; i < 3; i++ {
+		h.Observe(60 * 1_000_000_000)
+	}
+
+	buckets, count, sum := h.Snapshot()
+	if count != 53 {
+		t.Fatalf("Count = %d, want 53", count)
+	}
+	if want := uint64(50*300 + 3*60*1_000_000_000); sum != want {
+		t.Errorf("Sum = %d, want %d", sum, want)
+	}
+
+	inf := buckets[len(buckets)-1]
+	if inf.UpperBound != math.MaxUint64 {
+		t.Fatalf("the last bucket is %d, not +Inf", inf.UpperBound)
+	}
+	if inf.Count != count {
+		t.Errorf("the +Inf bucket holds %d but %d samples were observed; the %d "+
+			"above the top bound were dropped, which makes the whole histogram "+
+			"malformed to a scraper, not merely incomplete",
+			inf.Count, count, count-inf.Count)
+	}
+
+	// And the last finite bucket must not have swallowed them, which is the
+	// other way to get the sum right and the distribution wrong.
+	last := buckets[len(buckets)-2]
+	if last.Count != 50 {
+		t.Errorf("the 10s bucket holds %d, want 50; a sample above the top bound "+
+			"must not be recorded as if it were under it", last.Count)
+	}
+}
+
 func TestQuantilesBoundTheTruth(t *testing.T) {
 	var h metrics.Histogram
 

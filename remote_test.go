@@ -223,9 +223,36 @@ func newFabricTuned(t *testing.T, n int, counting bool, mcfg testkit.MembershipC
 // test *about* the window has to switch it back on — and one that forgot would
 // find every node permanently settled, which is how the readiness settling test
 // first came to assert nothing at all.
+// fabricOption customises a fabric at construction. It is variadic so the
+// existing call sites, which want none of this, stay unchanged.
+type fabricOption func(*fabricHooks)
+
+// fabricHooks wrap the transport and membership handed to each node, so a test
+// can observe what a cache does to them. Drain's ordering guarantee is only
+// checkable this way: the assertion is about the *sequence* of two calls to two
+// different collaborators, which no amount of after-the-fact state inspection
+// can recover.
+type fabricHooks struct {
+	wrapTransport  func(id string, tr core.Transport) core.Transport
+	wrapMembership func(id string, m core.MembershipAuthority) core.MembershipAuthority
+}
+
+// withWrappers injects transport and membership wrappers. Either may be nil.
+func withWrappers(
+	tr func(id string, tr core.Transport) core.Transport,
+	m func(id string, m core.MembershipAuthority) core.MembershipAuthority,
+) fabricOption {
+	return func(h *fabricHooks) { h.wrapTransport, h.wrapMembership = tr, m }
+}
+
 func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipConfig,
-	activationDelay time.Duration) *fabric {
+	activationDelay time.Duration, opts ...fabricOption) *fabric {
 	t.Helper()
+
+	var hooks fabricHooks
+	for _, opt := range opts {
+		opt(&hooks)
+	}
 
 	seed := testkit.Seed(t)
 	clk := clock.NewFake(clock.Epoch)
@@ -267,10 +294,17 @@ func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipCo
 			f.counters[id] = ct
 			tr = ct
 		}
+		if hooks.wrapTransport != nil {
+			tr = hooks.wrapTransport(id, tr)
+		}
+		var ma core.MembershipAuthority = memberships[id]
+		if hooks.wrapMembership != nil {
+			ma = hooks.wrapMembership(id, ma)
+		}
 		c, err := peercache.New(
 			peercache.WithNodeID(id),
 			peercache.WithClock(clk),
-			peercache.WithMembership(memberships[id]),
+			peercache.WithMembership(ma),
 			peercache.WithTransport(tr),
 			peercache.WithActivationDelay(activationDelay),
 		)

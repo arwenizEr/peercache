@@ -97,6 +97,17 @@ type Cache interface {
     Namespace(name string, opts ...NamespaceOption) Namespace
     Group(id string) Group
     RegisterGroupFunc(name string, fn GroupFunc) error
+
+    CatchUp(ctx context.Context) error   // M5 — see "CatchUp — required after a restart"
+    Drain(ctx context.Context) error     // M6 — the PreStop hook
+    Ready() ReadyState                   // M6 — the readiness probe
+    WaitReady(ctx context.Context) error
+
+    Metrics() []Metric                   // M7 — see "Observability"
+    WriteMetrics(w io.Writer) error
+    MetricsHandler() http.Handler
+    RemoteLatency() (p50, p99, p999 uint64)
+
     Stats() Stats
     Close(ctx context.Context) error
 }
@@ -624,6 +635,83 @@ idle. Graceful handoff is M6. See `docs/decisions/0012-the-activation-guard.md`.
 `Stats().StaleEpochRefusals` count these decisions. A spike in deferrals after a change that returns to zero is healthy;
 sustained refusals under stable membership mean callers disagree with this node
 about who owns what.
+
+---
+
+## Observability
+
+```go
+Metrics() []Metric
+WriteMetrics(w io.Writer) error
+MetricsHandler() http.Handler
+RemoteLatency() (p50, p99, p999 uint64)
+```
+
+PeerCache imports no metrics client library. It exports values and lets the
+application choose the instrument — the reasoning, and what it costs, is in
+`docs/decisions/0017-metrics-without-a-client-library.md`.
+
+```go
+mux.Handle("/metrics", cache.MetricsHandler())
+```
+
+That is the whole integration. The handler writes the Prometheus text exposition
+format with the content type a scraper expects, and 33 series come out of it.
+`WriteMetrics` is the same output to any `io.Writer`; the two are tested to
+produce identical bytes.
+
+### The metrics that are worth alerting on
+
+Most of the 33 are ordinary levels and rates. These six are not — each counts a
+window this system is documented as having, and a non-zero value means the
+window was entered.
+
+| Series | Non-zero means |
+|---|---|
+| `peercache_split_brain_detections_total` | A replica saw writes for one key from two nodes under one membership epoch. Two nodes believed they owned it. This is the AP consequence in CLAUDE.md §5 actually happening. |
+| `peercache_stale_epoch_refusals_total` | A caller's view was older than this node's and the operation was refused. Sustained under stable membership means callers disagree about ownership. |
+| `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** It is a silent misconfiguration that looks exactly like a data-loss bug; it cost most of M6 to diagnose. |
+| `peercache_replications_failed_total` | A replica write did not land. Under async replication the caller was told the write succeeded. |
+| `peercache_replications_dropped_total` | A replica write was never attempted, because the queue was full. |
+| `peercache_catchup_failures_total` | A restarted node could not pull the keys it now ranks for and may be serving misses for data that exists. |
+
+All six are counters, so `rate()` and `increase()` work on them. That is
+deliberate and tested: `TestCorrectnessMetricsAreCounters` fails if one is
+reclassified as a gauge, because "did this happen in the last hour" is a rate
+question and a gauge cannot answer it.
+
+### Latency histograms are off by default
+
+```go
+peercache.New(..., peercache.WithLatencyHistograms())
+```
+
+Off unless asked for, and instrumenting only the remote path. An observation
+costs 15.8 ns uncontended and 36.9 ns under concurrency, allocation-free —
+about 7% of the 515 ns local read path, which would be a real tax for no
+information: the platform's monotonic clock resolves to roughly 500 µs, so
+timing a sub-microsecond operation records zero. Against a 1.7 ms remote round
+trip the same observation is immeasurable.
+
+`RemoteLatency` returns the three percentiles directly, in nanoseconds, for
+callers that want a number rather than a scrape:
+
+```go
+p50, p99, p999 := cache.RemoteLatency()
+```
+
+Every value is a bucket's **upper bound**, so it over-reports by at most one
+bucket width. Rounding up is deliberate and tested by `TestQuantileRoundsUp`: an
+under-reported percentile lets a breached latency budget pass unnoticed, which
+is the one error a latency metric must not make. Zero means nothing has been
+observed, which is distinguishable from a real measurement because no operation
+takes zero nanoseconds.
+
+### What is not exported
+
+No per-namespace or per-key labels. The aggregate is what operators alert on,
+and a cardinality explosion is a production incident in its own right. A
+namespace breakdown would need an explicit option and is not built.
 
 ---
 

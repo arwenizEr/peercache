@@ -25,6 +25,7 @@ examples:
 	$(GO) run ./examples/m4
 	$(GO) run ./examples/m5
 	$(GO) run ./examples/m6
+	$(GO) run ./examples/m7
 
 ## test runs the suite without the race detector, which is the fast feedback loop.
 test:

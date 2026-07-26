@@ -591,6 +591,7 @@ func (c *cache) sweepOnce() {
 }
 
 func (c *cache) Close(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
 	var closeErr error
 	c.closeOnce.Do(func() {
 		c.mu.Lock()

@@ -149,6 +149,7 @@ func (s ReadyState) String() string {
 // explicit, because a node deciding for itself when to pull an entire replica
 // set is the behaviour M5 rejected.
 func (c *cache) WaitReady(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
 	for {
 		if st := c.Ready(); st.Ready {
 			return nil

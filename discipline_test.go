@@ -66,6 +66,7 @@ var realTimeFiles = []string{
 	"examples/m4/main.go",
 	"examples/m5/main.go",
 	"examples/m6/main.go",
+	"examples/m7/main.go",
 }
 
 // exemptFromClockRule reports whether path may use the time package directly.

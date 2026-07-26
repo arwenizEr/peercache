@@ -41,6 +41,7 @@ import (
 // replica if one exists and misses if not. Synchronous replication closes that
 // window, which is one more reason it exists.
 func (c *cache) Drain(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

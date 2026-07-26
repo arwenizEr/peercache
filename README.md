@@ -106,10 +106,13 @@ the next begins.
 | M4 | Transport and remote routing | **complete** |
 | M5 | Replication and failure handling | **complete** |
 | M6 | Rebalancing and Kubernetes lifecycle | **complete** |
-| M7 | Observability and hardening | not started |
+| M7 | Observability and hardening | **complete** |
 
-Methods belonging to a milestone that has not run return `ErrNotImplemented`.
-That is a typed, testable declaration of scaffolding, not an accident.
+All seven are done. `ErrNotImplemented` no longer marks unbuilt scaffolding —
+nothing returns it for that reason any more. It remains reachable in two places
+that are not about milestones at all: an RPC method this binary does not
+recognise, which is what a rolling upgrade to a newer peer looks like, and a
+cache configured without a transport being asked to reach another node.
 
 ---
 
@@ -140,7 +143,7 @@ internal/
   transport/      gRPC client and server                      (M4)
   replication/    Replica fan-out, promotion, catch-up        (M5)
   rebalance/      Move planning and streaming transfer        (M6)
-  metrics/        Prometheus and OTel emitters                (M7)
+  metrics/        Metric collection, text format, histograms  (M7)
 
 proto/            gRPC service definitions                   (M4)
 examples/         One runnable example per milestone

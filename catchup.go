@@ -72,6 +72,7 @@ func newCatchUp(c *cache) *catchUp {
 // three of four owners is strictly better than catching up from none, and a
 // caller cannot do anything useful with one peer's failure except try again.
 func (c *cache) CatchUp(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

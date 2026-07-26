@@ -433,6 +433,104 @@ four things `deploy/README.md` says must be right.
 
 ---
 
+## M7 — the audit had been lying, and a panic nobody had looked for
+
+M7's own code was the least interesting thing M7 found. Three of the four
+findings below are in work that was already called complete.
+
+### The mutation audit had silently skipped an entry since M6
+
+`scripts/mutation-audit.sh` contained an orphaned argument list: a `mutate`
+entry whose `mutate` line had been lost in an edit, leaving the arguments as a
+top-level command of their own. The script runs under `set -u` but not `set -e`,
+so bash printed "command not found" to a stderr the run discards and carried on
+to the next entry. The audit reported its usual clean summary. The entry was
+M6's acceptance criterion.
+
+This is the second time this script has caused real damage, and both failures
+were silence rather than error — the first was a crashed run leaving a mutant in
+the tree that shipped for three commits. A verification tool that fails open
+produces the paperwork of coverage without the coverage.
+
+### And the entry would not have caught anything anyway
+
+Reconstructing the missing mutation was worse news than losing it. Two separate
+mutations to `Drain` both left `TestRollingUpgradeLosesNoRequests` passing:
+
+| Mutation | Result |
+|---|---|
+| Delete the handoff from `Drain` entirely | **VACUOUS** — test passed |
+| Transfer *before* announcing departure, reversing the order drain.go's comment calls "the whole design" | **VACUOUS** — test passed |
+
+The reason is the test's own configuration. It runs at replication factor 2 with
+synchronous replication, so every key already has a second copy and losing the
+transfer costs it nothing it measures. It is a good test of replication. It was
+never a test of `Drain`, and it had been standing in for one.
+
+Fixed by two tests at replication factor 1, where the handoff is the only copy:
+
+- `TestDrainHandsOffKeysNothingElseWouldSave` — 300 keys, no replicas, drain the
+  node that owns a third of them, then read every key from a survivor.
+- `TestDrainAnnouncesDepartureBeforeTransferring` — records the order of the two
+  calls `Drain` makes to two different collaborators. Replication factor 1 does
+  double duty here: it means the *only* `Replicate` calls the cluster ever makes
+  are the handoff's, so the recorder cannot confuse them with ordinary writes.
+
+Both were confirmed to fail against their mutations before being committed. The
+ordering assertion needed the fabric to grow transport and membership wrappers,
+because "which of these two happened first" is not recoverable from any state
+either collaborator holds afterwards.
+
+### A nil context panicked at all eighteen API boundaries
+
+Found by accident, by a throwaway program that wrote `defer c.Close(nil)` and
+died inside the actor runtime. Every context-taking method in the public API
+opens by calling `ctx.Err()`; `context.Context` is an interface, so a nil one
+makes that first call a nil-pointer dereference.
+
+Eighteen exported methods, seven milestones, no test had ever passed a nil
+context — because nobody writes that on purpose. CLAUDE.md forbids panics in
+library code paths and makes no exception for caller error, which is the right
+call for something embedded in someone else's process.
+
+Resolved by normalising nil to `context.Background()` at each of the eighteen.
+`TestNilContextDoesNotPanic` covers all of them exhaustively rather than
+representatively: a guard applied to seventeen of eighteen is not a guard.
+`TestNilContextBehavesLikeBackground` is the other half — it checks the
+normalisation is transparent rather than merely non-fatal, because a guard that
+swallowed the operation would also stop the panic and would be far worse.
+
+### A histogram test that proved less than it looked
+
+`TestQuantilesBoundTheTruth` never observes a sample above the top bucket bound,
+so deleting the overflow bucket from `Observe` left it passing. `Quantile`
+returns the last bound whether it reached it through the buckets or by falling
+off the end of them, which is why the gap was invisible.
+
+The difference shows in `Snapshot`. Prometheus requires the `+Inf` bucket to
+equal the observation count, and a scraper seeing otherwise rejects the series
+as malformed — so a lost overflow bucket does not merely omit a sample, it
+invalidates the whole histogram. `TestTheInfBucketMatchesTheCount` asserts that,
+and that the last finite bucket has not swallowed the overflow instead.
+
+### And the M7 example was reporting two numbers it had not earned
+
+`examples/m7` printed `peercache_replications_sent_total 573` next to the
+explanation "RF=2 over 200 keys wants 200". The counter is cumulative across
+every namespace, so it was including the healthy namespace's traffic in a figure
+presented as the broken one's shortfall. Measuring the delta gives 73 of 200,
+which matches M6's finding.
+
+It also printed `p50 100ns p99 100ns p99.9 100ns` as though that were a
+measurement. The example runs on a simulated clock that only moves when the code
+moves it, so every operation appears to take no time and lands in the first
+bucket. The example now says so and points at this document's benchmark figures
+for real ones.
+
+Neither was a library defect. Both would have been read as evidence.
+
+---
+
 ## Automated audit
 
 `scripts/mutation-audit.sh` applies each mutation below, runs only the test that
