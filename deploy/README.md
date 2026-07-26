@@ -1,0 +1,111 @@
+# Deploying PeerCache
+
+PeerCache is an embedded library, so there is nothing here to deploy on its own.
+These manifests describe how to run *your* application when it embeds PeerCache,
+and the parts that matter are the ones most easily got wrong: peer discovery,
+the readiness gate, and the PreStop hook.
+
+Two shapes are provided. Pick by whether your pods need stable identities.
+
+| | `deployment.yaml` | `statefulset.yaml` |
+|---|---|---|
+| Pod identity | Random, changes every restart | Stable: `app-0`, `app-1`, … |
+| Node ID | Pod name (random) | Pod name (stable) |
+| Ownership after a restart | The pod is a *new* node; its share is redistributed twice | The pod reclaims the same share |
+| Use when | The namespace is reconstructible from a loader | Losing and re-earning a share is expensive |
+
+**Prefer the StatefulSet if your keyspace is large.** A Deployment gives each
+restarted pod a new identity, which rendezvous hashing treats as a departure
+plus an unrelated arrival — two rebalances instead of none. With stable names a
+restarted pod hashes to the same place and reclaims exactly what it had.
+
+## The three things that must be right
+
+### 1. Peer discovery needs a headless service
+
+Both manifests include a headless service (`clusterIP: None`). It exists so DNS
+returns every pod's address rather than one load-balanced address, which is what
+gossip seeding requires: a node joining needs to reach a *specific* peer, not
+whichever one a service IP happens to pick.
+
+`SEEDS` is set to the headless service name. Resolve it at startup and pass the
+addresses to `Join`.
+
+### 2. Two ports, and they are not interchangeable
+
+- **7946** — gossip (SWIM). memberlist binds this itself.
+- **7947** — data (gRPC). The peer transport binds this.
+
+They are different sockets. A node advertises its *data* address through gossip
+metadata; assuming the two are the same makes every peer dial memberlist
+expecting gRPC, which fails with `error reading server preface: EOF`. This is
+not hypothetical — it is how M4's first real-network run failed.
+
+### 3. The readiness probe and PreStop hook are not optional
+
+```
+readinessProbe -> GET /readyz -> cache.Ready()
+preStop        -> POST /drain -> cache.Drain(ctx)
+```
+
+**Readiness** keeps traffic away from a pod that has joined the cluster but does
+not yet hold what it owns. A node becomes an owner the instant it joins, because
+every peer recomputes the ranking — but it holds nothing until `CatchUp` runs.
+In between it answers `ErrNotFound`, confidently, for data that exists
+elsewhere. Without the gate, a rolling upgrade serves misses for a fraction of
+the keyspace on every pod replacement.
+
+**PreStop** drains: mark unready, announce departure, hand off owned keys,
+deactivate groups. Without it a graceful shutdown becomes an ungraceful one —
+peers wait out the failure timeout instead of learning immediately, and at
+replication factor 1 the pod's entire share is lost.
+
+`terminationGracePeriodSeconds` must exceed the time a drain takes. It is set to
+60 here; measure yours. A grace period shorter than the drain turns a graceful
+shutdown into a kill halfway through a hand-off.
+
+## What these manifests deliberately do not include
+
+**Resource limits.** Memory is the interesting one and it depends entirely on
+your keyspace. PeerCache holds owned data, replicas, and a bounded non-owned
+cache; `Stats()` reports all three. Measure, then set limits with headroom for
+the replicas a node inherits when a peer fails — a pod sized for its steady
+state will be OOM-killed by its first failover.
+
+**A PodDisruptionBudget.** You want one. `maxUnavailable: 1` is right for
+replication factor 2, and 2 for factor 3, but the correct value depends on
+whether you can tolerate the loss window, so it is a decision rather than a
+default.
+
+**Autoscaling.** Every scale event is a rebalance. That is cheap here —
+rendezvous hashing moves only the affected share — but it is not free, and an
+HPA that flaps will rebalance continuously.
+
+## Wiring it up
+
+The HTTP endpoints the probes use are yours to write; `examples/m6` has a
+complete one. The shape is:
+
+```go
+mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+    st := cache.Ready()
+    if !st.Ready {
+        http.Error(w, st.String(), http.StatusServiceUnavailable)
+        return
+    }
+    fmt.Fprintln(w, st)
+})
+
+mux.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+    defer cancel()
+    if err := cache.Drain(ctx); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "drained")
+})
+```
+
+`ReadyState.String()` is written for exactly this: an operator reading a probe
+failure sees which condition is unmet, because the remedies differ.

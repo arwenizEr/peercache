@@ -1,0 +1,157 @@
+# A Deployment running an application that embeds PeerCache.
+#
+# Use this when pod identity does not need to survive a restart — typically when
+# every namespace is reconstructible from a loader, so a pod returning under a
+# new name costs a rebalance rather than data.
+#
+# The trade against deploy/statefulset.yaml is worth stating plainly. A
+# Deployment gives each restarted pod a random name, and the node ID is that
+# name. Rendezvous hashing therefore sees a departure and an unrelated arrival:
+# two rebalances where a StatefulSet would have none, because a stable name
+# hashes to the same place and reclaims the same share.
+#
+# See deploy/README.md for the three things that must be right.
+---
+# Peer discovery. Headless so DNS returns every pod address: gossip seeding
+# needs to reach a specific peer, not whichever one a service IP picks.
+#
+# publishNotReadyAddresses matters — a joining pod is not ready until it has
+# caught up, but it must be discoverable or it can never join the cluster that
+# would let it catch up. Without this the cluster deadlocks on its first pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-peers
+  labels:
+    app: app
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: app
+  ports:
+    - name: gossip
+      port: 7946
+      targetPort: gossip
+      protocol: TCP
+    - name: gossip-udp
+      port: 7946
+      targetPort: gossip
+      protocol: UDP
+    - name: data
+      port: 7947
+      targetPort: data
+---
+# The client-facing service. This one respects readiness, which is the point: a
+# pod that has joined but not caught up stays out of it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # One at a time, and never below the current count. Replacing two pods at
+      # once takes out more than replication factor 2 tolerates, and surging
+      # keeps capacity while the replacement catches up.
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      # Must exceed the time a drain takes. A grace period shorter than the
+      # drain turns a graceful shutdown into a kill halfway through a hand-off.
+      terminationGracePeriodSeconds: 60
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: app
+
+      containers:
+        - name: app
+          image: your-registry/your-app:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: gossip
+              containerPort: 7946
+            - name: data
+              containerPort: 7947
+
+          env:
+            # The node ID. Random here, and it changes on every restart — which
+            # is the cost of a Deployment over a StatefulSet.
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SEEDS
+              value: app-peers
+            - name: GOSSIP_ADDR
+              value: $(POD_IP):7946
+            # The data address, a *different* socket from gossip, advertised
+            # through gossip metadata.
+            - name: DATA_ADDR
+              value: $(POD_IP):7947
+
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 3
+            initialDelaySeconds: 5
+
+          # Not the same probe as readiness. A pod that is up but not caught up
+          # is unready, not dead; restarting it would discard the catch-up
+          # progress that is its only route to readiness.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+
+          lifecycle:
+            preStop:
+              httpGet:
+                path: /drain
+                port: http
+
+          # Size for the steady state plus the replicas inherited when a peer
+          # fails. See deploy/README.md.
+          #
+          # resources:
+          #   requests: {memory: 2Gi, cpu: 500m}
+          #   limits:   {memory: 4Gi}

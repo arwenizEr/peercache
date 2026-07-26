@@ -1,0 +1,185 @@
+# A StatefulSet running an application that embeds PeerCache.
+#
+# Prefer this over the Deployment when the keyspace is large enough that
+# reclaiming the same share after a restart matters. Stable pod names mean a
+# restarted pod hashes to the same place in the rendezvous ranking and takes
+# back exactly what it had; with random names it is a departure plus an
+# unrelated arrival, which is two rebalances instead of none.
+#
+# See deploy/README.md for the three things that must be right.
+---
+# The headless service is how peers find each other.
+#
+# clusterIP: None makes DNS return every pod address rather than one
+# load-balanced address. Gossip seeding needs to reach a *specific* peer; a
+# service IP that picks one for you is exactly wrong here.
+#
+# publishNotReadyAddresses is deliberate and important: a joining pod is not yet
+# ready — it has not caught up — but it must still be discoverable, or it can
+# never join the cluster that would let it become ready. Without this the
+# cluster deadlocks on its first pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-peers
+  labels:
+    app: app
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: app
+  ports:
+    - name: gossip
+      port: 7946
+      targetPort: gossip
+      protocol: TCP
+    - name: gossip-udp
+      port: 7946
+      targetPort: gossip
+      protocol: UDP
+    - name: data
+      port: 7947
+      targetPort: data
+---
+# The service clients use. This one *does* respect readiness, which is the whole
+# point: a pod that has joined but not caught up stays out of it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: app
+spec:
+  serviceName: app-peers
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app
+  # Rolling updates one pod at a time. Parallel replacement would take out more
+  # than the replication factor tolerates.
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      # Must exceed the time a drain takes: mark unready, announce departure,
+      # hand off owned keys, deactivate groups. A grace period shorter than the
+      # drain turns a graceful shutdown into a kill halfway through a hand-off.
+      # Sixty seconds suits a modest keyspace; measure yours.
+      terminationGracePeriodSeconds: 60
+
+      # Spread pods across nodes. Two replicas of a key on one physical machine
+      # is a replication factor of one wearing a disguise.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: app
+
+      containers:
+        - name: app
+          image: your-registry/your-app:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: gossip
+              containerPort: 7946
+            - name: data
+              containerPort: 7947
+
+          env:
+            # The node ID. Stable across restarts because this is a
+            # StatefulSet, which is the reason to use one.
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Seed addresses. Resolve this name at startup — DNS returns every
+            # pod — and pass the results to Join.
+            - name: SEEDS
+              value: app-peers
+            - name: GOSSIP_ADDR
+              value: $(POD_IP):7946
+            # The *data* address, advertised through gossip metadata. It is a
+            # different socket from the gossip address; conflating them makes
+            # every peer dial memberlist expecting gRPC.
+            - name: DATA_ADDR
+              value: $(POD_IP):7947
+
+          # Ready when joined, settled, and caught up. Until then this pod owns
+          # part of the keyspace it cannot serve, and would answer ErrNotFound
+          # for data that exists elsewhere.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 3
+            # Generous: a pod may legitimately spend a while catching up on a
+            # large keyspace, and failing it into a restart loop would make
+            # that permanent.
+            initialDelaySeconds: 5
+
+          # Liveness is deliberately *not* the same probe. A pod that is up but
+          # not caught up is unready, not dead, and restarting it would throw
+          # away the catch-up progress that is the only route to readiness.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+
+          lifecycle:
+            preStop:
+              httpGet:
+                path: /drain
+                port: http
+
+          # Not set here because the right values depend entirely on your
+          # keyspace. Size for the steady state *plus* the replicas this node
+          # inherits when a peer fails — a pod sized for its own share alone is
+          # OOM-killed by its first failover.
+          #
+          # resources:
+          #   requests: {memory: 2Gi, cpu: 500m}
+          #   limits:   {memory: 4Gi}
+---
+# Recommended, not included by default: how much of the cluster may be
+# unavailable at once. At replication factor 2 that is one pod; at 3 it is two.
+# It is a decision about your tolerance for the loss window rather than a
+# default, which is why it is commented out.
+#
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# metadata:
+#   name: app
+# spec:
+#   maxUnavailable: 1
+#   selector:
+#     matchLabels:
+#       app: app
