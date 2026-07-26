@@ -420,6 +420,60 @@ machine offering the load as of the cache, and failing a correctness suite
 because a laptop was busy would make the number a nuisance rather than a signal.
 The latency budgets are asserted; the rate is recorded here.
 
+### internal/wire — message codec
+
+Paid twice per remote operation: once to encode the request, once to decode the
+response.
+
+| Benchmark | ns/op | B/op | allocs/op | Notes |
+|---|---:|---:|---:|---|
+| `EncodeGetRequest` | 206 | 224 | 4 | |
+| `DecodeGetRequest` | 327 | 336 | 6 | |
+| `EncodeGetResponse/64B` | 382 | 608 | 6 | 167 MB/s |
+| `EncodeGetResponse/1KiB` | 422 | 1376 | 5 | 2.4 GB/s |
+| `EncodeGetResponse/16KiB` | 2038 | 18656 | 5 | 8.0 GB/s |
+| `DecodeBatchGetResponse/10` | 6039 | 3725 | 39 | |
+| `DecodeBatchGetResponse/100` | 57,840 | 32,856 | 312 | |
+| `DecodeBatchGetResponse/1000` | 673,067 | 282,241 | 3015 | |
+| `EncodeSubmitRequest` | 106,715 | 262,246 | 15 | 100 groups x 20 messages |
+| `StampNewerThan` | 0.35 | 0 | 0 | |
+
+The envelope costs a few hundred nanoseconds and stops mattering above about a
+kilobyte, which is the right shape: a remote read should be dominated by the
+network and the payload, not by the framing.
+
+`DecodeBatchGetResponse` is ~670 ns per entry and allocates three times per
+entry. That is the price of the bounded decoder, which appends as elements
+arrive rather than sizing the slice from a declared length — a trusted length
+would save the reallocations and reintroduce the remote out-of-memory that
+`FuzzDecode` found in two seconds. The trade is deliberate and cheap at any
+realistic batch size.
+
+### internal/transport — gRPC round trip
+
+An echo handler, no store and no ownership: the floor under every remote
+operation, and the number to subtract when reading the end-to-end figures above.
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `Invoke/0B` | 175,511 | 10,254 | 156 |
+| `Invoke/64B` | 253,254 | 11,060 | 169 |
+| `Invoke/1KiB` | 213,687 | 16,077 | 163 |
+| `Invoke/16KiB` | 298,451 | 65,016 | 178 |
+| `InvokeParallel` | 28,476 | 12,665 | 153 |
+| `DialPooled` | 33.2 | 0 | 0 |
+
+**A serial round trip costs ~175-300 µs and a concurrent one ~28 µs.** The gap
+is the point: a single caller spends nearly all of that blocked on syscalls, and
+loopback gRPC on Windows is syscall-heavy. Under concurrency the same connection
+multiplexes and per-operation cost drops by six times, which is why the
+end-to-end acceptance run reaches 56k rps with a p50 of 1.2 ms — 64 workers each
+seeing roughly 64x the uncontended service time in queueing.
+
+**`DialPooled` is 33 ns and allocation-free**, which matters because the data
+path dials per request rather than holding a client. If the pool lookup were not
+essentially free, every remote operation would pay for it.
+
 ### Router batching
 
 SPEC.md §4 also asks that "a router submitting 10k messages across 3 owners

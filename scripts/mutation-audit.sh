@@ -99,10 +99,15 @@ mutate "TTL deadline overflow reintroduced" \
   'expiresAt = s.clk.Now().Add(ttl).UnixNano()' \
   'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
 
+# These two moved in M4, when the L1 tier began comparing (epoch, version)
+# stamps rather than bare versions. The audit reported them as SKIP rather
+# than passing them silently, which is the whole reason SKIP is a failure: a
+# mutation whose pattern no longer matches verifies nothing, and a refactor
+# would otherwise retire coverage while the total kept looking healthy.
 mutate "L1 accepts an older version" \
   internal/l1/l1.go \
-  'if live && version <= existing.version {' \
-  'if false && live && version <= existing.version {' \
+  'if live && !stamp.NewerThan(existing.stamp) {' \
+  'if false {' \
   'TestOlderVersionIsRejected' ./internal/l1/
 
 mutate "L1 stops clamping TTL to MaxTTL" \
@@ -161,12 +166,8 @@ mutate "store version stops incrementing" \
 
 mutate "L1 invalidation ignores the resident version" \
   internal/l1/l1.go \
-  'if !ok || e.version >= version {
-		return false
-	}' \
-  'if !ok {
-		return false
-	}' \
+  'if !ok || !stamp.NewerThan(e.stamp) {' \
+  'if !ok {' \
   'TestInvalidateOlderThanKeepsNewerCopies' ./internal/l1/
 
 mutate "loader panic is no longer contained" \

@@ -271,7 +271,7 @@ it reverts with `git checkout --`, which would otherwise discard uncommitted
 work — and fails if any mutation is left behind or any test turns out to be
 vacuous.
 
-Latest run, all forty-two invariants:
+Latest run, all fifty-nine invariants:
 
 ```
 === store ===
@@ -337,7 +337,28 @@ caught   the gossip event goroutine is never released -- TestCloseLeavesNoGorout
 caught   the guard is built but never consulted     -- TestTwoNodesAgreeOnOwnership
 caught   the guard never learns the membership      -- TestJoiningNodeDefersNewlyAcquiredGroups
 
-caught: 42   vacuous: 0   skipped: 0
+=== wire and transport ===
+caught   a length prefix buys an allocation          -- TestALengthPrefixCannotBuyAnAllocation
+caught   the L1 tier compares versions, not stamps   -- TestANewOwnerSupersedesAHigherVersion
+caught   invalidation compares versions, not stamps  -- TestInvalidationRespectsTheEpoch
+caught   the epoch does not dominate the version     -- TestStampOrdering
+caught   the transport codec drops the body          -- TestRoundTripOverLoopback
+caught   a caller does not identify itself           -- TestRoundTripOverLoopback
+caught   sentinel errors do not survive the hop      -- TestSentinelErrorsSurviveTheHop
+caught   Unavailable is read as a deferred activation -- TestUnavailableDefaultsToUnreachable
+caught   connections are not pooled                  -- TestDialPoolsConnections
+caught   the server does not verify client certs     -- TestMutualTLSRejectsAnImpostorCA
+caught   the client does not verify the server       -- TestMutualTLSRejectsAnUntrustedServer
+caught   the TLS floor drops to 1.0                  -- TestTLSFloorIsEnforced
+caught   gossip advertises the SWIM port             -- TestGossipAdvertisesTheRPCAddress
+
+=== routing ===
+caught   the router batches per group, not per owner -- TestRouterIssuesOneRequestPerOwner
+caught   a batch is applied one message at a time    -- TestRouterSubmit
+caught   every node runs its own loader              -- TestTheLoaderRunsOnlyOnTheOwner
+caught   enqueueing an invalidation blocks when full -- TestInvalidationBacklogIsDroppedNotQueued
+
+caught: 59   vacuous: 0   skipped: 0
 tree clean
 ```
 
@@ -358,6 +379,18 @@ because from its point of view nothing is wrong.
 They are the reason `cluster_test.go` exists. Before it, thirteen ownership
 invariants were verified inside a package the library could have stopped calling
 without a single test failing.
+
+Two entries had to be *repaired* in M4 rather than added, and the repair is
+worth recording. Changing the L1 tier to compare `(epoch, version)` moved the
+lines two M1 mutations targeted, and the audit reported them as `SKIP` rather
+than silently passing.
+
+That is the behaviour the script was built for. A mutation whose pattern no
+longer matches is verifying nothing, so `SKIP` is counted as a failure and exits
+non-zero — otherwise a refactor would quietly retire coverage and the total
+would keep looking healthy. Both were rewritten against the new code, keeping
+their original intent (an older value must not displace a newer resident one),
+and both were re-verified individually before being trusted.
 
 It is deliberately **not** run by CI. It rewrites source files, and a mutation
 left behind by a crashed run would cost far more than the coverage it buys. Run
