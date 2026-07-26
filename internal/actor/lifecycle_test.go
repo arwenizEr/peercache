@@ -16,14 +16,37 @@ import (
 
 // waitFor spins until cond holds, bounded so a regression fails with a message
 // rather than hanging for the test timeout. No sleeping.
+// waitFor spins until cond holds, yielding between checks.
+//
+// The condition is checked once per batch of yields rather than once per yield,
+// and that is the whole point rather than a micro-optimisation. Every predicate
+// here reads Stats(), which takes the runtime's lock — the same lock the
+// deactivation path needs. Checking on every iteration turns the wait into a
+// lock-contention generator that starves the goroutine it is waiting for.
+//
+// In isolation it passed sixty consecutive runs either way. Under a full
+// `go test ./...`, with fourteen other packages competing for cores, it timed
+// out: the waiter had plenty of CPU to spin and the worker had little, and the
+// waiter was spending its share taking the lock.
+//
+// The budget is expressed in checks rather than yields so it stays meaningful
+// if the batch size changes. Batching costs nothing measurable: the package
+// takes the same time at one yield per check as at eight, because the waits
+// that matter are dominated by the work being waited on rather than by the
+// polling.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	const yields = 5_000_000
+	const (
+		checks         = 200_000
+		yieldsPerCheck = 8
+	)
 	for i := 0; !cond(); i++ {
-		if i > yields {
+		if i > checks {
 			t.Fatalf("timed out waiting for %s", what)
 		}
-		runtime.Gosched()
+		for j := 0; j < yieldsPerCheck; j++ {
+			runtime.Gosched()
+		}
 	}
 }
 
