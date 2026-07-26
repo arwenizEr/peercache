@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/replication"
 	"github.com/peercache/peercache/internal/transport"
 	"github.com/peercache/peercache/internal/wire"
 )
@@ -51,6 +52,8 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 		return h.call(ctx, req)
 	case transport.MethodSubmit:
 		return h.submit(ctx, req)
+	case transport.MethodReplicate:
+		return h.replicate(ctx, req)
 	case transport.MethodInvalidate:
 		return h.invalidate(ctx, from, req)
 	default:
@@ -315,6 +318,43 @@ func (h *peerHandler) submit(ctx context.Context, req []byte) ([]byte, error) {
 		}
 	}
 	return wire.Encode(&out)
+}
+
+// replicate accepts a copy of a key this node does not own.
+//
+// There is deliberately no ownership check. A replica is by definition not the
+// owner, so asserting ownership here would reject every legitimate copy. What
+// protects against a confused sender is the stamp: an older copy is refused,
+// and a copy from a second writer in the same epoch is reported as the split
+// brain it is.
+func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error) {
+	var in wire.ReplicateRequest
+	if err := wire.Decode(req, &in); err != nil {
+		return nil, err
+	}
+
+	if in.Deleted {
+		// A tombstone. Removing outright rather than storing a marker
+		// is safe because the stamp check above it has already refused
+		// anything older, and a replica that is promoted rebuilds from
+		// what it holds — an absent key and a key marked absent are the
+		// same answer.
+		h.cache.replicas.Delete(in.Namespace, in.Key)
+		return wire.Encode(&wire.ReplicateResponse{})
+	}
+
+	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
+		Value:    in.Value,
+		Stamp:    in.Stamp,
+		TTLNanos: in.TTLNanos,
+		From:     in.From,
+	})
+	if conflict {
+		h.cache.splitBrain.Add(1)
+		h.cache.opts.Logger.Warn("conflicting replicated write",
+			"namespace", in.Namespace, "key", in.Key, "from", in.From)
+	}
+	return wire.Encode(&wire.ReplicateResponse{Conflict: conflict})
 }
 
 func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte) ([]byte, error) {

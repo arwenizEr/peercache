@@ -61,6 +61,11 @@ service Peer {
   // spread over three owners cost three requests, not ten thousand.
   rpc Submit(SubmitRequest) returns (SubmitResponse);
 
+  // Replicate sends a copy of an owned key to a node that ranks as one of its
+  // replicas. Asynchronous by default and synchronous per namespace; the
+  // difference is whether the owner waits for the response, not what is sent.
+  rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+
   // Invalidate tells a peer that a key it may be caching is stale. It is a
   // latency optimisation and nothing more — correctness never depends on
   // one of these arriving. See CLAUDE.md non-negotiable 6.
@@ -187,6 +192,29 @@ message SubmitResponse {
 message GroupFailure {
   string group = 1;
   string error = 2;
+}
+
+message ReplicateRequest {
+  string namespace = 1;
+  string key = 2;
+  bytes value = 3;
+  int64 ttl_ns = 4;
+  // stamp is the owner's (epoch, version). The replica keeps it so that, if it
+  // is promoted, it continues the version sequence rather than restarting it.
+  Stamp stamp = 5;
+  // from is the sending node's ID. Two different senders writing one key under
+  // one epoch is a split brain, and the replica is the only party that can see
+  // both. See SPEC.md section 4 (M5).
+  string from = 6;
+  // deleted marks a removal rather than a write. A deletion has to replicate:
+  // a replica that missed it would resurrect the key on promotion.
+  bool deleted = 7;
+}
+
+message ReplicateResponse {
+  // conflict reports that this copy collided with one from a different node in
+  // the same epoch. It is counted, never merged.
+  bool conflict = 1;
 }
 
 message InvalidateRequest {

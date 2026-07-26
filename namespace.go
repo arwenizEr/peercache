@@ -260,11 +260,53 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 	return n.localSet(ctx, key, val, ttl)
 }
 
-// localSet writes to this node's owned store and tells the cluster.
+// localSet writes to this node's owned store, replicates it and tells the
+// cluster.
+//
+// The order is deliberate. The value is stored first, so a replica that answers
+// instantly cannot report a version this node does not yet hold. Replication
+// comes next, because it is the part a synchronous caller is waiting for. The
+// invalidation hint goes last and is never waited on.
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	version := n.store.Set(key, n.encode(val), ttl)
-	n.cache.invalidator.enqueue(n.name, []string{key}, n.stamp(version))
+	stamp := n.stamp(version)
+
+	if err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false); err != nil {
+		// Only synchronous replication can fail here: asynchronous
+		// fan-out is queued and returns nil. A synchronous caller asked
+		// to know, so it is told — and the value is already stored
+		// locally, which is why this reports rather than rolls back.
+		// There is no rollback in this system and inventing one for a
+		// single key would be a transaction by another name.
+		return err
+	}
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	return nil
+}
+
+// fanOut sends a write or a deletion to this key's replicas.
+func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, deleted bool) error {
+	// The replication factor is checked once, inside replicaTargets, which
+	// is the only place that can act on it. Checking here as well would be
+	// two conditions that must agree forever, and a mutation audit showed
+	// exactly what that buys: removing either one changes nothing, so
+	// neither is tested.
+	targets, _, err := n.cache.replicaTargets(n.groupKeyFor(key), n.opts.ReplicationFactor)
+	if err != nil || len(targets) == 0 {
+		// No resolvable replicas is not a write failure. It means this
+		// node is alone, or membership is not settled, and refusing the
+		// write would make a single-node cluster unable to accept one.
+		return nil
+	}
+	return n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{
+		namespace: n.name,
+		key:       key,
+		value:     encoded,
+		ttl:       ttl,
+		stamp:     stamp,
+		deleted:   deleted,
+		targets:   targets,
+	})
 }
 
 // stamp pairs a store version with this node's epoch. See [core.Stamp] for why
@@ -304,7 +346,14 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 	// node's epoch with a version above anything the deleted entry could
 	// have held, so a peer holding an older copy drops it; a peer that has
 	// somehow already seen a newer write keeps that instead.
-	n.cache.invalidator.enqueue(n.name, []string{key}, n.stamp(math.MaxUint64))
+	tombstone := n.stamp(math.MaxUint64)
+	// Deletions replicate too. A replica that missed one would resurrect
+	// the key the moment it was promoted, which is worse than never having
+	// replicated it at all.
+	if err := n.fanOut(ctx, key, nil, 0, tombstone, true); err != nil {
+		return err
+	}
+	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	if n.l1 != nil {
 		n.l1.Invalidate(key)
 	}

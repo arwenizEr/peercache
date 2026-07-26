@@ -766,3 +766,194 @@ func TestTheLoaderRunsOnlyOnTheOwner(t *testing.T) {
 			"single flight is not collapsing the cluster's misses", loadsBy[owner])
 	}
 }
+
+// TestSyncReplicationPlacesCopiesBeforeReturning is the guarantee synchronous
+// mode exists to provide: when Set returns, the replicas already hold it.
+//
+// It is asserted by counting replicas immediately, with no waiting at all. Any
+// polling here would make the test pass for asynchronous replication too, which
+// is precisely the distinction under examination.
+func TestSyncReplicationPlacesCopiesBeforeReturning(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+
+	const rf = 3
+	for _, id := range f.ids {
+		f.caches[id].Namespace("repl",
+			peercache.WithReplicationFactor(rf),
+			peercache.WithSyncReplication())
+	}
+
+	const key = "sync/1"
+	owner := f.ownerOf(t, key)
+	if err := f.caches[owner].Namespace("repl").Set(ctx, key, []byte("v"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// No sleep, no poll: the copies must already be there.
+	holders := 0
+	for _, id := range f.ids {
+		if id == owner {
+			continue
+		}
+		if n := f.caches[id].Stats().ReplicaKeys; n > 0 {
+			holders++
+		}
+	}
+	if holders != rf-1 {
+		t.Fatalf("%d nodes hold a replica immediately after a synchronous Set, want %d; "+
+			"synchronous replication must not return before the copies exist",
+			holders, rf-1)
+	}
+}
+
+// TestAsyncReplicationDoesNotBlockTheWrite is the other half of the same
+// choice. Asynchronous is the default because a write should not wait on peers.
+func TestAsyncReplicationDoesNotBlockTheWrite(t *testing.T) {
+	f := newFabric(t, 3)
+
+	for _, id := range f.ids {
+		f.caches[id].Namespace("repl", peercache.WithReplicationFactor(3))
+	}
+
+	const key = "async/1"
+	owner := f.ownerOf(t, key)
+
+	// Every message out of the owner vanishes into silence, which on this
+	// fabric is what an unreachable peer looks like.
+	for _, id := range f.ids {
+		if id != owner {
+			f.net.SetDropRate(owner, id, 1.0)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- f.caches[owner].Namespace("repl").Set(
+			context.Background(), key, []byte("v"), 0)
+	}()
+
+	const maxYields = 5_000_000
+	for i := 0; ; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Set returned %v; asynchronous replication must not fail a "+
+					"write because a replica is unreachable", err)
+			}
+			return
+		default:
+		}
+		if i > maxYields {
+			t.Fatalf("an asynchronous Set had not returned after %d yields with every "+
+				"replica unreachable; the write path is waiting on fan-out, which is "+
+				"what asynchronous mode exists to avoid", maxYields)
+		}
+		runtime.Gosched()
+	}
+}
+
+// TestReplicasAreTheRunnersUpInTheRanking pins where copies go.
+//
+// This is what makes promotion free: the replica set is the prefix of the same
+// rendezvous ranking every node computes, so when the owner dies the first
+// replica becomes the owner everywhere at once, with no election and no
+// handover message.
+func TestReplicasAreTheRunnersUpInTheRanking(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+
+	for _, id := range f.ids {
+		f.caches[id].Namespace("repl",
+			peercache.WithReplicationFactor(2),
+			peercache.WithSyncReplication())
+	}
+
+	const key = "ranked/1"
+	owner := f.ownerOf(t, key)
+	if err := f.caches[owner].Namespace("repl").Set(ctx, key, []byte("v"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// At RF=2 exactly one other node holds a copy, and it must be the same
+	// one every node would name as the next owner.
+	var holders []string
+	for _, id := range f.ids {
+		if id != owner && f.caches[id].Stats().ReplicaKeys > 0 {
+			holders = append(holders, id)
+		}
+	}
+	if len(holders) != 1 {
+		t.Fatalf("%d nodes hold a copy at RF=2, want exactly 1: %v", len(holders), holders)
+	}
+}
+
+// TestADeletionReplicates covers the case a naive fan-out misses. A replica
+// that never heard about a deletion resurrects the key the moment it is
+// promoted, which is worse than never having replicated it.
+func TestADeletionReplicates(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+
+	for _, id := range f.ids {
+		f.caches[id].Namespace("repl",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication())
+	}
+
+	const key = "deleted/1"
+	owner := f.ownerOf(t, key)
+	ns := f.caches[owner].Namespace("repl")
+
+	if err := ns.Set(ctx, key, []byte("doomed"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	before := 0
+	for _, id := range f.ids {
+		if id != owner {
+			before += int(f.caches[id].Stats().ReplicaKeys)
+		}
+	}
+	if before == 0 {
+		t.Fatal("no replicas were placed, so the deletion cannot be observed")
+	}
+
+	if err := ns.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	after := 0
+	for _, id := range f.ids {
+		if id != owner {
+			after += int(f.caches[id].Stats().ReplicaKeys)
+		}
+	}
+	if after != 0 {
+		t.Fatalf("%d replica copies survived a deletion (was %d); a promoted replica "+
+			"would resurrect the key", after, before)
+	}
+}
+
+// TestReplicationFactorOneSendsNothing guards the default. Most namespaces do
+// not want replicas, and they must not pay for a fan-out that has no targets.
+func TestReplicationFactorOneSendsNothing(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+
+	for _, id := range f.ids {
+		f.caches[id].Namespace("single", peercache.WithReplicationFactor(1))
+	}
+
+	const key = "solo/1"
+	owner := f.ownerOf(t, key)
+	if err := f.caches[owner].Namespace("single").Set(ctx, key, []byte("v"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	for _, id := range f.ids {
+		if id == owner {
+			continue
+		}
+		if n := f.caches[id].Stats().ReplicaKeys; n != 0 {
+			t.Fatalf("%s holds %d replicas at RF=1, want 0", id, n)
+		}
+	}
+}

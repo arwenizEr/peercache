@@ -176,6 +176,30 @@ type GroupFailure struct {
 	Error string `msgpack:"error"`
 }
 
+// ReplicateRequest carries one owned key to one of its replicas.
+type ReplicateRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	Value     []byte `msgpack:"value"`
+	TTLNanos  int64  `msgpack:"ttl_ns"`
+	// Stamp is the owner's (epoch, version). The replica keeps it so that a
+	// promotion continues the version sequence rather than restarting it,
+	// which would make every cached copy in the cluster look newer than the
+	// truth.
+	Stamp Stamp `msgpack:"stamp"`
+	// From is the sending node. Two senders writing one key under one epoch
+	// is a split brain, and the replica is the only party that sees both.
+	From string `msgpack:"from"`
+	// Deleted marks a removal. Deletions must replicate: a replica that
+	// missed one would resurrect the key the moment it was promoted.
+	Deleted bool `msgpack:"deleted"`
+}
+
+// ReplicateResponse reports whether the copy collided with another writer's.
+type ReplicateResponse struct {
+	Conflict bool `msgpack:"conflict"`
+}
+
 // InvalidateRequest tells a peer that keys it may be caching have changed.
 //
 // It is a latency optimisation and nothing else. CLAUDE.md non-negotiable 6

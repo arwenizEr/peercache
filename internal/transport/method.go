@@ -23,6 +23,7 @@ const (
 	MethodBatchGet   = "/peercache.v1.Peer/BatchGet"
 	MethodCall       = "/peercache.v1.Peer/Call"
 	MethodSubmit     = "/peercache.v1.Peer/Submit"
+	MethodReplicate  = "/peercache.v1.Peer/Replicate"
 	MethodInvalidate = "/peercache.v1.Peer/Invalidate"
 )
 
@@ -36,5 +37,6 @@ var Methods = []string{
 	MethodBatchGet,
 	MethodCall,
 	MethodSubmit,
+	MethodReplicate,
 	MethodInvalidate,
 }

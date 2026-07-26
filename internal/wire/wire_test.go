@@ -73,6 +73,16 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 		}}, func() any { return new(wire.SubmitResponse) }},
 		{"GroupBatch", &wire.GroupBatch{Group: "g", Messages: [][]byte{{9}}},
 			func() any { return new(wire.GroupBatch) }},
+		{"ReplicateRequest", &wire.ReplicateRequest{
+			Namespace: "n", Key: "k", Value: []byte{1, 2}, TTLNanos: 500,
+			Stamp: wire.Stamp{Epoch: 3, Version: 8}, From: "node-a",
+		}, func() any { return new(wire.ReplicateRequest) }},
+		{"ReplicateRequest deletion", &wire.ReplicateRequest{
+			Namespace: "n", Key: "k", Deleted: true,
+			Stamp: wire.Stamp{Epoch: 3, Version: 9}, From: "node-a",
+		}, func() any { return new(wire.ReplicateRequest) }},
+		{"ReplicateResponse", &wire.ReplicateResponse{Conflict: true},
+			func() any { return new(wire.ReplicateResponse) }},
 		{"LoadRequest", &wire.LoadRequest{Namespace: "n", Key: "k", Epoch: 2},
 			func() any { return new(wire.LoadRequest) }},
 		{"LoadResponse", &wire.LoadResponse{
@@ -234,7 +244,7 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 
 	implemented := []string{
 		"Stamp", "GetRequest", "GetResponse", "SetRequest", "SetResponse",
-		"LoadRequest", "LoadResponse",
+		"LoadRequest", "LoadResponse", "ReplicateRequest", "ReplicateResponse",
 		"DeleteRequest", "DeleteResponse", "BatchGetRequest", "BatchGetResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
 		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
@@ -270,7 +280,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.BatchGetRequest{}, &wire.BatchGetResponse{}, &wire.BatchEntry{},
 		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},
 		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
-		&wire.LoadRequest{}, &wire.LoadResponse{},
+		&wire.LoadRequest{}, &wire.LoadResponse{}, &wire.ReplicateRequest{},
 	}
 	for _, msg := range types {
 		typ := reflect.TypeOf(msg).Elem()

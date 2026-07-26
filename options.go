@@ -150,6 +150,24 @@ func WithPartitioner(p Partitioner) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.Partitioner = p }
 }
 
+// WithSyncReplication makes writes in this namespace wait for their replicas.
+//
+// The default is asynchronous, which returns as soon as the owner has the
+// value and leaves a measured window in which it exists on one node only. This
+// closes that window: a write returns only when every replica holds it, so an
+// owner lost immediately afterwards loses nothing.
+//
+// The cost is real and worth stating. A group's writes are serialised through
+// its single activation, and a synchronous fan-out holds that activation while
+// the network round-trips — so the group's write rate becomes its slowest
+// replica's round trip. It buys durability with throughput on the group, not
+// with throughput on the cluster.
+//
+// It has no effect at replication factor 1, where there is nothing to wait for.
+func WithSyncReplication() NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.SyncReplication = true }
+}
+
 // WithReplicationFactor sets the number of copies held for each key, from 1 to
 // 3. One means the owner only. A value outside the range is rejected at
 // construction with [ErrInvalidOption].

@@ -14,6 +14,7 @@ import (
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/l1"
 	"github.com/peercache/peercache/internal/ownership"
+	"github.com/peercache/peercache/internal/replication"
 	"github.com/peercache/peercache/internal/store"
 )
 
@@ -145,6 +146,8 @@ func New(opts ...Option) (Cache, error) {
 	}
 	c.route = &router{cache: c}
 	c.invalidator = newInvalidator(c)
+	c.replicas = replication.NewStore()
+	c.replicator = newReplicator(c)
 
 	// Serve before returning, so that a caller which constructs a cache and
 	// immediately joins the cluster cannot be given ownership of keys it is
@@ -208,6 +211,18 @@ type cache struct {
 	// invalidator delivers invalidation hints off the write path. See
 	// invalidate.go for why they must not be sent inline.
 	invalidator *invalidator
+
+	// replicas holds copies of keys owned elsewhere, kept separately from
+	// the owned store because ownership moves and the two have different
+	// lifetimes. See internal/replication.
+	replicas *replication.Store
+
+	// replicator fans owned writes out to those replicas.
+	replicator *replicator
+
+	// splitBrain counts conflicts this node detected as a replica, as
+	// distinct from the ones its own fan-out was told about.
+	splitBrain atomic.Int64
 
 	// epochSkew counts requests whose caller resolved ownership under a
 	// different membership epoch. Expected and harmless during churn; a
@@ -373,6 +388,12 @@ func (c *cache) Stats() Stats {
 		stats.InvalidationsSent = sent
 		stats.InvalidationsDropped = dropped
 		stats.InvalidationsFailed = failed
+		rsent, rdropped, rfailed, conflicts := c.replicator.counters()
+		stats.ReplicaKeys = int64(c.replicas.Len())
+		stats.ReplicationsSent = rsent
+		stats.ReplicationsDropped = rdropped
+		stats.ReplicationsFailed = rfailed
+		stats.SplitBrainDetections = conflicts + c.splitBrain.Load()
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
@@ -448,6 +469,9 @@ func (c *cache) Close(ctx context.Context) error {
 		// cache and dials peers.
 		if c.invalidator != nil {
 			c.invalidator.Close()
+		}
+		if c.replicator != nil {
+			c.replicator.Close()
 		}
 		if c.transport != nil {
 			if err := c.transport.Close(); err != nil {

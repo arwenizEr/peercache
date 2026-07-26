@@ -85,4 +85,30 @@ type Stats struct {
 	InvalidationsSent    int64
 	InvalidationsDropped int64
 	InvalidationsFailed  int64
+
+	// ReplicationsSent, ReplicationsDropped and ReplicationsFailed describe
+	// replica fan-out.
+	//
+	// Unlike the invalidation counters, a non-zero Dropped or Failed here
+	// is a real reduction in redundancy: a key that should exist on three
+	// nodes exists on fewer until it is next written. Under asynchronous
+	// replication that is the expected cost of a peer being briefly
+	// unreachable; sustained, it means the replication factor is nominal
+	// rather than actual.
+	ReplicationsSent    int64
+	ReplicationsDropped int64
+	ReplicationsFailed  int64
+
+	// SplitBrainDetections counts writes a replica saw from two different
+	// nodes under one membership epoch.
+	//
+	// One group has one owner, so this cannot happen unless two nodes
+	// believed they owned the same key — the partition case SPEC.md §4
+	// requires be detected and counted. It is never merged: conflicting
+	// writes are reported, and choosing between them is the application's
+	// business.
+	//
+	// Any non-zero value deserves investigation. It does not mean data was
+	// lost, but it means two writers disagreed about who was in charge.
+	SplitBrainDetections int64
 }

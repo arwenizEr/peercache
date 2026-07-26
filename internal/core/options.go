@@ -97,6 +97,15 @@ type NamespaceOptions struct {
 	Loader Loader
 	// Partitioner maps keys to group keys. Defaults to [PartitionByKey].
 	Partitioner Partitioner
+	// SyncReplication makes a write wait for its replicas before returning.
+	//
+	// Off by default (CLAUDE.md non-negotiable 7). Turning it on trades
+	// latency for a closed data-loss window: the write returns only once
+	// every replica has the value, so losing the owner immediately
+	// afterwards loses nothing. It also bounds that group's write rate by
+	// its slowest replica, because the group's single activation holds
+	// while the fan-out completes.
+	SyncReplication bool
 	// ReplicationFactor is the number of copies, between 1 and 3. 1 means
 	// the owner only.
 	ReplicationFactor int
