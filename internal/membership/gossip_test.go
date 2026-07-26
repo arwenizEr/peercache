@@ -353,3 +353,69 @@ func settle(t *testing.T) {
 		runtime.Gosched()
 	}
 }
+
+// TestGossipAdvertisesTheRPCAddress pins the distinction that broke the first
+// real-network run: where a node gossips is not where it serves data.
+//
+// memberlist binds its own port for SWIM; the peer transport binds another for
+// gRPC. The membership view feeds the data path's Dial, so if it reports the
+// gossip address the whole cluster dials memberlist expecting gRPC. The symptom
+// was "error reading server preface: EOF" — a protocol talking to the wrong
+// listener — and nothing in the deterministic tests could have produced it,
+// because the in-process fabric has only one address per node.
+func TestGossipAdvertisesTheRPCAddress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: binds loopback sockets and waits on real gossip")
+	}
+
+	// Two nodes whose RPC addresses are deliberately nothing like the ports
+	// memberlist will choose.
+	a, err := membership.New(membership.Options{
+		Self:   core.Node{ID: "node-a", Addr: "10.0.0.1:9999"},
+		Config: localConfig("node-a"),
+	})
+	if err != nil {
+		t.Fatalf("membership.New(node-a): %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	b, err := membership.New(membership.Options{
+		Self:   core.Node{ID: "node-b", Addr: "10.0.0.2:8888"},
+		Config: localConfig("node-b"),
+	})
+	if err != nil {
+		t.Fatalf("membership.New(node-b): %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	if err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+
+	awaitReal(t, "node-a to learn node-b's advertised address", 30*time.Second, func() bool {
+		members, _ := a.Members()
+		for _, m := range members {
+			if m.ID == "node-b" {
+				return m.Addr == "10.0.0.2:8888"
+			}
+		}
+		return false
+	})
+
+	members, _ := a.Members()
+	for _, m := range members {
+		if m.ID != "node-b" {
+			continue
+		}
+		if m.Addr == a.LocalAddr() || m.Addr == b.LocalAddr() {
+			t.Fatalf("node-b is advertised at %q, which is a gossip address; the data path "+
+				"would dial memberlist expecting gRPC", m.Addr)
+		}
+	}
+
+	// And this node's own entry keeps the address it was given, rather than
+	// being overwritten with the gossip address at construction.
+	if self := a.Self(); self.Addr != "10.0.0.1:9999" {
+		t.Fatalf("Self().Addr = %q, want the configured RPC address", self.Addr)
+	}
+}

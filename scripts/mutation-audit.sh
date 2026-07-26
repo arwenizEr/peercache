@@ -414,6 +414,128 @@ mutate "the guard never learns the membership" \
   '_ = resolved.Membership' \
   'TestJoiningNodeDefersNewlyAcquiredGroups' .
 
+# ---------------------------------------------------------------- M4
+
+mutate "a length prefix buys an allocation" \
+  internal/wire/bounded.go \
+  'var out []BatchEntry
+	for i := 0; i < n; i++ {' \
+  'out := make([]BatchEntry, 0, n)
+	for i := 0; i < n; i++ {' \
+  'TestALengthPrefixCannotBuyAnAllocation' ./internal/wire/
+
+mutate "the L1 tier compares versions, ignoring the epoch" \
+  internal/l1/l1.go \
+  'if live && !stamp.NewerThan(existing.stamp) {' \
+  'if live && stamp.Version <= existing.stamp.Version {' \
+  'TestANewOwnerSupersedesAHigherVersion' ./internal/l1/
+
+mutate "invalidation compares versions, ignoring the epoch" \
+  internal/l1/l1.go \
+  'if !ok || !stamp.NewerThan(e.stamp) {' \
+  'if !ok || stamp.Version <= e.stamp.Version {' \
+  'TestInvalidationRespectsTheEpoch' ./internal/l1/
+
+mutate "the epoch does not dominate the version" \
+  internal/core/node.go \
+  'if s.Epoch != other.Epoch {
+		return s.Epoch > other.Epoch
+	}
+	return s.Version > other.Version' \
+  'return s.Version > other.Version' \
+  'TestStampOrdering' ./internal/wire/
+
+mutate "the transport codec drops the body" \
+  internal/transport/codec.go \
+  'b.payload = data.Materialize()' \
+  'b.payload = nil' \
+  'TestRoundTripOverLoopback' ./internal/transport/
+
+mutate "a caller does not identify itself" \
+  internal/transport/client.go \
+  'ctx = metadata.AppendToOutgoingContext(ctx, metadataFromNode, c.transport.self.ID)' \
+  '_ = metadataFromNode' \
+  'TestRoundTripOverLoopback' ./internal/transport/
+
+mutate "sentinel errors do not survive the hop" \
+  internal/transport/client.go \
+  'return fmt.Errorf("transport: %s: %s: %w", node.ID, st.Message(), sentinel)' \
+  'return errors.New(st.Message())' \
+  'TestSentinelErrorsSurviveTheHop' ./internal/transport/
+
+mutate "Unavailable is read as a deferred activation" \
+  internal/transport/client.go \
+  'sentinel = core.ErrNodeUnreachable
+		}' \
+  'sentinel = core.ErrActivationPending
+		}' \
+  'TestUnavailableDefaultsToUnreachable' ./internal/transport/
+
+mutate "connections are not pooled" \
+  internal/transport/client.go \
+  'if c, ok := t.clients[node.ID]; ok && c.addr == node.Addr {' \
+  'if c, ok := t.clients[node.ID]; ok && false {' \
+  'TestDialPoolsConnections' ./internal/transport/
+
+mutate "the server does not verify client certificates" \
+  internal/transport/tls.go \
+  'ClientAuth:   tls.RequireAndVerifyClientCert,' \
+  'ClientAuth:   tls.RequireAnyClientCert,' \
+  'TestMutualTLSRejectsAnImpostorCA' ./internal/transport/
+
+mutate "the client does not verify the server" \
+  internal/transport/tls.go \
+  'RootCAs:            pool,' \
+  'InsecureSkipVerify: true, RootCAs: pool,' \
+  'TestMutualTLSRejectsAnUntrustedServer' ./internal/transport/
+
+mutate "the TLS floor drops to 1.0" \
+  internal/transport/tls.go \
+  'MinVersion:   tls.VersionTLS13,' \
+  'MinVersion:   tls.VersionTLS10,' \
+  'TestTLSFloorIsEnforced' ./internal/transport/
+
+mutate "the router batches per group rather than per owner" \
+  router.go \
+  '		work, seen := byOwner[id]' \
+  '		id = id + g
+		work, seen := byOwner[id]' \
+  'TestRouterIssuesOneRequestPerOwner' .
+
+mutate "a group batch is applied one message at a time" \
+  router.go \
+  'work.batches = append(work.batches, wire.GroupBatch{Group: g, Messages: byGroup[g]})' \
+  'for _, m := range byGroup[g] {
+			work.batches = append(work.batches, wire.GroupBatch{Group: g, Messages: [][]byte{m}})
+		}' \
+  'TestRouterSubmit' .
+
+mutate "every node runs its own loader" \
+  namespace.go \
+  '	if p.local {
+		return n.localGetOrLoad(ctx, key)
+	}
+	return n.remoteGetOrLoad(ctx, p, key, true)' \
+  '	_ = p
+	return n.localGetOrLoad(ctx, key)' \
+  'TestTheLoaderRunsOnlyOnTheOwner' .
+
+mutate "gossip advertises the SWIM port as the RPC address" \
+  internal/membership/gossip.go \
+  'if meta.RPCAddr != "" {
+				node.Addr = meta.RPCAddr' \
+  'if false {
+				node.Addr = meta.RPCAddr' \
+  'TestGossipAdvertisesTheRPCAddress' ./internal/membership/
+mutate "enqueueing an invalidation blocks when the queue is full" \
+  invalidate.go \
+  '	select {
+	case iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}:
+	default:
+		iv.dropped.Add(1)
+	}' \
+  '	iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}' \
+  'TestInvalidationBacklogIsDroppedNotQueued' .
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 
