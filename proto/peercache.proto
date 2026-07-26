@@ -30,6 +30,15 @@ service Peer {
   // Get reads one key from the namespace's owned store on this node.
   rpc Get(GetRequest) returns (GetResponse);
 
+  // Load reads one key, reconstructing it from the namespace's registered
+  // loader if it is absent.
+  //
+  // It is separate from Get because the loader must run on the owner and
+  // nowhere else. If every node loaded its own copy, a cold key would send one
+  // request per pod to whatever the loader talks to — the stampede that
+  // single-flighting exists to prevent, reintroduced at cluster scale.
+  rpc Load(LoadRequest) returns (LoadResponse);
+
   // Set writes one key. The owner assigns the version.
   rpc Set(SetRequest) returns (SetResponse);
 
@@ -85,6 +94,19 @@ message GetResponse {
   // ttl_remaining_ns bounds how long the caller may cache this value in its
   // non-owned tier. Zero means the owner set no TTL, in which case the
   // caller applies its own L1 maximum. The caller always clamps.
+  int64 ttl_remaining_ns = 4;
+}
+
+message LoadRequest {
+  string namespace = 1;
+  string key = 2;
+  uint64 epoch = 3;
+}
+
+message LoadResponse {
+  bool found = 1;
+  bytes value = 2;
+  Stamp stamp = 3;
   int64 ttl_remaining_ns = 4;
 }
 

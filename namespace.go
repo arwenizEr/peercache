@@ -480,6 +480,14 @@ func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time
 	return nil
 }
 
+// GetOrLoad returns the value for key, reconstructing it on its owner if it is
+// absent.
+//
+// The loader runs on the owner and nowhere else. That is the whole reason
+// SPEC.md §3.1 registers loaders by name rather than passing them per call: if
+// every node ran its own, a cold key would send one request per pod to the
+// database behind it, which is the stampede single-flighting exists to prevent,
+// reintroduced at cluster scale.
 func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -487,6 +495,19 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 	if err := n.status(); err != nil {
 		return nil, err
 	}
+
+	p, err := n.cache.route.locate(n.groupKeyFor(key))
+	if err != nil {
+		return nil, err
+	}
+	if p.local {
+		return n.localGetOrLoad(ctx, key)
+	}
+	return n.remoteGetOrLoad(ctx, p, key, true)
+}
+
+// localGetOrLoad is the single-node path: resident, or loaded under the flight.
+func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, error) {
 	if n.opts.Loader == nil {
 		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
 	}
@@ -525,6 +546,38 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("namespace %q key %q: %w", n.name, key, result.Err)
 	}
 	return result.Value, nil
+}
+
+// remoteGetOrLoad asks the owner, which loads if it must.
+//
+// A cached non-owned copy answers without asking. That is safe for the same
+// reason a plain remote Get is: the copy is TTL-bounded, so the staleness it
+// can introduce is the documented bound rather than an unbounded one.
+func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string, retry bool) ([]byte, error) {
+	if n.l1 != nil {
+		if val, _, ok := n.l1.Get(key); ok {
+			return n.decode(val)
+		}
+	}
+
+	value, stamp, err := n.cache.route.remoteLoad(ctx, p, n.name, key)
+	if err != nil {
+		if retry && retryable(err) {
+			next, rerr := n.cache.route.locate(n.groupKeyFor(key))
+			if rerr != nil {
+				return nil, err
+			}
+			if next.local {
+				return n.localGetOrLoad(ctx, key)
+			}
+			return n.remoteGetOrLoad(ctx, next, key, false)
+		}
+		return nil, err
+	}
+	if n.l1 != nil {
+		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+	}
+	return n.decode(value)
 }
 
 var _ Namespace = (*namespace)(nil)

@@ -106,6 +106,23 @@ func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]
 	return resp.Value, resp.Stamp, nil
 }
 
+// remoteLoad asks an owner for a key, letting it reconstruct if absent.
+func (r *router) remoteLoad(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, error) {
+	var resp wire.LoadResponse
+	err := r.invoke(ctx, p.owner, transport.MethodLoad, &wire.LoadRequest{
+		Namespace: ns,
+		Key:       key,
+		Epoch:     p.epoch,
+	}, &resp)
+	if err != nil {
+		return nil, core.Stamp{}, err
+	}
+	if !resp.Found {
+		return nil, core.Stamp{}, ErrNotFound
+	}
+	return resp.Value, resp.Stamp, nil
+}
+
 // remoteSet writes one key on its owner.
 func (r *router) remoteSet(ctx context.Context, p placement, ns, key string, val []byte, ttl time.Duration) error {
 	return r.invoke(ctx, p.owner, transport.MethodSet, &wire.SetRequest{

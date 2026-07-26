@@ -707,3 +707,62 @@ func TestRouterIssuesOneRequestPerOwner(t *testing.T) {
 	t.Logf("%d messages across 500 groups and %d owners: %d remote requests",
 		messages, len(f.ids), got)
 }
+
+// TestTheLoaderRunsOnlyOnTheOwner is why loaders are registered by name rather
+// than passed per call.
+//
+// Every node in the cluster asks for the same cold key. If each ran its own
+// loader, a cold key would send one request per pod to whatever sits behind it
+// — the stampede single-flighting prevents within a process, reintroduced
+// across the cluster. The loader must run once, on the owner.
+func TestTheLoaderRunsOnlyOnTheOwner(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	loadsBy := map[string]int{}
+
+	// Every pod runs the same binary, so every pod registers the same
+	// loader. Which one actually runs is the question under test.
+	nss := map[string]peercache.Namespace{}
+	for _, id := range f.ids {
+		nss[id] = f.caches[id].Namespace("loaded", peercache.WithLoader(
+			func(_ context.Context, key string) ([]byte, time.Duration, error) {
+				mu.Lock()
+				loadsBy[id]++
+				mu.Unlock()
+				return []byte("reconstructed"), 0, nil
+			}))
+	}
+
+	const key = "cold/1"
+	owner := f.ownerOf(t, key)
+
+	for _, id := range f.ids {
+		got, err := nss[id].GetOrLoad(ctx, key)
+		if err != nil {
+			t.Fatalf("GetOrLoad from %s: %v", id, err)
+		}
+		if string(got) != "reconstructed" {
+			t.Fatalf("GetOrLoad from %s = %q", id, got)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	total := 0
+	for _, n := range loadsBy {
+		total += n
+	}
+	if loadsBy[owner] == 0 {
+		t.Fatalf("the loader never ran on the owner %s; loads were %v", owner, loadsBy)
+	}
+	if total != loadsBy[owner] {
+		t.Fatalf("the loader ran on nodes other than the owner: %v; a cold key must cost "+
+			"one load for the cluster, not one per pod", loadsBy)
+	}
+	if loadsBy[owner] != 1 {
+		t.Fatalf("the loader ran %d times on the owner for one key, want 1; the owner's "+
+			"single flight is not collapsing the cluster's misses", loadsBy[owner])
+	}
+}

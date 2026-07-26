@@ -2,6 +2,7 @@ package peercache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -38,6 +39,8 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 	switch method {
 	case transport.MethodGet:
 		return h.get(ctx, req)
+	case transport.MethodLoad:
+		return h.load(ctx, req)
 	case transport.MethodSet:
 		return h.set(ctx, req)
 	case transport.MethodDelete:
@@ -135,6 +138,48 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		// own L1 maximum. That is the safe direction: the caller's
 		// bound always applies, and an owner can only ever shorten it.
 		TTLRemainingNanos: 0,
+	})
+}
+
+// load reconstructs a key here, on its owner, under this node's single flight.
+//
+// Every caller in the cluster that wants this key arrives here, so one flight
+// collapses the whole cluster's concurrent misses into one call to the loader —
+// which is the property that makes registering loaders by name worth the
+// constraint it imposes.
+func (h *peerHandler) load(ctx context.Context, req []byte) ([]byte, error) {
+	var in wire.LoadRequest
+	if err := wire.Decode(req, &in); err != nil {
+		return nil, err
+	}
+	h.noteEpoch(in.Epoch)
+	if err := h.assertOwned(in.Key); err != nil {
+		return nil, err
+	}
+
+	// Created if absent, unlike Get: a load has to be able to populate a
+	// namespace this node has not been asked about before.
+	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if ns.opts.Loader == nil {
+		// No loader configured here. Report absence rather than an
+		// error: from the caller's side this is the same "not there"
+		// that a plain Get would give, and inventing a failure would
+		// make a missing key indistinguishable from a broken owner.
+		return wire.Encode(&wire.LoadResponse{})
+	}
+
+	value, err := ns.localGetOrLoad(ctx, in.Key)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return wire.Encode(&wire.LoadResponse{})
+		}
+		return nil, err
+	}
+	_, version, _ := ns.store.Get(in.Key)
+	return wire.Encode(&wire.LoadResponse{
+		Found: true,
+		Value: value,
+		Stamp: h.stamp(version),
 	})
 }
 

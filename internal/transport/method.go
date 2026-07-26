@@ -17,6 +17,7 @@ const (
 	ServiceName = "peercache.v1.Peer"
 
 	MethodGet        = "/peercache.v1.Peer/Get"
+	MethodLoad       = "/peercache.v1.Peer/Load"
 	MethodSet        = "/peercache.v1.Peer/Set"
 	MethodDelete     = "/peercache.v1.Peer/Delete"
 	MethodBatchGet   = "/peercache.v1.Peer/BatchGet"
@@ -29,6 +30,7 @@ const (
 // proto/peercache.proto.
 var Methods = []string{
 	MethodGet,
+	MethodLoad,
 	MethodSet,
 	MethodDelete,
 	MethodBatchGet,

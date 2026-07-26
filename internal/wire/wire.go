@@ -45,6 +45,26 @@ type GetResponse struct {
 	TTLRemainingNanos int64 `msgpack:"ttl_remaining_ns"`
 }
 
+// LoadRequest asks an owner for a key, reconstructing it if absent.
+type LoadRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	Epoch     uint64 `msgpack:"epoch"`
+}
+
+// LoadResponse is the owner's answer, after loading if it had to.
+//
+// Found is false only when the namespace has no loader and the key is absent.
+// A loader that fails returns an error rather than a negative answer, because
+// "could not reconstruct" and "does not exist" call for different responses
+// from the caller.
+type LoadResponse struct {
+	Found             bool   `msgpack:"found"`
+	Value             []byte `msgpack:"value"`
+	Stamp             Stamp  `msgpack:"stamp"`
+	TTLRemainingNanos int64  `msgpack:"ttl_remaining_ns"`
+}
+
 // SetRequest writes one key on its owner.
 type SetRequest struct {
 	Namespace string `msgpack:"namespace"`
