@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/testkit"
+	"github.com/peercache/peercache/internal/transport"
 )
 
 // These tests run a real multi-node cache over the in-process fabric from
@@ -30,6 +32,9 @@ type fabric struct {
 	nodes  map[string]core.Node
 	caches map[string]peercache.Cache
 	ids    []string
+
+	// counters is populated only by newFabricCounting.
+	counters map[string]*countingTransport
 }
 
 // newFabric builds n caches wired to each other through the fake fabric.
@@ -40,16 +45,28 @@ type fabric struct {
 // is not what is being examined.
 func newFabric(t *testing.T, n int) *fabric {
 	t.Helper()
+	return newFabricWith(t, n, false)
+}
+
+// newFabricCounting is newFabric with every node's transport instrumented.
+func newFabricCounting(t *testing.T, n int) *fabric {
+	t.Helper()
+	return newFabricWith(t, n, true)
+}
+
+func newFabricWith(t *testing.T, n int, counting bool) *fabric {
+	t.Helper()
 
 	seed := testkit.Seed(t)
 	clk := clock.NewFake(clock.Epoch)
 	clk.SetMisuseHandler(func(msg string) { t.Errorf("clock misuse: %s", msg) })
 
 	f := &fabric{
-		clk:    clk,
-		net:    testkit.NewNetwork(clk, seed),
-		nodes:  make(map[string]core.Node, n),
-		caches: make(map[string]peercache.Cache, n),
+		clk:      clk,
+		net:      testkit.NewNetwork(clk, seed),
+		nodes:    make(map[string]core.Node, n),
+		caches:   make(map[string]peercache.Cache, n),
+		counters: make(map[string]*countingTransport, n),
 	}
 	reg := testkit.NewRegistry()
 
@@ -62,11 +79,17 @@ func newFabric(t *testing.T, n int) *fabric {
 		memberships[id] = testkit.NewMembership(info, f.net, clk, reg, testkit.MembershipConfig{})
 	}
 	for _, id := range f.ids {
+		var tr core.Transport = f.net.Transport(f.nodes[id])
+		if counting {
+			ct := &countingTransport{Transport: tr, counts: map[string]int{}}
+			f.counters[id] = ct
+			tr = ct
+		}
 		c, err := peercache.New(
 			peercache.WithNodeID(id),
 			peercache.WithClock(clk),
 			peercache.WithMembership(memberships[id]),
-			peercache.WithTransport(f.net.Transport(f.nodes[id])),
+			peercache.WithTransport(tr),
 			peercache.WithActivationDelay(-1),
 		)
 		if err != nil {
@@ -568,4 +591,119 @@ func TestInvalidationBacklogIsDroppedNotQueued(t *testing.T) {
 		}
 		runtime.Gosched()
 	}
+}
+
+// countingTransport wraps a transport and counts Invoke calls per method.
+//
+// It exists for one assertion — that a router flush costs one request per
+// owner — and that assertion cannot be made any other way. "It was fast" is not
+// evidence of batching; counting the requests is.
+type countingTransport struct {
+	core.Transport
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (t *countingTransport) Dial(node core.Node) (core.PeerClient, error) {
+	inner, err := t.Transport.Dial(node)
+	if err != nil {
+		return nil, err
+	}
+	return &countingClient{PeerClient: inner, parent: t}, nil
+}
+
+// Ready forwards the readiness signal from the wrapped transport.
+//
+// peercache.New only waits for a transport that advertises Ready, and an
+// embedded interface does not carry the concrete type's extra methods. Without
+// this the wrapper silently opts every node out of waiting, and the cluster
+// never converges — which is exactly how this was found.
+func (t *countingTransport) Ready() <-chan struct{} {
+	if r, ok := t.Transport.(interface{ Ready() <-chan struct{} }); ok {
+		return r.Ready()
+	}
+	closed := make(chan struct{})
+	close(closed)
+	return closed
+}
+
+func (t *countingTransport) count(method string) {
+	t.mu.Lock()
+	t.counts[method]++
+	t.mu.Unlock()
+}
+
+func (t *countingTransport) get(method string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.counts[method]
+}
+
+type countingClient struct {
+	core.PeerClient
+	parent *countingTransport
+}
+
+func (c *countingClient) Invoke(ctx context.Context, method string, req []byte) ([]byte, error) {
+	c.parent.count(method)
+	return c.PeerClient.Invoke(ctx, method, req)
+}
+
+// TestRouterIssuesOneRequestPerOwner is the M4 acceptance criterion from
+// SPEC.md §4: "a router submitting 10k messages across 3 owners issues at most
+// 3 RPCs per flush window".
+//
+// The count is taken from the transport rather than inferred, and the messages
+// are spread across many groups on purpose — the grouping that matters is by
+// *owner*, not by group, so a router that batched per group would pass a
+// weaker test and fail this one.
+func TestRouterIssuesOneRequestPerOwner(t *testing.T) {
+	f := newFabricCounting(t, 3)
+	ctx := context.Background()
+
+	for _, id := range f.ids {
+		if err := f.caches[id].RegisterGroupFunc("apply",
+			func(_ context.Context, s peercache.GroupState, arg []byte) ([]byte, error) {
+				msgs, err := peercache.Batch[string](arg)
+				if err != nil {
+					return nil, err
+				}
+				n, _ := s.Get("count")
+				s.Set("count", append(n, byte(len(msgs))))
+				return nil, nil
+			}); err != nil {
+			t.Fatalf("RegisterGroupFunc on %s: %v", id, err)
+		}
+	}
+
+	const messages = 10_000
+	msgs := make([]string, 0, messages)
+	for i := 0; i < messages; i++ {
+		// 500 distinct groups, so the owner-level grouping has real work
+		// to do rather than collapsing trivially.
+		msgs = append(msgs, fmt.Sprintf("group-%d", i%500))
+	}
+
+	sender := f.ids[0]
+	router := peercache.NewRouter(f.caches[sender], func(s string) string { return s }, "apply")
+	if err := router.Submit(ctx, msgs...); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	got := f.counters[sender].get(transport.MethodSubmit)
+	// At most one request per *remote* owner. The sender applies its own
+	// share in-process, so with three nodes the ceiling is two.
+	const ceiling = 2
+	if got > ceiling {
+		t.Fatalf("submitting %d messages across %d owners issued %d requests, want at most "+
+			"%d; the router is batching per group or per message rather than per owner",
+			messages, len(f.ids), got, ceiling)
+	}
+	if got == 0 {
+		t.Fatalf("submitting %d messages issued no remote requests at all; the sender "+
+			"cannot own every one of 500 groups, so the test is not exercising routing",
+			messages)
+	}
+	t.Logf("%d messages across 500 groups and %d owners: %d remote requests",
+		messages, len(f.ids), got)
 }

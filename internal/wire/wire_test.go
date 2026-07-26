@@ -59,6 +59,20 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 		}, func() any { return new(wire.InvalidateRequest) }},
 		{"InvalidateResponse", &wire.InvalidateResponse{},
 			func() any { return new(wire.InvalidateResponse) }},
+		{"SubmitRequest", &wire.SubmitRequest{
+			FuncName: "apply", Epoch: 3,
+			Batches: []wire.GroupBatch{
+				{Group: "a", Messages: [][]byte{{1}, {}, {2, 3}}},
+				{Group: "b"},
+			},
+		}, func() any { return new(wire.SubmitRequest) }},
+		{"SubmitRequest empty", &wire.SubmitRequest{FuncName: "apply"},
+			func() any { return new(wire.SubmitRequest) }},
+		{"SubmitResponse", &wire.SubmitResponse{Failures: []wire.GroupFailure{
+			{Group: "a", Error: "boom"},
+		}}, func() any { return new(wire.SubmitResponse) }},
+		{"GroupBatch", &wire.GroupBatch{Group: "g", Messages: [][]byte{{9}}},
+			func() any { return new(wire.GroupBatch) }},
 	}
 
 	for _, tc := range cases {
@@ -217,7 +231,8 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 		"Stamp", "GetRequest", "GetResponse", "SetRequest", "SetResponse",
 		"DeleteRequest", "DeleteResponse", "BatchGetRequest", "BatchGetResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
-		"InvalidateResponse",
+		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
+		"GroupFailure",
 	}
 	for _, name := range implemented {
 		if !declared[name] {
@@ -248,6 +263,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.SetRequest{}, &wire.SetResponse{}, &wire.DeleteRequest{},
 		&wire.BatchGetRequest{}, &wire.BatchGetResponse{}, &wire.BatchEntry{},
 		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},
+		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
 	}
 	for _, msg := range types {
 		typ := reflect.TypeOf(msg).Elem()

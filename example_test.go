@@ -447,6 +447,23 @@ func ExampleNewRouter() {
 		Amount   int
 	}
 
+	// The handler receives a whole group's batch, not one message, which is
+	// what lets a group's messages be applied in a single turn.
+	totals := map[string]int{}
+	if err := cache.RegisterGroupFunc("apply", func(_ context.Context, s peercache.GroupState, arg []byte) ([]byte, error) {
+		events, err := peercache.Batch[Event](arg)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range events {
+			totals[s.ID()] += e.Amount
+		}
+		return nil, nil
+	}); err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	router := peercache.NewRouter(cache, func(e Event) string { return e.TenantID }, "apply")
 
 	// Submitting nothing succeeds: the caller's postcondition already holds.
@@ -457,8 +474,12 @@ func ExampleNewRouter() {
 		Event{TenantID: "acme", Amount: 2},
 		Event{TenantID: "globex", Amount: 3},
 	)
-	fmt.Println("Submit:", errors.Is(err, peercache.ErrNotImplemented))
+	fmt.Println("Submit:", err == nil)
+	fmt.Println("acme:", totals["acme"])
+	fmt.Println("globex:", totals["globex"])
 	// Output:
 	// empty submit: true
 	// Submit: true
+	// acme: 3
+	// globex: 3
 }

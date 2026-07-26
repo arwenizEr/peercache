@@ -46,6 +46,8 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 		return h.batchGet(ctx, req)
 	case transport.MethodCall:
 		return h.call(ctx, req)
+	case transport.MethodSubmit:
+		return h.submit(ctx, req)
 	case transport.MethodInvalidate:
 		return h.invalidate(ctx, from, req)
 	default:
@@ -229,6 +231,45 @@ func (h *peerHandler) call(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	return wire.Encode(&wire.CallResponse{Result: result})
+}
+
+// submit applies a router flush: many groups, each in its own actor turn.
+//
+// Failures are per group and collected rather than fatal. A flush spans groups
+// that have nothing to do with each other, and there is no cross-group
+// atomicity in this system — so one group's handler returning an error must not
+// discard the work of the groups beside it, which have already been applied.
+func (h *peerHandler) submit(ctx context.Context, req []byte) ([]byte, error) {
+	var in wire.SubmitRequest
+	if err := wire.Decode(req, &in); err != nil {
+		return nil, err
+	}
+	h.noteEpoch(in.Epoch)
+
+	out := wire.SubmitResponse{}
+	for _, batch := range in.Batches {
+		// Checked per group rather than once: a large flush against a
+		// slow node would otherwise keep starting turns after the caller
+		// had already given up waiting for them.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		arg, err := wire.Encode(&batch.Messages)
+		if err != nil {
+			out.Failures = append(out.Failures,
+				wire.GroupFailure{Group: batch.Group, Error: err.Error()})
+			continue
+		}
+		// The group runtime consults the ownership guard on activation,
+		// so a group this node does not own fails here with ErrNotOwner
+		// rather than needing a second check that could disagree.
+		if _, err := h.cache.groups.Call(ctx, batch.Group, in.FuncName, arg); err != nil {
+			out.Failures = append(out.Failures,
+				wire.GroupFailure{Group: batch.Group, Error: err.Error()})
+		}
+	}
+	return wire.Encode(&out)
 }
 
 func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte) ([]byte, error) {

@@ -46,6 +46,12 @@ service Peer {
   // data rather than the data moving to the caller.
   rpc Call(CallRequest) returns (CallResponse);
 
+  // Submit applies many messages to many groups on this owner in one round
+  // trip. Each group's messages are applied inside a single actor turn, which
+  // is the batch-affinity requirement of SPEC.md §3.4: ten thousand messages
+  // spread over three owners cost three requests, not ten thousand.
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+
   // Invalidate tells a peer that a key it may be caching is stale. It is a
   // latency optimisation and nothing more — correctness never depends on
   // one of these arriving. See CLAUDE.md non-negotiable 6.
@@ -132,6 +138,33 @@ message CallRequest {
 
 message CallResponse {
   bytes result = 1;
+}
+
+message SubmitRequest {
+  // func_name is the registered function applied to every batch here. One
+  // router carries one handler, so it is named once rather than per group.
+  string func_name = 1;
+  repeated GroupBatch batches = 2;
+  uint64 epoch = 3;
+}
+
+message GroupBatch {
+  string group = 1;
+  // messages are the encoded payloads, in submission order. The owner passes
+  // the whole list to the handler as one argument so that it runs as one turn.
+  repeated bytes messages = 2;
+}
+
+message SubmitResponse {
+  // failures is sparse: a group that applied cleanly has no entry. Partial
+  // failure is real here — there is no cross-group atomicity, ever
+  // (CLAUDE.md), so the response says which groups did not take.
+  repeated GroupFailure failures = 1;
+}
+
+message GroupFailure {
+  string group = 1;
+  string error = 2;
 }
 
 message InvalidateRequest {

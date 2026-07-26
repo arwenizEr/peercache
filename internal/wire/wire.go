@@ -114,6 +114,48 @@ type CallResponse struct {
 	Result []byte `msgpack:"result"`
 }
 
+// SubmitRequest applies many messages to many groups on one owner.
+//
+// One request carries every group that owner is responsible for, which is what
+// makes the cost of a router flush proportional to the number of owners rather
+// than to the number of messages.
+type SubmitRequest struct {
+	// FuncName is the registered handler applied to every batch here. A
+	// router carries one handler, so it is named once rather than per group.
+	FuncName string       `msgpack:"func_name"`
+	Batches  []GroupBatch `msgpack:"batches"`
+	Epoch    uint64       `msgpack:"epoch"`
+}
+
+// GroupBatch is every message destined for one group, in submission order.
+type GroupBatch struct {
+	Group string `msgpack:"group"`
+	// Messages are encoded payloads. The owner hands the whole list to the
+	// handler as a single argument, so that a group's batch is applied in
+	// one actor turn rather than one turn per message.
+	Messages [][]byte `msgpack:"messages"`
+}
+
+// SubmitResponse reports which groups did not apply.
+//
+// Failures is sparse: a group that applied cleanly has no entry. Partial
+// failure is a real outcome rather than an edge case — there is no cross-group
+// atomicity in this system and never will be — so the response names the groups
+// that did not take rather than collapsing everything into one error.
+type SubmitResponse struct {
+	Failures []GroupFailure `msgpack:"failures"`
+}
+
+// GroupFailure is one group's error, as text.
+//
+// The error crosses as a string because a sentinel per group would need a
+// second error-mapping scheme alongside the transport's, and the caller's
+// remedy — resubmit that group — is the same whatever the cause.
+type GroupFailure struct {
+	Group string `msgpack:"group"`
+	Error string `msgpack:"error"`
+}
+
 // InvalidateRequest tells a peer that keys it may be caching have changed.
 //
 // It is a latency optimisation and nothing else. CLAUDE.md non-negotiable 6

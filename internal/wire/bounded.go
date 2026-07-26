@@ -192,7 +192,127 @@ func (r *InvalidateRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return dec.Decode(&r.Stamp)
 }
 
+// decodeMessages reads a msgpack array of byte strings without trusting its
+// length, on the same rule as everything else in this file.
+func decodeMessages(dec *msgpack.Decoder) ([][]byte, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxSliceElements {
+		return nil, fmt.Errorf("wire: array of %d elements exceeds the %d cap: %w",
+			n, MaxSliceElements, core.ErrInvalidOption)
+	}
+	var out [][]byte
+	for i := 0; i < n; i++ {
+		b, err := dec.DecodeBytes()
+		if err != nil {
+			return nil, fmt.Errorf("wire: message %d of %d: %w", i, n, err)
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// decodeBatches reads a msgpack array of [GroupBatch] under the same rule.
+func decodeBatches(dec *msgpack.Decoder) ([]GroupBatch, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxSliceElements {
+		return nil, fmt.Errorf("wire: array of %d elements exceeds the %d cap: %w",
+			n, MaxSliceElements, core.ErrInvalidOption)
+	}
+	var out []GroupBatch
+	for i := 0; i < n; i++ {
+		var b GroupBatch
+		if err := dec.Decode(&b); err != nil {
+			return nil, fmt.Errorf("wire: batch %d of %d: %w", i, n, err)
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// EncodeMsgpack implements [msgpack.CustomEncoder].
+func (b GroupBatch) EncodeMsgpack(enc *msgpack.Encoder) error {
+	if err := enc.EncodeArrayLen(2); err != nil {
+		return err
+	}
+	if err := enc.EncodeString(b.Group); err != nil {
+		return err
+	}
+	if err := enc.EncodeArrayLen(len(b.Messages)); err != nil {
+		return err
+	}
+	for _, m := range b.Messages {
+		if err := enc.EncodeBytes(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DecodeMsgpack implements [msgpack.CustomDecoder].
+func (b *GroupBatch) DecodeMsgpack(dec *msgpack.Decoder) error {
+	if _, err := dec.DecodeArrayLen(); err != nil {
+		return err
+	}
+	var err error
+	if b.Group, err = dec.DecodeString(); err != nil {
+		return err
+	}
+	b.Messages, err = decodeMessages(dec)
+	return err
+}
+
+// EncodeMsgpack implements [msgpack.CustomEncoder].
+func (r SubmitRequest) EncodeMsgpack(enc *msgpack.Encoder) error {
+	if err := enc.EncodeArrayLen(3); err != nil {
+		return err
+	}
+	if err := enc.EncodeString(r.FuncName); err != nil {
+		return err
+	}
+	if err := enc.EncodeArrayLen(len(r.Batches)); err != nil {
+		return err
+	}
+	for i := range r.Batches {
+		if err := enc.Encode(&r.Batches[i]); err != nil {
+			return err
+		}
+	}
+	return enc.EncodeUint(r.Epoch)
+}
+
+// DecodeMsgpack implements [msgpack.CustomDecoder].
+func (r *SubmitRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
+	if _, err := dec.DecodeArrayLen(); err != nil {
+		return err
+	}
+	var err error
+	if r.FuncName, err = dec.DecodeString(); err != nil {
+		return err
+	}
+	if r.Batches, err = decodeBatches(dec); err != nil {
+		return err
+	}
+	r.Epoch, err = dec.DecodeUint64()
+	return err
+}
+
 var (
+	_ msgpack.CustomEncoder = GroupBatch{}
+	_ msgpack.CustomDecoder = (*GroupBatch)(nil)
+	_ msgpack.CustomEncoder = SubmitRequest{}
+	_ msgpack.CustomDecoder = (*SubmitRequest)(nil)
 	_ msgpack.CustomEncoder = BatchGetRequest{}
 	_ msgpack.CustomDecoder = (*BatchGetRequest)(nil)
 	_ msgpack.CustomEncoder = BatchGetResponse{}

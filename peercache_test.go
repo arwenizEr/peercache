@@ -3,6 +3,7 @@ package peercache_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,8 +243,47 @@ func TestRouterSubmit(t *testing.T) {
 	if err := router.Submit(ctx); err != nil {
 		t.Fatalf("Submit of no messages = %v, want nil", err)
 	}
-	if err := router.Submit(ctx, "a", "b"); !errors.Is(err, peercache.ErrNotImplemented) {
-		t.Fatalf("Submit = %v, want ErrNotImplemented", err)
+	// An unregistered handler is reported per group, because the groups are
+	// independent and a caller resubmitting needs to know which ones failed.
+	err := router.Submit(ctx, "a", "b")
+	if !errors.Is(err, peercache.ErrFuncNotRegistered) {
+		t.Fatalf("Submit with no handler registered = %v, want ErrFuncNotRegistered", err)
+	}
+
+	// With the handler registered, the messages arrive — grouped, in
+	// submission order, and as one batch per group rather than one call per
+	// message. That last part is the whole point of the API.
+	var mu sync.Mutex
+	calls := 0
+	seen := map[string][]string{}
+	if err := c.RegisterGroupFunc("apply", func(_ context.Context, s peercache.GroupState, arg []byte) ([]byte, error) {
+		msgs, err := peercache.Batch[string](arg)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		calls++
+		seen[s.ID()] = append(seen[s.ID()], msgs...)
+		mu.Unlock()
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("RegisterGroupFunc: %v", err)
+	}
+
+	if err := router.Submit(ctx, "a", "b", "a", "a"); err != nil {
+		t.Fatalf("Submit = %v, want nil", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("the handler ran %d times for 4 messages across 2 groups, want 2; "+
+			"a batch must be applied in one turn per group, not one per message", calls)
+	}
+	if got := seen["a"]; len(got) != 3 || got[0] != "a" || got[2] != "a" {
+		t.Fatalf("group a saw %v, want its three messages in submission order", got)
+	}
+	if got := seen["b"]; len(got) != 1 {
+		t.Fatalf("group b saw %v, want one message", got)
 	}
 
 	bad := peercache.NewRouter[string](c, nil, "apply")
