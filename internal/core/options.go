@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/peercache/peercache/internal/clock"
@@ -15,6 +16,17 @@ import (
 type Options struct {
 	// NodeID uniquely identifies this node. Required.
 	NodeID string
+	// Listener is what the peer transport serves on.
+	//
+	// It is separate from Transport because SPEC.md §3.6 fixes
+	// Transport.Serve to take a net.Listener, and because the two have
+	// different lifetimes in practice: an application often wants to bind
+	// its port before constructing the cache so that a bind failure is
+	// reported at startup rather than from a goroutine.
+	//
+	// Nil is valid for a transport with nothing to listen on, such as the
+	// in-process one in internal/testkit.
+	Listener net.Listener
 	// BindAddr is the address peers dial. It may be empty for an
 	// in-process transport.
 	BindAddr string

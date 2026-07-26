@@ -309,3 +309,12 @@ func (g *Guard) Close() {
 	close(g.stop)
 	<-g.stopped
 }
+
+// Table returns the ownership table this guard consults.
+//
+// It is exported so the data path can resolve an owner without going through
+// the guard's activation logic: routing a read to a peer is a different
+// question from deciding whether to activate a group here, and answering the
+// second when the caller asked the first would refuse reads for keys this node
+// merely does not own — which is the normal case, not an error.
+func (g *Guard) Table() *Table { return g.table }

@@ -192,6 +192,14 @@ func (g *group) Items(ctx context.Context) (map[string][]byte, error) {
 	return items, nil
 }
 
+// Call runs fn on the group's owner, wherever that is.
+//
+// This is the API SPEC.md §3.2 calls primary, and the only group operation that
+// crosses the network. The rest — Get, Set, Keys, Items — read or write group
+// state directly and are answered only by the owner, because shipping a group's
+// state to a caller is the thing this design exists to avoid. A caller that
+// wants to work with a group it does not own uses Call and the work happens
+// there.
 func (g *group) Call(ctx context.Context, fn string, arg []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -199,7 +207,35 @@ func (g *group) Call(ctx context.Context, fn string, arg []byte) ([]byte, error)
 	if err := g.status(); err != nil {
 		return nil, err
 	}
-	return g.cache.groups.Call(ctx, g.id, fn, arg)
+
+	p, err := g.cache.route.locate(g.id)
+	if err != nil {
+		return nil, err
+	}
+	if p.local {
+		return g.cache.groups.Call(ctx, g.id, fn, arg)
+	}
+
+	out, err := g.cache.route.remoteCall(ctx, p, g.id, fn, arg)
+	if err == nil || !retryable(err) {
+		return out, err
+	}
+
+	// Re-resolve once. A group can move between resolving its owner and the
+	// owner receiving the call, and that race is routine rather than a
+	// failure. It is not a loop: a second disagreement means membership is
+	// genuinely unsettled, and retrying into that makes a brownout worse.
+	next, rerr := g.cache.route.locate(g.id)
+	if rerr != nil {
+		return nil, err
+	}
+	if next.local {
+		return g.cache.groups.Call(ctx, g.id, fn, arg)
+	}
+	if next.owner.ID == p.owner.ID {
+		return nil, err
+	}
+	return g.cache.route.remoteCall(ctx, next, g.id, fn, arg)
 }
 
 func (g *group) Flush(ctx context.Context) error {

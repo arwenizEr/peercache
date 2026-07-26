@@ -137,11 +137,51 @@ func New(opts ...Option) (Cache, error) {
 		opts:       resolved,
 		groups:     groups,
 		guard:      guard,
+		transport:  resolved.Transport,
 		namespaces: make(map[string]*namespace),
 		done:       make(chan struct{}),
 		stopped:    make(chan struct{}),
 		ticker:     resolved.Clock.NewTicker(sweepInterval),
 	}
+	c.route = &router{cache: c}
+	c.invalidator = newInvalidator(c)
+
+	// Serve before returning, so that a caller which constructs a cache and
+	// immediately joins the cluster cannot be given ownership of keys it is
+	// not yet able to answer for. A node that is a member but not serving
+	// looks, from every peer, exactly like a node that is broken.
+	if c.transport != nil {
+		handler := &peerHandler{cache: c}
+		served := make(chan error, 1)
+		c.serving.Add(1)
+		go func() {
+			defer c.serving.Done()
+			err := c.transport.Serve(resolved.Listener, handler)
+			if err != nil && !c.isClosed() {
+				resolved.Logger.Warn("peer transport stopped", "error", err)
+			}
+			served <- err
+		}()
+
+		// Do not return until the transport is answering, when it can
+		// say so. Serve runs on its own goroutine, so without this a
+		// node can be a member of the cluster — and therefore the owner
+		// of part of the keyspace — before it is able to serve a single
+		// request. Every peer would see that as a broken node rather
+		// than a starting one.
+		if r, ok := c.transport.(interface{ Ready() <-chan struct{} }); ok {
+			select {
+			case <-r.Ready():
+			case err := <-served:
+				c.serving.Wait()
+				if guard != nil {
+					guard.Close()
+				}
+				return nil, fmt.Errorf("peercache: serving peers: %w", err)
+			}
+		}
+	}
+
 	go c.sweepLoop()
 	return c, nil
 }
@@ -157,6 +197,27 @@ type cache struct {
 	// guard decides whether this node may activate a group. Nil on a single
 	// node with no membership, where the answer is always yes.
 	guard *ownership.Guard
+
+	// transport carries requests to peers. Nil without one, in which case
+	// every key resolves locally and no request ever leaves this process.
+	transport core.Transport
+
+	// route resolves ownership and issues peer requests.
+	route *router
+
+	// invalidator delivers invalidation hints off the write path. See
+	// invalidate.go for why they must not be sent inline.
+	invalidator *invalidator
+
+	// epochSkew counts requests whose caller resolved ownership under a
+	// different membership epoch. Expected and harmless during churn; a
+	// sustained rate under stable membership means views are not settling.
+	epochSkew atomic.Int64
+
+	// serving tracks the goroutine running Transport.Serve, so that Close
+	// can wait for it rather than leaving it to notice on its own. M3 lost a
+	// milestone to a Close that only signalled; this one waits.
+	serving sync.WaitGroup
 
 	// ticker drives one sweeper for every namespace. Per-namespace
 	// sweepers would mean a goroutine per namespace for work that is
@@ -306,6 +367,11 @@ func (c *cache) Stats() Stats {
 		stats.RefusedActivations = groups.RefusedActivations
 		stats.DeferredActivations = owned.Deferrals
 		stats.StaleEpochRefusals = owned.StaleEpochs
+		stats.EpochSkew = c.epochSkew.Load()
+		sent, dropped, failed := c.invalidator.counters()
+		stats.InvalidationsSent = sent
+		stats.InvalidationsDropped = dropped
+		stats.InvalidationsFailed = failed
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
@@ -318,6 +384,9 @@ func (c *cache) Stats() Stats {
 		stats.InflightLoads += ns.flight.Inflight()
 		stats.Loads += ns.flight.Loads()
 		stats.CollapsedLoads += ns.flight.Collapsed()
+		if ns.l1 != nil {
+			stats.L1Entries += int64(ns.l1.Len())
+		}
 	}
 	return stats
 }
@@ -373,6 +442,17 @@ func (c *cache) Close(ctx context.Context) error {
 		// already closing.
 		if c.guard != nil {
 			c.guard.Close()
+		}
+		// Then the invalidation queue, which holds a reference to the
+		// cache and dials peers.
+		if c.invalidator != nil {
+			c.invalidator.Close()
+		}
+		if c.transport != nil {
+			if err := c.transport.Close(); err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("closing the transport: %w", err))
+			}
+			c.serving.Wait()
 		}
 
 		// Groups first: an activated group holds a goroutine, and its

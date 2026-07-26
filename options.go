@@ -1,6 +1,7 @@
 package peercache
 
 import (
+	"net"
 	"time"
 
 	"github.com/peercache/peercache/internal/core"
@@ -48,6 +49,15 @@ func WithLogger(l Logger) Option {
 // WithTransport injects the peer fabric. A nil transport means single-node
 // operation with no networking at all, which is a supported configuration and
 // not an error.
+// WithListener supplies the listener the peer transport serves on.
+//
+// Bind the port yourself and pass it in: a bind failure then surfaces where the
+// application can report it, rather than from a goroutine inside the library.
+// Nil is valid for a transport that has nothing to listen on.
+func WithListener(l net.Listener) Option {
+	return func(o *core.Options) { o.Listener = l }
+}
+
 func WithTransport(t Transport) Option {
 	return func(o *core.Options) { o.Transport = t }
 }

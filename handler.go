@@ -54,29 +54,37 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 	}
 }
 
-// checkEpoch refuses a request resolved under a membership view this node has
-// already replaced.
+// noteEpoch records that a caller resolved ownership under a different view.
 //
-// It is the same asymmetry the activation guard uses, for the same reason: a
-// caller behind us should re-resolve and go elsewhere, while a caller ahead of
-// us has seen a view we have not, and this node cannot confirm ownership under
-// a view it does not hold. See docs/decisions/0012-the-activation-guard.md.
-func (h *peerHandler) checkEpoch(callerEpoch uint64) error {
+// It does not refuse. That was the first design and it was wrong, in a way that
+// only showed up once two nodes had genuinely diverged: a reader at epoch 6 was
+// refused by an owner at epoch 4, and *both were right*.
+//
+// An epoch counts the membership transitions one node has observed. SPEC.md
+// §3.5 makes membership AP and [core.Epoch] says so directly — epochs are
+// per-view, not globally agreed, and comparing them "establishes staleness,
+// never consensus". Two nodes that agree exactly about who is in the cluster
+// can still hold different epochs, because they counted different numbers of
+// intermediate views getting there. Demanding equality across a hop therefore
+// fails requests between nodes that agree, and once the counters have drifted
+// it fails them permanently.
+//
+// What actually protects correctness is [peerHandler.assertOwned], which asks
+// whether *this* node owns the key under *its own* current view. That question
+// is answerable locally and is the only one that matters: if this node owns the
+// key, serving it is right whatever the caller believed; if it does not, the
+// caller is told to go elsewhere whatever epoch it quoted.
+//
+// The epoch still travels, because the owner stamps its replies with its own
+// and a caller needs both halves to order values. Divergence is counted so it
+// is visible rather than silent.
+func (h *peerHandler) noteEpoch(callerEpoch uint64) {
 	if h.cache.guard == nil {
-		// No membership authority means a cluster of one, where every
-		// epoch is this node's own and there is nothing to disagree with.
-		return nil
+		return
 	}
-	ours := uint64(h.cache.guard.Stats().Epoch)
-	switch {
-	case callerEpoch < ours:
-		return fmt.Errorf("peercache: request resolved at epoch %d, this node is at %d: %w",
-			callerEpoch, ours, ErrStaleEpoch)
-	case callerEpoch > ours:
-		return fmt.Errorf("peercache: request resolved at epoch %d, this node is still at %d: %w",
-			callerEpoch, ours, ErrActivationPending)
+	if callerEpoch != uint64(h.cache.guard.Stats().Epoch) {
+		h.cache.epochSkew.Add(1)
 	}
-	return nil
 }
 
 // localNamespace returns the namespace by name without creating it.
@@ -98,9 +106,7 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 	if err := wire.Decode(req, &in); err != nil {
 		return nil, err
 	}
-	if err := h.checkEpoch(in.Epoch); err != nil {
-		return nil, err
-	}
+	h.noteEpoch(in.Epoch)
 	if err := h.assertOwned(in.Key); err != nil {
 		return nil, err
 	}
@@ -135,9 +141,7 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	if err := wire.Decode(req, &in); err != nil {
 		return nil, err
 	}
-	if err := h.checkEpoch(in.Epoch); err != nil {
-		return nil, err
-	}
+	h.noteEpoch(in.Epoch)
 	if err := h.assertOwned(in.Key); err != nil {
 		return nil, err
 	}
@@ -155,9 +159,7 @@ func (h *peerHandler) delete(ctx context.Context, req []byte) ([]byte, error) {
 	if err := wire.Decode(req, &in); err != nil {
 		return nil, err
 	}
-	if err := h.checkEpoch(in.Epoch); err != nil {
-		return nil, err
-	}
+	h.noteEpoch(in.Epoch)
 	if err := h.assertOwned(in.Key); err != nil {
 		return nil, err
 	}
@@ -172,9 +174,7 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 	if err := wire.Decode(req, &in); err != nil {
 		return nil, err
 	}
-	if err := h.checkEpoch(in.Epoch); err != nil {
-		return nil, err
-	}
+	h.noteEpoch(in.Epoch)
 
 	ns, ok := h.localNamespace(in.Namespace)
 	if !ok {
@@ -219,9 +219,7 @@ func (h *peerHandler) call(ctx context.Context, req []byte) ([]byte, error) {
 	if err := wire.Decode(req, &in); err != nil {
 		return nil, err
 	}
-	if err := h.checkEpoch(in.Epoch); err != nil {
-		return nil, err
-	}
+	h.noteEpoch(in.Epoch)
 
 	// No explicit ownership check: the group runtime consults the guard on
 	// activation, so a group this node does not own already fails with

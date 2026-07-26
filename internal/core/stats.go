@@ -64,4 +64,25 @@ type Stats struct {
 	// sustained rate after that means a caller is caching ownership for
 	// longer than membership stays still.
 	StaleEpochRefusals int64
+	// EpochSkew counts peer requests whose caller had resolved ownership
+	// under a different membership epoch from this node's.
+	//
+	// It is an observation, not a failure. Epochs are per-view and two
+	// nodes that agree about membership can still hold different ones, so
+	// this is expected during churn. A sustained rate under stable
+	// membership means views are not settling.
+	EpochSkew int64
+
+	// InvalidationsSent, InvalidationsDropped and InvalidationsFailed
+	// describe the best-effort invalidation broadcast.
+	//
+	// None of them is an error condition. Dropped counts hints discarded
+	// because the queue was full, which is the designed behaviour under
+	// write pressure; Failed counts peers that did not accept one. Both
+	// mean some node will serve a stale copy until its TTL expires, which
+	// is the documented bound — see CLAUDE.md non-negotiable 6. They are
+	// worth watching as a ratio, not alerting on individually.
+	InvalidationsSent    int64
+	InvalidationsDropped int64
+	InvalidationsFailed  int64
 }

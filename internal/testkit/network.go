@@ -382,7 +382,12 @@ func (n *Network) Close() error {
 
 // Transport returns the [core.Transport] view of this network for one node.
 func (n *Network) Transport(self core.Node) core.Transport {
-	return &netTransport{net: n, self: self.Clone(), done: make(chan struct{})}
+	return &netTransport{
+		net:   n,
+		self:  self.Clone(),
+		done:  make(chan struct{}),
+		ready: make(chan struct{}),
+	}
 }
 
 // netTransport is one node's handle on the fabric.
@@ -392,7 +397,19 @@ type netTransport struct {
 
 	once sync.Once
 	done chan struct{}
+
+	// ready is closed once Serve has registered this node's handler.
+	//
+	// Registration is what makes the node visible to its peers, and Serve
+	// runs on its own goroutine, so without this a caller can return from
+	// construction and be treated as a cluster member before it can answer
+	// anything. The gRPC transport has the same signal for the same reason.
+	readyOnce sync.Once
+	ready     chan struct{}
 }
+
+// Ready is closed when this transport has registered and is answering.
+func (t *netTransport) Ready() <-chan struct{} { return t.ready }
 
 // Dial implements [core.Transport]. It never fails: an unreachable peer
 // surfaces at Invoke, where the caller has a context to bound the wait.
@@ -408,6 +425,7 @@ func (t *netTransport) Serve(_ net.Listener, h core.Handler) error {
 		return fmt.Errorf("testkit: nil handler: %w", core.ErrInvalidOption)
 	}
 	t.net.Register(t.self, h)
+	t.readyOnce.Do(func() { close(t.ready) })
 	select {
 	case <-t.done:
 	case <-t.net.closedCh:

@@ -2,7 +2,9 @@ package peercache
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/peercache/peercache/internal/clock"
@@ -116,6 +118,19 @@ func (n *namespace) status() error {
 	return nil
 }
 
+// groupKeyFor maps a key to the group key that determines its owner.
+//
+// This is where WithPartitioner takes effect. Grouping related keys under one
+// group key is what lets a caller keep a customer's orders on one node and
+// compute over them in place, which is the point of the partitioner and the
+// reason it was accepted and validated back in M1 while doing nothing.
+func (n *namespace) groupKeyFor(key string) string {
+	if n.opts.Partitioner == nil {
+		return key
+	}
+	return n.opts.Partitioner.GroupKey(key)
+}
+
 // encode prepares a value for storage.
 func (n *namespace) encode(val []byte) []byte {
 	if n.framer == nil {
@@ -144,6 +159,18 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 
+	p, err := n.cache.route.locate(n.groupKeyFor(key))
+	if err != nil {
+		return nil, err
+	}
+	if p.local {
+		return n.localGet(key)
+	}
+	return n.remoteGet(ctx, p, key, true)
+}
+
+// localGet reads from this node's owned store.
+func (n *namespace) localGet(key string) ([]byte, error) {
 	stored, _, ok := n.store.Get(key)
 	if !ok {
 		// The bare sentinel, not a wrapped one. A miss is routine — it is
@@ -156,6 +183,46 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 	return n.decode(stored)
 }
 
+// remoteGet serves a key owned elsewhere, from the non-owned tier if a fresh
+// copy is there and from the owner otherwise.
+//
+// retry allows exactly one re-resolution. Ownership can change between
+// resolving an owner and that owner receiving the request, and the caller
+// should not see a routine race as a failure. It does not loop: a second
+// disagreement means membership is genuinely unsettled, and retrying into that
+// turns a brownout into a storm.
+func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retry bool) ([]byte, error) {
+	if n.l1 != nil {
+		if val, _, ok := n.l1.Get(key); ok {
+			return n.decode(val)
+		}
+	}
+
+	value, stamp, err := n.cache.route.remoteGet(ctx, p, n.name, key)
+	if err != nil {
+		if retry && retryable(err) {
+			next, rerr := n.cache.route.locate(n.groupKeyFor(key))
+			if rerr != nil {
+				return nil, err
+			}
+			if next.local {
+				return n.localGet(key)
+			}
+			return n.remoteGet(ctx, next, key, false)
+		}
+		return nil, err
+	}
+
+	// Cache the copy under this namespace's L1 bound. The owner may shorten
+	// that bound but never extend it, so the ceiling configured here is the
+	// one that holds — which is what makes the TTL a real limit on staleness
+	// rather than a suggestion the owner can override.
+	if n.l1 != nil {
+		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+	}
+	return n.decode(value)
+}
+
 func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -163,8 +230,51 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 	if err := n.status(); err != nil {
 		return err
 	}
-	n.store.Set(key, n.encode(val), ttl)
+
+	p, err := n.cache.route.locate(n.groupKeyFor(key))
+	if err != nil {
+		return err
+	}
+	if !p.local {
+		if err := n.cache.route.remoteSet(ctx, p, n.name, key, val, ttl); err != nil {
+			if !retryable(err) {
+				return err
+			}
+			next, rerr := n.cache.route.locate(n.groupKeyFor(key))
+			if rerr != nil || (!next.local && next.owner.ID == p.owner.ID) {
+				return err
+			}
+			if next.local {
+				return n.localSet(ctx, key, val, ttl)
+			}
+			return n.cache.route.remoteSet(ctx, next, n.name, key, val, ttl)
+		}
+		// Drop any copy this node was holding. It is now known stale,
+		// and keeping it would mean this node serves its own write back
+		// as the old value.
+		if n.l1 != nil {
+			n.l1.Invalidate(key)
+		}
+		return nil
+	}
+	return n.localSet(ctx, key, val, ttl)
+}
+
+// localSet writes to this node's owned store and tells the cluster.
+func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
+	version := n.store.Set(key, n.encode(val), ttl)
+	n.cache.invalidator.enqueue(n.name, []string{key}, n.stamp(version))
 	return nil
+}
+
+// stamp pairs a store version with this node's epoch. See [core.Stamp] for why
+// the version alone will not do.
+func (n *namespace) stamp(version uint64) core.Stamp {
+	var epoch uint64
+	if n.cache.guard != nil {
+		epoch = uint64(n.cache.guard.Stats().Epoch)
+	}
+	return core.Stamp{Epoch: epoch, Version: version}
 }
 
 func (n *namespace) Delete(ctx context.Context, key string) error {
@@ -174,7 +284,30 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 	if err := n.status(); err != nil {
 		return err
 	}
+
+	p, err := n.cache.route.locate(n.groupKeyFor(key))
+	if err != nil {
+		return err
+	}
+	if !p.local {
+		if err := n.cache.route.remoteDelete(ctx, p, n.name, key); err != nil {
+			return err
+		}
+		if n.l1 != nil {
+			n.l1.Invalidate(key)
+		}
+		return nil
+	}
+
 	n.store.Delete(key)
+	// A deletion invalidates every cached copy. The stamp carries this
+	// node's epoch with a version above anything the deleted entry could
+	// have held, so a peer holding an older copy drops it; a peer that has
+	// somehow already seen a newer write keeps that instead.
+	n.cache.invalidator.enqueue(n.name, []string{key}, n.stamp(math.MaxUint64))
+	if n.l1 != nil {
+		n.l1.Invalidate(key)
+	}
 	return nil
 }
 
@@ -185,9 +318,40 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 	if err := n.status(); err != nil {
 		return false, err
 	}
-	return n.store.Exists(key), nil
+
+	p, err := n.cache.route.locate(n.groupKeyFor(key))
+	if err != nil {
+		return false, err
+	}
+	if p.local {
+		return n.store.Exists(key), nil
+	}
+
+	// No dedicated RPC: existence is a Get whose value is discarded. Adding
+	// a method to save the payload would buy little — the answer is a miss
+	// or a value that a caller checking existence usually wants next — and
+	// would add a wire method that must then be kept in step forever.
+	_, err = n.remoteGet(ctx, p, key, true)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
+// BatchGet groups keys by owner and issues one request per owner.
+//
+// This is the whole reason the method exists. A thousand keys spread over three
+// nodes cost three round trips, not a thousand — and the grouping is the same
+// decision the partitioner already makes, so keys deliberately placed together
+// travel together.
+//
+// A partial failure returns what was collected alongside the error. A caller
+// that can use half an answer should not be denied it because one owner was
+// slow, and a caller that cannot will check the error.
 func (n *namespace) BatchGet(ctx context.Context, keys []string) (map[string][]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -197,13 +361,45 @@ func (n *namespace) BatchGet(ctx context.Context, keys []string) (map[string][]b
 	}
 
 	out := make(map[string][]byte, len(keys))
+	byOwner, unresolved, err := n.cache.route.groupKeysByOwner(n, keys)
+	if err != nil {
+		return out, err
+	}
+
+	var failures error
+	if len(unresolved) > 0 {
+		failures = fmt.Errorf("peercache: %d key(s) have no resolvable owner: %w",
+			len(unresolved), ErrNotFound)
+	}
+
+	for id, batch := range byOwner {
+		if err := ctx.Err(); err != nil {
+			return out, errors.Join(failures, err)
+		}
+		if id == localBucket {
+			if err := n.localBatchGet(ctx, batch.keys, out); err != nil {
+				failures = errors.Join(failures, err)
+			}
+			continue
+		}
+		if err := n.remoteBatchGet(ctx, batch, out); err != nil {
+			// One unreachable owner does not invalidate the keys
+			// that did come back.
+			failures = errors.Join(failures, err)
+		}
+	}
+	return out, failures
+}
+
+// localBatchGet reads the keys this node owns straight from its store.
+func (n *namespace) localBatchGet(ctx context.Context, keys []string, out map[string][]byte) error {
 	for i, key := range keys {
 		// A large batch must not outlive the caller's deadline. Checking
 		// periodically rather than per key keeps the check off the hot
 		// path while still bounding the overrun.
 		if i%64 == 0 {
 			if err := ctx.Err(); err != nil {
-				return out, err
+				return err
 			}
 		}
 		stored, _, ok := n.store.Get(key)
@@ -215,11 +411,50 @@ func (n *namespace) BatchGet(ctx context.Context, keys []string) (map[string][]b
 		}
 		val, err := n.decode(stored)
 		if err != nil {
-			return out, err
+			return err
 		}
 		out[key] = val
 	}
-	return out, nil
+	return nil
+}
+
+// remoteBatchGet fetches one owner's share, serving whatever the non-owned tier
+// already holds and asking only for the rest.
+func (n *namespace) remoteBatchGet(ctx context.Context, batch *ownerBatch, out map[string][]byte) error {
+	wanted := batch.keys
+	if n.l1 != nil {
+		wanted = wanted[:0:0]
+		for _, key := range batch.keys {
+			if val, _, ok := n.l1.Get(key); ok {
+				decoded, err := n.decode(val)
+				if err != nil {
+					return err
+				}
+				out[key] = decoded
+				continue
+			}
+			wanted = append(wanted, key)
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+
+	entries, err := n.cache.route.remoteBatchGet(ctx, batch.placement, n.name, wanted)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		val, err := n.decode(e.Value)
+		if err != nil {
+			return err
+		}
+		out[e.Key] = val
+		if n.l1 != nil {
+			n.l1.Put(e.Key, e.Value, e.Stamp, n.opts.L1TTL)
+		}
+	}
+	return nil
 }
 
 func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error {
