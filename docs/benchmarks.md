@@ -561,6 +561,48 @@ the last acknowledgement, so the queue is not the constraint at this rate.
 return until the replicas hold it. `TestSyncModeHasNoWindow` asserts that with
 no waiting of any kind: the copies must exist the instant `Set` returns.
 
+### internal/replication — the replica store
+
+On the write path of every replicated namespace: an owner's fan-out becomes one
+`Put` per replica, so this cost is paid per key per replica.
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `Put` (one hot key) | 54.3 | 0 | 0 |
+| `PutDistinctKeys` (4096 keys) | 62.7 | 0 | 0 |
+| `PutRejected` (stale copy) | 48.8 | 0 | 0 |
+| `Get` | 37.6 | 0 | 0 |
+| `StampComparison` | 0.12 | 0 | 0 |
+
+**The write path is allocation-free**, which matters because it runs once per
+replica per write: at RF=3 a single application write becomes two of these.
+
+**Rejecting a stale copy is cheaper than accepting a fresh one** — 48.8 ns
+against 54.3. That is the right way round. Asynchronous replication reorders,
+so out-of-order arrivals are routine rather than exceptional, and a system where
+the disorderly case cost more would degrade exactly when the network was already
+struggling.
+
+Reconciliation is paid per membership change rather than per request, which is
+why it is allowed to be four orders of magnitude more expensive:
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `Drain` 1,000 keys | 22,214 | 21,240 | 11 |
+| `Drain` 100,000 keys | 2,677,751 | 2,886,920 | 81 |
+| `Evict` 1,000 keys | 29,892 | 0 | 0 |
+| `Evict` 100,000 keys | 7,930,219 | 0 | 0 |
+
+**A node holding 100,000 replicas spends ~2.7 ms promoting half of them and
+~7.9 ms evicting half.** Both run on the membership watcher, so that is added
+latency on the *next* view change rather than on any request — but it bounds how
+large a replica set can get before reconciliation becomes visible. At a million
+keys it would be tens of milliseconds, which is worth knowing before it is
+discovered.
+
+`Evict` allocates nothing because it only deletes; `Drain` builds the map it
+hands to promotion, which is the allocation.
+
 ### Chaos
 
 SPEC.md §4: "a chaos test that kills a random node every 2 seconds for 60
