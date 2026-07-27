@@ -73,6 +73,17 @@ func WithListener(l net.Listener) Option {
 	return func(o *core.Options) { o.Listener = l }
 }
 
+// WithTransport supplies the fabric this node reaches its peers over.
+//
+// Nil is a supported configuration rather than an error: it means single-node
+// operation with no networking, in which case every key is owned locally and
+// nothing is ever routed. A cache configured that way still answers
+// [ErrNotImplemented] if something asks it to reach another node, which is the
+// only way that sentinel is still reachable.
+//
+// Pair it with [WithMembership]. A transport without a membership authority has
+// nobody to talk to, and a membership authority without a transport can see
+// peers it cannot reach.
 func WithTransport(t Transport) Option {
 	return func(o *core.Options) { o.Transport = t }
 }

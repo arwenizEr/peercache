@@ -336,12 +336,32 @@ func TestCatchUpCountersMove(t *testing.T) {
 	assertMetric(t, f.caches[victim], "peercache_replicas_pulled_total")
 }
 
-// TestKeysAdoptedIsCounted covers the counter for the receiving end of a drain.
+// TestKeysAdoptedIsCounted covers the receiving end of a drain.
 //
-// KeysHandedOff counts what the departing node pushed. KeysAdopted counts what
-// the new owner took into its owned store. The two being separate matters: a
-// handoff that is sent and not adopted is silent data loss, and the only way to
-// see it is that the numbers disagree.
+// KeysHandedOff counts what the departing node pushed. The receiver takes each
+// key into its owned store one of two ways: *adoption*, when it already owns the
+// key as the transfer lands, or *promotion*, when the transfer arrives before it
+// has processed the departure and is filed as a replica for the next
+// reconciliation to pick up. The fear the test exists for is that a handed-off
+// key reaches neither — "sent and not adopted is silent data loss" — and that is
+// what it asserts.
+//
+// # Why it does not assert adoption alone
+//
+// It used to, and it was a race. Drain announces its departure and then
+// transfers, with nothing synchronising the two, so which path a key takes
+// depends on whether the receiver's view updated before the transfer landed.
+// Both preserve the data, which is why the library is built to tolerate either.
+//
+// M8 caught this the hard way. Adding a hand-off goroutine per cache — an
+// unrelated change that touched no drain code — shifted the scheduling enough to
+// make every key take the promotion path, and the test failed claiming "silent
+// data loss" while no data had been lost. It then *passed* when a diagnostic
+// t.Logf was added above the assertion, which is the definition of a test
+// measuring the observer.
+//
+// So it asserts the outcome and not the route: every handed-off key is in some
+// receiver's owned store, and every key written is still readable.
 func TestKeysAdoptedIsCounted(t *testing.T) {
 	f := newFabricFull(t, 3, false, testkit.MembershipConfig{
 		FailureTimeout: 300 * time.Millisecond,
@@ -358,7 +378,8 @@ func TestKeysAdoptedIsCounted(t *testing.T) {
 	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	f.settle(t)
 
-	for i := 0; i < 200; i++ {
+	const keys = 200
+	for i := 0; i < keys; i++ {
 		if err := writeWithRetry(t, f, openNS, fmt.Sprintf("ad/%d", i), "v"); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -372,25 +393,58 @@ func TestKeysAdoptedIsCounted(t *testing.T) {
 	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	f.settle(t)
 
+	receivers := []string{f.ids[1], f.ids[2]}
+	taken := func() (adopted, promoted int64) {
+		for _, id := range receivers {
+			s := f.caches[id].Stats()
+			adopted += s.KeysAdopted
+			promoted += s.KeysPromoted
+		}
+		return adopted, promoted
+	}
+
 	handedOff := f.caches[victim].Stats().KeysHandedOff
-	var adopted int64
-	var adopter string
-	for _, id := range []string{f.ids[1], f.ids[2]} {
-		if n := f.caches[id].Stats().KeysAdopted; n > adopted {
-			adopted, adopter = n, id
+	if handedOff == 0 {
+		t.Fatal("the drained node handed off nothing, so there is nothing to observe")
+	}
+
+	// The promotion path needs one reconciliation after the transfer, which a
+	// membership change drives. Give it room rather than assuming the ordering
+	// that failed above.
+	for i := 0; i < 20; i++ {
+		if a, p := taken(); a+p >= handedOff {
+			break
+		}
+		f.clk.Advance(2 * ownership.DefaultActivationDelay)
+		f.settle(t)
+	}
+
+	adopted, promoted := taken()
+	t.Logf("handed off %d; receivers adopted %d and promoted %d", handedOff, adopted, promoted)
+
+	if adopted+promoted < handedOff {
+		t.Fatalf("%d keys were handed off and the receivers account for only %d "+
+			"(%d adopted, %d promoted). A key that is sent and lands in neither the "+
+			"owned store nor a promotion is silent data loss",
+			handedOff, adopted+promoted, adopted, promoted)
+	}
+
+	// And the data itself, which is the thing the counters are a proxy for.
+	for i := 0; i < keys; i++ {
+		key := fmt.Sprintf("ad/%d", i)
+		if got, err := readAnywhere(t, f, openNS, key); err != nil || got != "v" {
+			t.Fatalf("after the drain, %s = %q (%v); a graceful shutdown must not lose "+
+				"the keys it was transferring", key, got, err)
 		}
 	}
 
-	if handedOff == 0 {
-		t.Fatal("the drained node handed off nothing, so adoption cannot be observed")
+	// The counter that did move must reach the scrape output. Which one moved
+	// is the race above; that at least one did is not.
+	if adopted > 0 {
+		assertMetric(t, f.caches[receivers[0]], "peercache_keys_adopted_total")
+		return
 	}
-	if adopted == 0 {
-		t.Fatalf("%d keys were handed off and none were adopted; either the receiving "+
-			"side files them somewhere they are never promoted from, or KeysAdopted "+
-			"is not wired — both are silent data loss", handedOff)
-	}
-	t.Logf("handed off %d, adopted %d (max on %s)", handedOff, adopted, adopter)
-	assertMetric(t, f.caches[adopter], "peercache_keys_adopted_total")
+	assertMetric(t, f.caches[receivers[0]], "peercache_keys_promoted_total")
 }
 
 // TestReplicasEvictedIsCounted covers the counter for replicas a node stops

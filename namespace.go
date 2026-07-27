@@ -298,9 +298,10 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		// No resolvable replicas is not a write failure. It means this
 		// node is alone, or membership is not settled, and refusing the
 		// write would make a single-node cluster unable to accept one.
+		n.countDegraded(len(targets))
 		return nil
 	}
-	return n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{
+	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{
 		namespace: n.name,
 		key:       key,
 		value:     encoded,
@@ -308,7 +309,66 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		stamp:     stamp,
 		deleted:   deleted,
 		targets:   targets,
-	})
+	}); err != nil {
+		return err
+	}
+	n.countDegraded(len(targets))
+	return nil
+}
+
+// countDegraded records a synchronous write that was acknowledged holding fewer
+// copies than the namespace's replication factor asked for.
+//
+// # What it is counting
+//
+// Replication targets are the runners-up in the ranking over the *writer's own
+// membership view*. A node that has been cut off from the cluster eventually
+// detects every peer as failed, its view shrinks to itself, it ranks itself the
+// owner of everything, and synchronous replication then places every copy it can
+// reach — none — and returns nil. The caller asked for three copies, got one,
+// and cannot tell.
+//
+// That is open question 37, and this counter is its first option: make the
+// window visible without changing what any data path does. A caller that reads
+// `Set` returning nil as "RF nodes have this" is wrong during a partition, and
+// until now nothing said so. Now `Stats().DegradedWrites` and
+// `peercache_degraded_writes_total` do.
+//
+// # Why it is only counted for synchronous writes
+//
+// Asynchronous replication makes no promise about when a copy lands, so every
+// asynchronous write is momentarily below its replication factor by design —
+// the window is measured in docs/benchmarks.md rather than counted here.
+// Counting them would produce a metric that equals the write rate and means
+// nothing. The synchronous promise is the one a caller can be misled by.
+//
+// # Why the partial-failure case does not reach here
+//
+// Under synchronous replication a target that refuses or cannot be reached makes
+// `fanOut` return an error, so the write is not acknowledged at all. The only
+// way to be acknowledged below the factor is for the targets to be missing from
+// the ranking in the first place, which is exactly the shrunken-view case.
+func (n *namespace) countDegraded(placed int) {
+	if !n.opts.SyncReplication || n.opts.ReplicationFactor < 2 {
+		return
+	}
+	// The writer holds one copy itself; `placed` is the rest.
+	if 1+placed >= n.opts.ReplicationFactor {
+		return
+	}
+	// Logged once per node, not once per write. A partition degrades every
+	// write for as long as it lasts, and a log line per write turns an
+	// operational signal into an outage of its own. The counter carries the
+	// rate; this line exists so the first one is not silent.
+	if n.cache.degradedWrites.Add(1) == 1 {
+		n.cache.opts.Logger.Warn(
+			"synchronous write acknowledged below its replication factor",
+			"namespace", n.name,
+			"replication_factor", n.opts.ReplicationFactor,
+			"copies", 1+placed,
+			"members", n.cache.memberCount(),
+			"detail", "this node's membership view is too small to place the copies its namespace asks for; see Stats().DegradedWrites and peercache_degraded_writes_total")
+	}
 }
 
 // stamp pairs a store version with this node's epoch. See [core.Stamp] for why
