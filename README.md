@@ -208,7 +208,7 @@ internal/
   metrics/        Metric collection, text format, histograms  (M7)
 
 proto/            gRPC service definitions                   (M4)
-examples/         One runnable example per milestone
+examples/         One runnable example per milestone, m0 through m8
 deploy/           Kubernetes manifests and the operational guide (M6)
 scripts/          mutation-audit.sh, clean/ (the `make clean` implementation)
 docs/             api.md, benchmarks.md, verification.md, decisions/

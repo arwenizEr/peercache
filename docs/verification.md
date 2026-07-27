@@ -1638,6 +1638,9 @@ place rather than reconstructed from a narrative:
 | `TestReadmeListsEveryRootFile` | `handoff.go` removed from the layout block | **caught** |
 | the audit's own orphan guard | a `mutate` line dropped from a fuzz entry | **VACUOUS twice, then caught** — see above |
 | all five entries above, via `ONLY` | run by the script rather than by hand | **caught: 5, vacuous: 0, skipped: 0** |
+| `TestMutationAuditCitesOnlyRealTests` | an entry's test name renamed in the script | **caught** — names the script and line, not the test |
+| `examples/m8` | the hand-off deleted from promote.go | **VACUOUS at first, then caught** — readability survives, the rehomed count does not |
+| `examples/m8`, second half | the degraded counter never incremented | **caught** |
 | the aggregate copy-count test (name not kept; it was deleted) | catch-up removed | **VACUOUS — test deleted** |
 
 Two entries are the interesting ones. The last is a test that could not fail and
@@ -1769,6 +1772,31 @@ about.
 
 Both targets now have entries in `scripts/mutation-audit.sh`, and getting them
 there found a third hole in that script's own guard — recorded below.
+
+**Every target was then run for two minutes rather than the thirty seconds the
+regression gate uses**, which is the first time the full set has been given a real
+campaign on this machine:
+
+| Target | Execs | New interesting | Result |
+|---|---:|---:|---|
+| `FuzzUnframe` | 2,879,453 | 0 | pass |
+| `FuzzFrameRoundTrip` | 2,730,144 | 5 | pass |
+| `FuzzCodecRoundTrip` | 3,862,004 | 45 | pass |
+| `FuzzDecode` | 6,365,523 | 48 | pass |
+| `FuzzDecodeEveryMessage` | 4,123,029 | 26 | pass |
+| `FuzzPartitionByPrefix` | 1,663,706 | 0 | pass |
+
+21.6 million executions, twelve minutes, no crashers, and `testdata/fuzz` still
+holds exactly the one input an earlier milestone committed.
+
+Two of those rows say something. The zeros are the targets whose input space is
+small enough that the seed corpus already covers it — `FuzzPartitionByPrefix`
+takes two strings and reached nothing new in 1.6 million tries, which is the
+expected shape for a function with four branches. The 45 for `FuzzCodecRoundTrip`
+is the opposite and also expected: it is two minutes into a target that had
+previously seen twenty seconds. Neither number is evidence of a bug; both are
+evidence about how much of each target's space is reachable, which is the thing
+worth knowing before deciding what the nightly campaign should spend its time on.
 
 **The general point is about where verification is written down.** Every check in
 this repository lives in a `_test.go` file except the ones that live in a
@@ -1934,6 +1962,100 @@ behaved exactly as the Go ones do. The line about 105 unexecuted entries is the
 part of that output worth keeping: it is there so a filtered run cannot be quoted
 as a full one, which is the failure mode a filter introduces and the reason the
 filter had to print something rather than nothing.
+
+### The milestone that built no features still needed an example
+
+`examples/` holds one runnable program per milestone and stopped at m7. README
+says "one runnable example per milestone", which had been true for eight
+milestones and was not any more.
+
+The tempting answer was to narrow the claim, on the grounds that M8 built
+verification rather than features. That is wrong on the facts: M8 changed what
+the library does under failure twice — a heal now moves replicas instead of
+evicting them, and a synchronous write below its replication factor is now
+counted. Both are user-visible, both are things an operator has to know, and
+neither had a demonstration a reader could run.
+
+`examples/m8` runs both against a simulated network and a fake clock, and asserts
+what it prints rather than only printing it:
+
+```
+  healed, ownership recomputed, catch-up run:
+    peercache_replicas_rehomed_total    33
+    peercache_replicas_retained_total   0
+    keys still readable                 60 of 60
+
+  pod-0 now sees 1 member(s) and was asked for 3 copies
+  Set returned <nil>
+    peercache_degraded_writes_total     1
+```
+
+It returns an error rather than printing a smaller number if a heal loses a key,
+or if a write is acknowledged below its factor with nothing counting it. `make
+examples` runs it, so both are gates rather than illustrations — which is the
+rule the examples directory has had since M1 broke the M0 example and nothing
+noticed.
+
+**And the first version of it was vacuous**, which is the part worth keeping.
+
+It asserted the obvious thing: after the heal, all 60 keys are still readable.
+That assertion passes with the entire hand-off deleted. Reverting `promote.go` to
+the eviction M8 replaced and running the example gives `rehomed 0` and
+`readable 60 of 60`, exit 0 — because `CatchUp` then refetches the evicted copies
+from their new owners. Readability is restored either way; what differs is
+whether the copies *moved* or were dropped and fetched again, and the loss only
+becomes visible when nodes are destroyed inside the settling window, which is
+what `TestMajoritySideWritesSurviveAHealAndTwoDestructions` does and what an
+example should not.
+
+So the load-bearing assertion is the rehomed count, and the example says so in
+its own output rather than leaving a reader to assume the readable line is the
+evidence. Confirmed the same way the finding was: with the hand-off removed it
+now exits 1.
+
+This is the second time in this milestone that a check written to demonstrate one
+of M8's own fixes turned out unable to fail — the first was a test, deleted for
+the same reason. Writing the demonstration is not the hard part. Establishing
+that the demonstration would notice the thing going away is, and it takes a
+minute per artefact and was skipped here by someone who had spent the preceding
+day writing about not skipping it.
+
+Writing it surfaced one thing worth recording. The first version advanced the
+clock past the activation delay and wrote immediately, and failed with
+`activation deferred after a membership change` on the fifteenth key. A
+membership change does not finish when the member counts agree: each node then
+reconciles what it holds against what it should hold, and the guard defers
+activating a group until its ownership has been stable. The example now waits for
+reconciliation to go quiet, the same `settle` the tests use. An example that
+retried past the guard would have been demonstrating a race and calling it a
+feature.
+
+### One more file citing tests, and nothing checking it
+
+`TestDocsCiteOnlyRealTests` covers `docs/` and README. It does not cover the file
+that names more tests than all of them together: `scripts/mutation-audit.sh`
+cites one test per entry, over a hundred of them.
+
+A stale name there is not silent — `go test -run` matching nothing passes, so the
+entry reports VACUOUS and the run exits non-zero. It is worse than silent. VACUOUS
+means "this test did not notice the behaviour breaking", which sends whoever reads
+it to the test; the actual fault is a string in a shell script, and the two are
+indistinguishable in the output. An hour-long audit that misattributes its own
+failure is a tool people learn to argue with.
+
+`TestMutationAuditCitesOnlyRealTests` names the real cause in two seconds. The
+script makes 110 citations resolving to 102 distinct tests, and all of them
+exist. It skips comment text, because the guard at the top of that file documents
+itself with `'TestSomething'` — the same prose-versus-pattern distinction
+`proseOnly` draws for Markdown, arrived at independently for the third time in
+this milestone.
+
+The two numbers in that sentence are not decoration. The first draft said "all
+102 currently resolve", having counted distinct names with one script and
+citations with another and then quoted whichever number was to hand — a
+derived figure, wrong, in the paragraph introducing a check for derived figures
+being wrong. It was caught by recomputing rather than by rereading, which by now
+is the only method in this file with a record of working.
 
 ### What was counted rather than fixed
 

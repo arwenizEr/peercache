@@ -27,9 +27,11 @@ and output-checked by `go test`:
 End-to-end programs, one per milestone: `go run ./examples/m0` (skeleton and
 lifecycle), `m1` (the local data path), `m2` (the group actor runtime), `m3` (a
 real three-node cluster over loopback gossip), `m4` (remote routing), `m5`
-(replication and failure), `m6` (rebalancing and drain) and `m7` (the scrape
-endpoint and the counters that matter). Each one asserts what it demonstrates
-and all are run by CI.
+(replication and failure), `m6` (rebalancing and drain), `m7` (the scrape
+endpoint and the counters that matter) and `m8` (a partition heal that moves
+replicas rather than dropping them, and the synchronous write acknowledged below
+its replication factor). Each one asserts what it demonstrates and all are run by
+CI.
 
 **Milestone status:** all seven complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,

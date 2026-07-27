@@ -1211,3 +1211,72 @@ func TestApiDocMetricCountsAreCorrect(t *testing.T) {
 			intro[0], rows)
 	}
 }
+
+// TestMutationAuditCitesOnlyRealTests applies TestDocsCiteOnlyRealTests to the
+// one file that names more tests than any document does.
+//
+// `scripts/mutation-audit.sh` cites over a hundred test names, one per entry, as
+// the `-run` argument it checks each mutation against. A renamed test does not
+// go unnoticed there — `go test -run` matching nothing passes, so the entry
+// reports VACUOUS and the run exits non-zero — but it reports the wrong thing.
+// VACUOUS means "this test did not notice the behaviour breaking", which sends
+// whoever reads it to the test. The actual fault is a stale string in a shell
+// script, and the two look identical in the output.
+//
+// This names the real cause before the audit has to guess at it, and it runs in
+// two seconds against an audit that takes an hour.
+//
+// Comment text is skipped. The guard at the top of that file documents itself
+// with 'TestSomething' and 'TestSomethingSpecific$', which are illustrations
+// rather than citations — the same distinction between prose and a pattern that
+// proseOnly draws for Markdown, and the same one the audit's own orphan check
+// makes when it skips comments.
+func TestMutationAuditCitesOnlyRealTests(t *testing.T) {
+	defined := make(map[string]bool)
+	walkGoFiles(t, func(path, content string) {
+		if !strings.HasSuffix(path, "_test.go") {
+			return
+		}
+		for _, m := range regexp.MustCompile(`func ((?:Test|Fuzz)[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(content, -1) {
+			defined[m[1]] = true
+		}
+	})
+	if len(defined) == 0 {
+		t.Fatal("found no test functions; this check is not reading what it thinks it is")
+	}
+
+	body, err := os.ReadFile(filepath.Join("scripts", "mutation-audit.sh"))
+	if err != nil {
+		t.Fatalf("reading the mutation audit: %v", err)
+	}
+
+	// A whole quoted token that is nothing but a test-name pattern. The
+	// `from` and `to` arguments of an entry are quoted Go source, which
+	// contains spaces and braces and so cannot match this.
+	cite := regexp.MustCompile(`'\^?((?:Test|Fuzz)[A-Za-z0-9_|]+)\$?'`)
+
+	cited := 0
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		for _, m := range cite.FindAllStringSubmatch(line, -1) {
+			// An entry may select several tests with an alternation.
+			for _, name := range strings.Split(m[1], "|") {
+				if name == "" {
+					continue
+				}
+				cited++
+				if !defined[name] {
+					t.Errorf("scripts/mutation-audit.sh:%d cites %s, which no test "+
+						"defines. Left alone this reports as VACUOUS, which blames "+
+						"the test for a stale name in the script", i+1, name)
+				}
+			}
+		}
+	}
+	if cited < 50 {
+		t.Fatalf("found only %d cited test names in the audit; this check is not "+
+			"reading what it thinks it is", cited)
+	}
+}

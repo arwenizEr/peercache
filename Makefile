@@ -11,11 +11,12 @@ TIMEOUT ?= 300s
 #
 # The root package takes ~215s for one race pass on Machine A, so `-count=2`
 # needed 439s when this was written and measures 527s now that M8's tests are in
-# it. The 300s this file used to share with the non-race gate could not be met. It was not being met: `make test-race` failed with
-# `panic: test timed out after 5m0s`, mid-way through the second pass, with a
-# test running normally at the moment the alarm fired. M8 measured it; the gate
-# had been unpassable on this machine for some time before that, since a single
-# pass has been over 200s since at least the start of that milestone.
+# it. The 300s this file used to share with the non-race gate was not being met:
+# `make test-race` failed with `panic: test timed out after 5m0s`, mid-way
+# through the second pass, with a test running normally at the moment the alarm
+# fired. M8 measured it; the gate had been unpassable on this machine for some
+# time before that, since a single pass has been over 200s since at least the
+# start of that milestone.
 #
 # Raising it is not weakening the gate. A timeout here exists to turn a deadlock
 # into a failure rather than a hung CI job, and 900s does that just as well as
@@ -51,6 +52,7 @@ examples:
 	$(GO) run ./examples/m5
 	$(GO) run ./examples/m6
 	$(GO) run ./examples/m7
+	$(GO) run ./examples/m8
 
 ## test runs the suite without the race detector, which is the fast feedback loop.
 test:
