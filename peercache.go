@@ -222,6 +222,7 @@ func New(opts ...Option) (Cache, error) {
 	c.invalidator = newInvalidator(c)
 	c.replicas = replication.NewStore()
 	c.replicator = newReplicator(c)
+	c.handoff = newHandoff(c)
 	c.promoter = newPromoter(c)
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
@@ -265,6 +266,17 @@ func New(opts ...Option) (Cache, error) {
 				if guard != nil {
 					guard.Close()
 				}
+				// The background workers were started above and this
+				// path returns no Cache, so nothing else will ever
+				// close them. Leaving them running was a leak on a
+				// rare path — three goroutines per failed New — which
+				// only stayed invisible because no test constructs a
+				// cache whose transport refuses to serve and then
+				// checks for leaks.
+				c.promoter.Close()
+				c.invalidator.Close()
+				c.replicator.Close()
+				c.handoff.Close()
 				return nil, fmt.Errorf("peercache: serving peers: %w", err)
 			}
 		}
@@ -305,8 +317,13 @@ type cache struct {
 	// replicator fans owned writes out to those replicas.
 	replicator *replicator
 
+	// handoff moves replicas this node has stopped ranking for to the nodes
+	// that now rank for them, before dropping them. See handoff.go for the
+	// data loss that happens when they are simply dropped.
+	handoff *handoff
+
 	// promoter turns replicas into owned keys when membership moves them
-	// here, and drops the ones it moves away.
+	// here, and hands off the ones it moves away.
 	promoter *promoter
 
 	// catchup pulls replicas a restarted node has forgotten it holds.
@@ -341,6 +358,10 @@ type cache struct {
 	// different membership epoch. Expected and harmless during churn; a
 	// sustained rate under stable membership means views are not settling.
 	epochSkew atomic.Int64
+
+	// degradedWrites counts synchronous writes acknowledged with fewer copies
+	// than the namespace's replication factor asked for. See open question 37.
+	degradedWrites atomic.Int64
 
 	// serving tracks the goroutine running Transport.Serve, so that Close
 	// can wait for it rather than leaving it to notice on its own. M3 lost a
@@ -525,6 +546,10 @@ func (c *cache) Stats() Stats {
 		stats.KeysHandedOff = c.keysHandedOff.Load()
 		stats.KeysAdopted = c.keysAdopted.Load()
 		stats.ImplicitNamespaces = c.implicitNamespaces.Load()
+		stats.DegradedWrites = c.degradedWrites.Load()
+		rehomed, returned := c.handoff.counters()
+		stats.ReplicasRehomed = rehomed
+		stats.ReplicasRetained = returned
 	}
 	for _, ns := range namespaces {
 		if ns.store == nil {
@@ -631,6 +656,12 @@ func (c *cache) Close(ctx context.Context) error {
 		}
 		if c.replicator != nil {
 			c.replicator.Close()
+		}
+		// After the promoter, which is what feeds it: closing the
+		// queue's producer first means nothing is enqueued into a
+		// worker that has stopped reading.
+		if c.handoff != nil {
+			c.handoff.Close()
 		}
 		if c.transport != nil {
 			if err := c.transport.Close(); err != nil {

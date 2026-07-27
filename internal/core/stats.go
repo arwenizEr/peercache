@@ -120,6 +120,24 @@ type Stats struct {
 	// under stable membership means the view is not settling.
 	KeysPromoted    int64
 	ReplicasEvicted int64
+
+	// ReplicasRehomed counts replicas this node handed to the nodes that now
+	// rank for them before dropping its own copy. ReplicasRetained counts the
+	// ones it could not place and kept instead.
+	//
+	// Together they account for every replica ReplicasEvicted counts: a
+	// membership change moves keys, and each moved copy is either placed
+	// elsewhere or held onto. Dropping it because this node stopped ranking
+	// for it — which is what happened before M8 — loses the key whenever the
+	// nodes that now rank for it hold nothing, which is the ordinary case
+	// after a partition heals. See docs/decisions/open.md question 38.
+	//
+	// A rising ReplicasRetained under stable membership means hand-offs are
+	// failing and this node is accumulating copies it does not rank for. It
+	// is memory rather than data loss, which is the safe direction, but it
+	// means the cluster is not converging.
+	ReplicasRehomed  int64
+	ReplicasRetained int64
 	// PromotionRounds counts reconciliations run. It exists so the two
 	// counters above can be read as a rate, and so a test can wait for a
 	// membership change to have been *acted on* rather than merely observed.
@@ -159,6 +177,30 @@ type Stats struct {
 	// The remedy is to open every namespace, with the options you want, on
 	// every node before serving traffic.
 	ImplicitNamespaces int64
+
+	// DegradedWrites counts synchronous writes this node acknowledged while
+	// holding fewer copies than the namespace's replication factor asked for.
+	//
+	// Replication targets come from the ranking over this node's own
+	// membership view. A node cut off from the cluster eventually detects
+	// every peer as failed, ranks itself the owner of everything, places
+	// every copy it can reach — one, its own — and returns success. The
+	// caller asked for three copies and cannot tell it got one.
+	//
+	// Any non-zero value means synchronous replication was not synchronous
+	// with anything: for that write, the promise that a returned Set has
+	// reached the replication factor did not hold. During a partition it
+	// rises for as long as the partition lasts, which is what makes it worth
+	// alerting on rather than merely watching — it is the only signal that
+	// distinguishes a degraded acknowledgement from a healthy one.
+	//
+	// Asynchronous writes are not counted. They promise nothing about when a
+	// copy lands, so counting them would produce a number equal to the write
+	// rate; the async window is measured in docs/benchmarks.md instead.
+	//
+	// See docs/decisions/open.md question 37 for why this is counted rather
+	// than refused.
+	DegradedWrites int64
 
 	// StateEscapes counts uses of a GroupState outside the turn that issued
 	// it. Any non-zero value is an application bug.

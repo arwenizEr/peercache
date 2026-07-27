@@ -143,10 +143,51 @@ func (p *promoter) reconcile() {
 			// discarded; it is older by definition.
 		}
 
-		dropped := c.replicas.Evict(name, func(key string) bool {
-			return c.stillReplicaFor(ns.groupKeyFor(key), rf, self)
+		// Hand off rather than evict.
+		//
+		// Dropping a replica because *this* node stopped ranking for it says
+		// nothing about whether a node that now ranks for it holds a copy,
+		// and after a partition heals it usually does not: the copies were
+		// placed at ranking positions computed without the absent node, so
+		// its return moves every one of those keys to a node holding
+		// nothing. Open question 38 is that loss. See handoff.go.
+		//
+		// Draining with the inverted predicate removes the orphans under the
+		// same lock that Evict used, so a concurrent Put cannot strand a copy
+		// behind the pass. Every failure path in the hand-off puts the entry
+		// back, so the local copy survives anything except a successful
+		// placement elsewhere.
+		if rf < 2 {
+			// A namespace that replicates nothing has no replica set for a
+			// copy to belong to, so there is nowhere to hand one. Anything
+			// here arrived under a configuration that no longer applies and
+			// is dropped, exactly as it was before M8.
+			//
+			// Handing off instead would not merely be pointless, it would
+			// not terminate: replicaTargets returns nothing below RF 2, so
+			// every hand-off would fail, restore the copy, and orphan it
+			// again on the next reconciliation.
+			//
+			// This branch is reasoned, not measured, and says so.
+			// TestAReplicaInANonReplicatingNamespaceIsDroppedNotHandedOff
+			// states the property and skips: a drain at RF=1 pushes to two
+			// targets, and in that harness both receivers adopt their own
+			// share, so the surplus copy this branch exists for never
+			// appears. The handler comment in handler.go describes that copy
+			// as a case M6 saw, so the condition is real — it is just not one
+			// the public API produces on demand. Recorded here rather than
+			// covered by a test that would not execute it.
+			p.evicted.Add(int64(c.replicas.Evict(name, func(string) bool { return false })))
+			continue
+		}
+
+		orphans := c.replicas.Drain(name, func(key string) bool {
+			return !c.stillReplicaFor(ns.groupKeyFor(key), rf, self)
 		})
-		p.evicted.Add(int64(dropped))
+		for key, e := range orphans {
+			p.evicted.Add(1)
+			c.handoff.enqueue(handoffWork{namespace: name, key: key, entry: e})
+		}
 	}
 }
 

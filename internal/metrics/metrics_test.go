@@ -165,6 +165,12 @@ func TestCorrectnessMetricsAreCounters(t *testing.T) {
 		"peercache_catchup_failures_total",
 		"peercache_mailbox_rejections_total",
 		"peercache_version_conflicts_total",
+		// M8. Both are named in docs/api.md's alerting table, which claims
+		// every entry in it is a counter and cites this test as the reason
+		// that stays true. It listed eight while the table listed ten until
+		// the claim was checked rather than trusted.
+		"peercache_degraded_writes_total",
+		"peercache_replicas_retained_total",
 	} {
 		if kinds[name] != metrics.Counter {
 			t.Errorf("%s is a %v, want a counter; rate() and increase() are the "+

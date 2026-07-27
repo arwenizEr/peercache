@@ -103,6 +103,10 @@ func Collect(s core.Stats) []Metric {
 			"Namespaces created by an incoming peer write rather than by this node's application. " +
 				"Any non-zero value is a misconfiguration: such a namespace runs at replication factor 1 and cannot be reconfigured.",
 			float64(s.ImplicitNamespaces)},
+		{"peercache_degraded_writes_total", Counter,
+			"Synchronous writes acknowledged holding fewer copies than the namespace's replication factor asked for. " +
+				"Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns success. Any non-zero value means a caller was told a write reached RF nodes when it did not.",
+			float64(s.DegradedWrites)},
 		{"peercache_state_escapes_total", Counter,
 			"Uses of a group state outside the turn that issued it. " +
 				"Any non-zero value is an application bug: a group function retained its state and used it later, and those calls silently did nothing. There is no error for this — the caller is not inside a Call — so this counter is the only way it is ever visible.",
@@ -132,7 +136,15 @@ func Collect(s core.Stats) []Metric {
 
 		// Rebalancing and lifecycle.
 		{"peercache_keys_promoted_total", Counter, "Replicas this node took over as owner after a peer failed.", float64(s.KeysPromoted)},
-		{"peercache_replicas_evicted_total", Counter, "Replica copies dropped because membership moved them elsewhere.", float64(s.ReplicasEvicted)},
+		{"peercache_replicas_evicted_total", Counter, "Replica copies this node stopped ranking for because membership moved them elsewhere. Each one is then either rehomed or retained.", float64(s.ReplicasEvicted)},
+		{"peercache_replicas_rehomed_total", Counter,
+			"Moved replicas handed to the nodes that now rank for them before the local copy was dropped. " +
+				"Dropping without handing off loses the key whenever the new holders have nothing, which is the ordinary case after a partition heals.",
+			float64(s.ReplicasRehomed)},
+		{"peercache_replicas_retained_total", Counter,
+			"Moved replicas this node could not place and kept instead. " +
+				"Memory rather than data loss, which is the safe direction — but a rising value under stable membership means hand-offs are failing and the cluster is not converging.",
+			float64(s.ReplicasRetained)},
 		{"peercache_promotion_rounds_total", Counter, "Reconciliations run. Movement under stable membership means the view is not settling.", float64(s.PromotionRounds)},
 		{"peercache_replicas_pulled_total", Counter, "Keys obtained by catch-up after a restart.", float64(s.ReplicasPulled)},
 		{"peercache_catchup_runs_total", Counter, "Catch-up invocations.", float64(s.CatchUpRuns)},

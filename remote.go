@@ -100,6 +100,19 @@ func (c *cache) self() core.Node {
 	return c.opts.Membership.Self()
 }
 
+// memberCount returns the size of this node's membership view, itself included.
+//
+// It reads the guard's cached view rather than the membership layer directly,
+// because that is the view ownership and replication were resolved from — a
+// diagnostic that reported a different number from the one the decision used
+// would send an operator looking in the wrong place.
+func (c *cache) memberCount() int {
+	if c.guard == nil {
+		return 1
+	}
+	return c.guard.Stats().Members
+}
+
 // remoteGet fetches one key from its owner and returns the value with the
 // owner's stamp.
 func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, error) {

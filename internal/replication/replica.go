@@ -249,6 +249,18 @@ func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]E
 // A node stops being a replica for a key when membership changes, and keeping
 // the copy afterwards is not free: it is memory nobody will read and a value
 // that will drift further from the truth with every write it does not receive.
+//
+// # This is not how a moved replica is dropped
+//
+// `stillMine` is answered from the local ranking, which says nothing about
+// whether a node that *now* ranks for the key holds a copy. After a partition
+// heals it usually does not, and dropping on that basis loses the key — see
+// handoff.go in the root package and decision 0020.
+//
+// The caller therefore uses [Store.Drain] with the inverted predicate to take
+// the orphans out and hand them on, and reaches for this only where there is no
+// replica set to hand them to: a namespace at replication factor 1, where a copy
+// held here is a leftover from a configuration that no longer applies.
 func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 	s.mu.RLock()
 	nr, ok := s.ns[namespace]
