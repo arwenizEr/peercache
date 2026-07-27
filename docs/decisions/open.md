@@ -6,6 +6,12 @@ provisional answer that is cheap to reverse; none of them are silent.
 Format: what is unresolved, what was picked for now, and what would force a
 change.
 
+Numbers are permanent once assigned, because the code cites them by hand:
+`examples/m6/main.go` refers to question 26, `acceptance_m4_test.go` to questions
+27 and 29, and question 38 is named fourteen times in `.go` and `.sh` files alone. There is no question 19 —
+the gap predates this record's current form — and renumbering to close it would
+invalidate every one of those references for no gain.
+
 ---
 
 ## 1. The shape of `PeerClient` and `Handler` — M0, confirmed by M4
@@ -525,6 +531,33 @@ implementation, so a third caller inherits the fix instead of rediscovering the
 bug. Recorded because the failure mode is general: a correct fix applied to some
 of the places that need it reads, in the commit log, exactly like a complete one.
 
+**M8 addendum. There was a third caller, and the sentence above was right.**
+
+`acceptance_m4_test.go` builds gossip nodes through a helper of its own and never
+got the fix. It failed on every attempt here — `bind: An attempt was made to
+access a socket in a way forbidden by its access permissions`, on a port inside
+the reserved band — which means the M4 acceptance criterion had not executed on
+this machine since it was written.
+
+It stayed invisible because the test sits behind an opt-in latency gate that only
+CI's Linux runner sets, where the reserved band does not exist. It passed in the
+one place it ran and could not run in the one place it failed.
+
+**The first fix was also wrong**, and the reason is the useful part: wrapping the
+existing `BindPort = 0` in `RetryBind` still failed twelve times out of twelve.
+`RetryBind` is the backstop; the defence is `LocalGossipConfig`, which *probes* a
+bindable port before memberlist is given it. Re-rolling into a 600-port band and
+hoping is not a strategy, and the retry loop's own doc comment says so — "It is
+not the primary defence; the probe is." All three callers now use the same helper.
+
+**What would stop a fourth.** Nothing structural does today. The exported helpers
+exist and are documented, and three separate call sites have now each written
+their own `memberlist.Config` by hand before someone noticed. A `testkit`
+constructor that returns a started `*membership.Gossip` — leaving no config for a
+caller to assemble — would make the correct path the only path. That is a small
+change and it is not made here, because the fourth caller does not exist yet and
+inventing an API for a hypothetical one is how the first three got written.
+
 ## 28. `EpochSkew` is observed but nothing acts on it — M4, deliberate
 
 The peer handler counts requests whose caller resolved ownership under a
@@ -549,7 +582,7 @@ are not settling — and a transient spike during churn is not.
 
 ---
 
-## 29. The 50k rps acceptance figure is not reachable in-process — M4, unmet
+## 29. The 50k rps acceptance figure is not reachable in-process — M4, met in M8
 
 SPEC.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
 a 3-node real-network test". The latency half is met with 5/5 reliability. The
@@ -576,6 +609,122 @@ when there is something to point a load generator at in a real cluster.
 it suggests this machine cannot both generate and serve it. The per-operation
 figures — a 175 µs serial round trip, 28 µs under concurrency — are the numbers
 to reason from, and they are in `docs/benchmarks.md`.
+
+**M8 addendum: re-measured, and the numbers do not agree with the ones above.**
+
+This test could not run on Machine A at all. It built its gossip nodes through a
+third helper that never got question 27's port fix, so every attempt failed at
+the bind, and it is behind an opt-in latency gate that only CI sets — so nobody
+saw it. Fixed (the helper now uses `testkit.LocalGossipConfig` and `RetryBind`
+like the other two callers), and it now runs here.
+
+Four consecutive runs on Machine A:
+
+| | rps | p50 | p99 | p99.9 |
+|---|---:|---:|---:|---:|
+| 1 | 195,015 | 186 µs | 248 µs | 304 µs |
+| 2 | 193,199 | 187 µs | 249 µs | 284 µs |
+| 3 | 195,324 | 186 µs | 244 µs | 257 µs |
+| 4 | 194,865 | 187 µs | 245 µs | 261 µs |
+
+That is four times the 45,168–48,035 rps this question records, against the same
+criterion, with p99 seven times inside its 2 ms budget. The per-operation latency
+*agrees* with the recorded 175 µs serial round trip; it is only the rate that
+differs, and 36 workers at 186 µs each is 193k by arithmetic, so the figure is
+internally consistent.
+
+**Not marked resolved, because the disagreement is unexplained.** Either the
+earlier figures came from a configuration this one does not reproduce — a
+different worker count, or a run on different hardware, since the test could not
+have executed on Machine A as recorded — or something between M4 and M8 made the
+remote path substantially faster. Both are plausible and neither is established,
+and rewriting a shortfall into a success on an unexplained 4× is exactly the kind
+of decoration this question was opened to avoid.
+
+**The sweep was re-run, and it does not flatten.**
+
+| workers | rps | p50 | p99 | p99.9 |
+|---:|---:|---:|---:|---:|
+| 12 | 110,494 | 97 µs | 180 µs | 376 µs |
+| 24 | 164,782 | 143 µs | 211 µs | 222 µs |
+| 36 | 191,153 | 189 µs | 249 µs | 292 µs |
+| 64 | 235,361 | 270 µs | 334 µs | 373 µs |
+
+Throughput scales monotonically across the whole range. This question records
+sixty-four workers reaching 56k rps at a p50 of 1.2 ms; sixty-four workers now
+reach 235k at a p50 of 270 µs — four times the rate at a quarter of the latency,
+at the same concurrency on the same machine.
+
+**The criterion is met, with margin.** SPEC.md §4 asks for p99 under 2 ms and
+p999 under 10 ms at 50k rps. The *lowest* point of the sweep offers 110k rps at
+p99 180 µs, eleven times inside the budget. There is no worker count in this
+range at which the criterion fails.
+
+**Why the old figures differ is still not established**, and this is recorded as
+met rather than explained. Two concrete discrepancies turned up while measuring
+and neither accounts for a 4x:
+
+- The worker constant is 36 while the comment above it reasons carefully to 12.
+  The prose was left behind by a change to the number. That explains part of the
+  *offered load* gap between the recorded runs and the first M8 run, and none of
+  the per-operation improvement.
+- The measured p50 at twelve workers is 97 µs, against the ~175 µs serial round
+  trip this question cites. That looked like a contradiction and is not:
+  re-running `BenchmarkInvoke` gives 70 µs to 177 µs across three counts at the
+  same payload size, so 97 µs sits inside the benchmark's own spread. The 175 µs
+  figure is the top of a noisy range being quoted as if it were a point, which
+  is a reporting flaw rather than a stale number — and `BenchmarkInvokeParallel`
+  has moved too, from the recorded 28 µs to 12-15 µs.
+
+**One clue that narrows it.** The M1 local-read acceptance test, which touches no
+networking at all, is *also* faster than its recorded figures: p50 203 ns and p99
+318 ns now, against the 354 ns and 478 ns in `docs/benchmarks.md`. A local
+`Store.Get` does not decode a frame, dial a peer or cross a socket, so whatever
+moved cannot live in the remote path. That points at the environment or the
+toolchain rather than at any commit in this repository — which is consistent with
+both tables being honest measurements of different machines-in-time.
+
+It does not close the question. Local is ~1.6x faster and remote ~4x, and one
+factor does not explain the other; a toolchain that made everything 1.6x faster
+would leave the remote figure needing a further 2.5x. Recorded because it is the
+first evidence that rules a region *out*.
+
+The honest summary is that the acceptance criterion this question was opened
+about is satisfied and reproducibly so, and that the numbers it was opened
+*against* describe a system this machine no longer reproduces. Marking it met on
+the evidence, and leaving the archaeology recorded rather than tidied away.
+
+**How to find out, when somebody wants to.** The acceptance test itself cannot be
+bisected: it could not bind a socket on this machine until M8 fixed the third
+copy of the port-retry helper, so at every earlier commit it fails before
+measuring anything. `BenchmarkInvokeParallel` can. It was added in the M4 commit
+that introduced the transport benchmarks, so it spans the whole range, and being
+per-operation it is unaffected by the load-generator worker count that made the
+first comparison confusing. It is also the figure that moved: 28 µs recorded,
+12–15 µs measured.
+
+    git bisect start HEAD 8577cc7
+    git bisect run sh -c '
+      go test ./internal/transport -run "^$" -bench BenchmarkInvokeParallel         -benchtime 2000x -count 3 2>&1 |
+      awk "/BenchmarkInvokeParallel/ {s+=\$3; n++}
+           END {exit (n && s/n < 20000) ? 0 : 1}"'
+
+The 20 µs threshold sits between the recorded figure and the measured one, so
+"good" means fast. Three counts and a mean, because a single benchmark run on a
+desktop is noise. The probe was dry-run on the current tree and reports 12,426
+ns/op, verdict good — so it classifies correctly at the known-fast end.
+
+**It needs a clean working tree.** `git bisect start` will begin and then fail its
+first checkout with "your local changes would be overwritten", leaving a
+half-started bisect to reset. Commit or stash first. This was established by
+doing it.
+
+Two outcomes, and the second is as informative as the first. If it lands on a
+commit, that commit is the explanation and the recorded numbers were simply
+superseded. If it finds nothing — every commit fast, or every commit slow — then
+the change is not in this repository, and the Go toolchain is the first place to
+look: `docs/benchmarks.md` records go1.26.5 for the current figures and the M4
+table predates it. Run the machine otherwise idle either way.
 
 ---
 
@@ -747,9 +896,384 @@ shape of the last line, which missed the case where the `mutate` line alone is
 deleted and the continuation chain starts at the filename — bash runs that just
 as silently. Both variants are now confirmed detected.
 
+**M8 addendum: the guard had a hole, and an M8 entry fell straight through it.**
+
+The static check matches a test argument with `'Test[A-Za-z0-9_|]*'` — every
+character a bare name or an alternation needs, and no anchors. M8 added an entry
+passing `'TestMajoritySideWritesSurviveAHeal$'`, anchored because another test's
+name extends it. That argument does not match the pattern, so the check could not
+see the entry, and deleting its `mutate` line was **silently undetected** — the
+run proceeded exactly as it did before M6's original incident.
+
+Confirmed rather than reasoned: the `mutate` line was removed and the script ran
+on, then removed again after widening the character class to include anchors and
+the other regex metacharacters a `-run` argument may legitimately contain. It is
+now caught, naming the line.
+
+**Nothing else was affected, and that was checked rather than hoped.** Scanning
+all 107 entries for arguments the old pattern could not match returns exactly one
+real entry: the M8 one that exposed the hole. The other two hits are the
+detector's own comment and its own regex source. Every pre-existing entry uses a
+plain test name, so the guard was doing its job for all of them — the hole opened
+the moment an entry needed an anchor, and the first entry that needed one made it.
+
+The shape of this is worth more than the fix. The guard was written to stop an
+entry going silently unrun, and it was defeated by the *contents of the argument*
+it inspects rather than by the line structure it was built to check — by a new
+entry, added by someone who had read the guard and believed it was covering them.
+A checker with a hole is more dangerous than none, because the paperwork it
+produces is what people rely on instead of looking.
+
 **The lesson is the general one.** A verification tool that fails open is worse
 than no verification tool: it produces the paperwork of coverage without the
 coverage. This is the second time this script has done real damage — the first
 was a crashed run leaving a mutant in the tree that shipped for three commits
 (question 32) — and both failures were silence rather than error. Anything that
 exists to catch mistakes must be loud when it cannot.
+
+---
+
+## 36. ErrStateEscaped is exported and unreachable — M8, documented
+
+`ErrStateEscaped` is returned by nothing, and nothing can return it: the
+goroutine using a stale `GroupState` is not inside a `Call`, so there is no
+caller to hand an error to. The method no-ops and `Stats().StateEscapes` counts
+it.
+
+Both doc comments claimed otherwise until M8 — `internal/core/group.go` said the
+implementation "turns a violation into [ErrStateEscaped] in the calling layer",
+which is exactly what `internal/actor/state.go` explains it cannot do.
+
+Kept rather than deleted: removing a sentinel breaks anyone matching on it, and
+it is the canonical name for a condition the documentation needs to refer to.
+Both comments now say it is unreachable. Reversible if a future API ever has a
+caller to return it to.
+
+---
+
+## 37. Synchronous replication acknowledges writes below the replication factor — M8, open
+
+Found by the deterministic simulation, seed `243287519653701681`, reduced to
+`TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy`.
+
+An isolated node eventually detects every peer as failed. Its view shrinks to
+itself, it ranks itself owner of everything, the activation guard's delay
+expires, and synchronous replication at RF=3 then places every copy it can
+reach — one — and returns nil.
+
+**The write is acknowledged with a single copy and the caller cannot tell.**
+
+The neighbouring behaviour is correct and worth stating, because it locates the
+gap precisely: when the writer still *sees* its replicas but cannot reach them,
+sync replication fails the write.
+`TestSyncReplicationRefusesWhenReplicasAreUnreachable` shows 20 of 20 writes
+refused. The difference is entirely whether the failure detector has already
+removed the peers from the view.
+
+This is not simply the split-brain caveat. CLAUDE.md non-negotiable 5 already
+says a partition can produce two activations. What is new is the
+*acknowledgement*: README and `docs/api.md` both say synchronous replication
+closes the async data-loss window, and a caller who asked for RF=3 sync
+reasonably reads a nil return as "three nodes have this". The window also lasts
+as long as the partition, so "narrowed" does not describe it.
+
+**Options, in increasing order of change:**
+
+1. **Count it.** A `DegradedWrites` counter incremented when a sync write places
+   fewer copies than the namespace's replication factor, exported as
+   `peercache_degraded_writes_total`. Additive, no semantic change, and it makes
+   the window visible to an operator for the first time. Recommended regardless
+   of what else is chosen.
+2. **Report it.** Return a typed error, or a sentinel wrapped so `errors.Is`
+   distinguishes "written, but below RF" from "not written". Callers that do not
+   check keep working; callers that care can. This changes no data path.
+3. **Refuse it.** Fail the write when RF copies cannot be placed. This is the
+   strongest reading of what `WithSyncReplication` promises and it is *not*
+   quorum — it is honouring a configured replication factor — but it converts an
+   available system into an unavailable one during a partition, which is a real
+   AP/CP choice and not mine to make silently.
+
+**Option 1 is done.** `Stats().DegradedWrites` counts a synchronous write
+acknowledged holding fewer copies than its namespace asked for, and
+`peercache_degraded_writes_total` exports it. The first occurrence on a node logs
+a warning naming the namespace, the factor, the copies placed and the view size;
+subsequent ones do not, because a partition degrades every write for as long as
+it lasts and a line per write is an outage of its own. `docs/api.md` lists it
+among the metrics worth alerting on, and it is the only signal that separates a
+degraded acknowledgement from a healthy one.
+
+Only synchronous writes are counted. Asynchronous replication promises nothing
+about when a copy lands, so counting those would produce a number equal to the
+write rate; that window is measured in `docs/benchmarks.md` instead.
+
+The partial-failure case does not reach the counter, and that is worth stating
+because it locates what is left: under synchronous replication a target that
+refuses or cannot be reached makes the write *fail*, so it is never
+acknowledged. The only route to an acknowledgement below the factor is for the
+targets to be missing from the ranking in the first place — the shrunken-view
+case this question is about, and nothing else.
+
+**Options 2 and 3 are still open, deliberately.** Both change what a caller sees,
+and the choice between them is an AP/CP decision: option 3 converts an available
+system into an unavailable one during a partition. CLAUDE.md's rule is to pick
+the simplest reversible option and not to guess silently on anything touching
+correctness under failure — counting is reversible, refusing is not, and the
+counter now makes the window visible enough to decide on evidence rather than on
+argument. What would settle it is a deployment's `degraded_writes` rate: if it is
+zero outside genuine partitions, option 3 costs nothing anyone will notice.
+
+---
+
+## 38. A simulation seed still loses keys after a single destruction — M8, resolved
+
+Seed `601996618416914900` lost two keys acknowledged under synchronous
+replication at RF=3 after one node was destroyed. RF=3 is meant to survive two.
+
+**The cause is not established, and this records that honestly.** Reading the
+code suggested replica eviction: `Store.Evict` drops every replica this node no
+longer ranks for, decided from the local ranking alone, with nothing checking
+that a node which now ranks for the key holds a copy — and catch-up cannot
+repair what nobody holds. `TestEvictionDoesNotDropTheLastCopy` was written to
+reproduce that and does not: the kill-and-rejoin churn produces zero evictions
+and zero losses. The hazard is real; it was not this.
+
+The remaining explanation, and the one the schedule supports, is the documented
+AP window. Writes acknowledged while the cluster was split are not promised to
+survive the heal on either side — CLAUDE.md non-negotiable 5 says conflicting
+writes are detected, not merged, so the losing side's acknowledged write is
+discarded by design. Filtering only on the writer's *view size* was not enough,
+because a writer on the larger side of a split sees enough members to satisfy RF
+and still loses its copies when the sides reconcile.
+
+The simulation now excludes writes acknowledged during a partition, and 300
+seeds pass. That is the correct scope — the guarantee is not claimed across a
+partition — but it means this specific seed's loss is explained by inference
+rather than by demonstration.
+
+**What would close it:** an assertion that a write acknowledged on the *majority*
+side of a split survives the heal. If that holds, the losses were minority-side
+and everything is as designed. If it does not, there is a real defect in
+post-partition reconciliation and question 37's option 3 becomes considerably
+more attractive.
+
+**Closed, and not the way the paragraph above expected.**
+
+The assertion it asks for now exists. The simulation attributes
+every acknowledged write to a *side* of the split rather than merely to "during a
+partition": minority-side writes are excused, majority-side writes are recorded
+and asserted to be readable after the heal, and the two are reported separately
+so a failure names which promise broke. Splits are generated strictly uneven —
+`cut` is drawn from `[1, (live-1)/2]` — because an even 2|2 split has no majority
+and the assertion would otherwise be asserting about nothing.
+
+**It did not hold, and the other branch was the right one.** Seed
+`5593891418832731417` lost 5 of 12 majority-side keys. The note said what that
+would mean — "there is a real defect in post-partition reconciliation" — and
+there was.
+
+**The cause is the eviction hazard this question originally proposed and then
+discarded.** The discarding was correct about the evidence available at the time
+and wrong about the conclusion: `TestEvictionDoesNotDropTheLastCopy` reproduces
+kill-and-rejoin churn and observes zero evictions, because when copies are placed
+under the full membership a rejoining node does not take ranking away from the
+holder of a last copy.
+
+A partition changes that. Writes accepted while one node is cut off place their
+copies at ranking positions computed *without* the absent node. When it returns,
+the ranking moves underneath every one of those keys: the rejoining node ranks
+for many of them and holds nothing, and the nodes that do hold them stop ranking
+and drop them. The copies do not move — they evaporate. Catch-up cannot repair
+it, because it pulls from whoever has the key and after the eviction nobody does.
+
+Reduced to `TestMajoritySideWritesSurviveAHeal` (which passes: the heal alone
+loses nothing) and `TestMajoritySideWritesSurviveAHealAndTwoDestructions` (which
+lost 20 of 94). The counters made the mechanism plain rather than plausible:
+twenty-one replicas evicted cluster-wide, twenty keys lost.
+
+**Resolved** by handing off before evicting. A replica this node has stopped
+ranking for is sent to the nodes that now rank for it and dropped only once one
+has accepted it; every failure path keeps the copy instead.
+`Stats().ReplicasRehomed` and `ReplicasRetained` account for both outcomes. See decision
+0020 for why this rather than a smarter eviction test, and why it needs no new
+RPC.
+
+**The evidence, measured.** Both reduced tests pass; the seed that found it
+(`5593891418832731417`) replays clean; and two 300-seed sweeps pass, one of them
+from the base seed that produced the original failure. The second sweep reports
+300 of 300 schedules asserting at least one key, so the result is not an artefact
+of everything having been excused. Two seeds in the first sweep *were* vacuous,
+which is what prompted the guard rework above — well inside the quarter the
+corpus gate permits.
+
+**One diagnostic step is worth recording**, because it nearly produced a wrong
+conclusion. More than half of the first run's "lost" keys were not lost: they
+returned `ErrActivationPending`, a retryable "ask again shortly", and
+`readAnywhere` retried three times without letting the fake clock advance — so it
+asked again at the same instant and got the same refusal. A helper that loops
+without waiting reports a deferral as a loss. It now advances the clock, and the
+remaining failures were all genuine not-founds. The difference between "deferred"
+and "not found" is the difference between a working cluster and a defect, and a
+test helper that cannot tell them apart will eventually claim both.
+
+**A side effect worth recording**, because it is the same failure mode as the
+mutation audit's: splitting majority-side writes into their own pool left the
+simulation's vacuity guard reading only the general pool, and it started failing
+schedules that had asserted a dozen keys. The guard exists so a green run cannot
+be hollow — a seed that excused every key it acknowledged proved nothing — and a
+guard that fires on runs which *did* prove something teaches people to ignore it.
+
+It now counts both pools, and a schedule that genuinely excused everything is
+**skipped** rather than failed: that is a sampling outcome, not a defect. What is
+failed is the *corpus* — more than a quarter of a sweep proving nothing means
+either the fault rate has outrun what RF=3 survives or the excusal rule has grown
+too generous, and both make a green sweep meaningless. The excusal rule is
+deliberately conservative (it counts every destruction in the run, not the
+destruction of a key's own holders), so on long schedules with many kills some
+seeds will always land there.
+
+**What is not settled.** Seed `601996618416914900` from the original report is not
+replayed under the new attribution: the schedule generator changed when even
+splits stopped being produced, so that integer no longer denotes the same
+schedule. The property it was evidence about is now asserted directly, which is
+the better outcome, but it does mean the original run was never explained on its
+own terms.
+
+---
+
+## 39. Ten messages could be turned into a 4 GiB allocation by five bytes — M8, resolved
+
+`internal/wire` interprets bytes it did not write, and from M4 those bytes arrive
+from anything that can reach the port. M4 found that msgpack pre-allocates a
+collection from its declared length and fixed it with bounded decoders, fuzzing
+five message types as a representative sample.
+
+M8 found two things wrong with that.
+
+**The sample missed one.** `SubmitResponse` carried the only slice of structs with
+no custom decoder. `91 dd ff ff ff ff` — six bytes — asks for 4,294,967,295
+`GroupFailure` values, 137 GB.
+
+**The library has a second hole that bounded decoders cannot reach.** msgpack v5's
+allocation limit lives in `Decoder.readN`; its byte-string paths call the
+package-level `readN` instead, which allocates the full declared length up front.
+Every `[]byte` field in every message — ten of the twenty — turns
+`c6 ff ff ff ff` into a 4 GiB allocation.
+
+**Resolved** by validating the frame's structure in `Decode` before the decoder
+sees it: every declared length must be no larger than the bytes behind it. See
+decision 0019 for why that is one function rather than eight more encoder pairs,
+and for the measured cost (25 ns on a `GetRequest`, zero allocations).
+
+**What is worth carrying forward** is not the bug but how it survived. M4's fuzz
+target covered a *sample* of message types, chosen when the sample was most of
+them. The protocol grew to twenty; the sample stayed at five; and the defect the
+sample existed to catch lived, for two milestones, in the fifteen it did not
+look at. The replacement decodes every input into all twenty
+(`FuzzDecodeEveryMessage`), because "no input from a peer may panic a node" has
+the word "no" in it.
+
+The second half is worse and more general: the M4 fix was correct, tested, and
+*aimed at the wrong layer*. Bounding the decoders this package owns could never
+have found a hole in the library's byte-string path, and no amount of care
+applied to `bounded.go` would have gotten there. It took pointing a fuzzer at the
+boundary rather than at the code someone had already thought about.
+
+---
+
+## 40. Readiness answers availability, not durability — M8, a real question
+
+`ReadyState.CaughtUp` is a one-shot flag. It is set the first time `CatchUp`
+completes and never cleared, so a node that joined, caught up, and then lived
+through a partition heal still reports `Ready: true` while the cluster is below
+its replication factor.
+
+M8 established that the two are different conditions. A key is *readable* the
+moment one node holds it and *survives a failure* only when RF nodes do, and
+after any membership change the second is restored over time by catch-up while
+the first is true almost immediately. `TestMajoritySideWritesSurviveAHealAndTwoDestructions`
+lost a key about one run in seven until it called `CatchUp` before destroying
+anything — the cache was correct, the schedule was not.
+
+**The question this raises is not obviously answerable, which is why it is
+here.** Readiness means "should this node receive traffic". A node inside the
+settling window can serve traffic correctly: reads succeed, writes succeed,
+nothing is wrong with any individual operation. Gating readiness on the cluster
+being back at RF would take a healthy, serving node out of rotation because a
+*different* node is still copying — which is a durability signal wearing an
+availability gate, and it would make a rolling upgrade slower for a property no
+single request depends on.
+
+The opposite is equally arguable. An operator draining a second pod because the
+first went ready is exactly the sequence that walks an RF=3 cluster down to RF=1,
+and `deploy/README.md` now warns about it in prose. A warning in prose is what
+this project calls a lie by omission when a counter would do.
+
+**Picked for now:** neither. The behaviour is documented — README, `docs/api.md`
+and the deploy guide all state that readiness does not imply the replication
+factor is restored, and that `Stats().ReplicasPulled` going flat is the signal
+that it is.
+
+**What would resolve it:** a third thing, most likely, rather than either of the
+two above. A separate `Cache.Replicated()` or a `ReplicationRestored` field on
+`Stats` would let an operator gate a rolling upgrade on durability without
+conflating it with whether a pod can serve. That is an API addition and belongs
+in a milestone that is designing one, not bolted onto the end of this one.
+
+**What would force it sooner:** anybody actually running a rolling upgrade at
+RF=2. At RF=3 the window costs a copy and the cluster still tolerates a failure;
+at RF=2 it costs the only redundancy there is, and the difference between "ready"
+and "safe to replace the next pod" stops being academic.
+
+---
+
+## 41. The default codec silently corrupts invalid UTF-8 — M8, documented
+
+`internal/codec`'s `Codec` interface has said since M1 that "for any v that the
+codec accepts, `Unmarshal(Marshal(v))` reproduces v", with the sentence beneath
+it arguing that "a codec that silently drops fields is worse than one that
+errors". The JSON codec — the default, chosen because an operator can read it in
+a debug dump — does not hold the first and is an instance of the second.
+
+`encoding/json` replaces every byte of an invalid UTF-8 sequence in a string with
+U+FFFD and returns no error. A value written through the JSON codec and read back
+is not the value that went in, and nothing in the round trip says so:
+
+    in.S  = "\xff\xfe"
+    out.S = "��"     // Marshal returned nil error
+
+`FuzzCodecRoundTrip` found it on its first run. `TestCodecRoundTrip` had existed
+since M1 and does not catch it: it compares three hand-written values and, for
+the composite fields, compares only their lengths.
+
+**Scope, which is narrower than it first looks.** Only Go `string` fields are
+affected. A `[]byte` field survives JSON because it is carried as base64, and
+MsgPack — which `internal/wire` uses for the protocol itself — carries the same
+bytes through unharmed. `WithCodec` is also still inert (question 17): the
+public API is `[]byte`-valued, so no application value passes through a codec
+today. This is a hole in a contract that has no caller yet, which is the cheapest
+moment to find one and the easiest moment to leave it.
+
+**Picked for now: document and pin, do not work around.** The substitution
+happens inside `encoding/json`; no option disables it, and it cannot be detected
+from the output, which is valid UTF-8 by the time it exists. The only detection
+available is to walk `v` by reflection before every marshal and reject invalid
+strings — a full traversal of every cached value on the encode path, to catch an
+input class most applications never produce, in a library whose whole argument is
+that it is faster than a network hop to Redis.
+
+So: the limitation is documented on `jsonCodec` and on the `Codec` interface
+itself, `TestJSONCodecReplacesInvalidUTF8` pins the behaviour and fails the day it
+changes, and `FuzzCodecRoundTrip` excludes that one input class for JSON by name
+rather than exempting the codec. The property is still enforced for JSON
+everywhere else and for MsgPack everywhere.
+
+**What would resolve it:** answering question 12. A typed namespace API is what
+puts application values through a codec, and it is the point at which the choice
+has to be made explicitly — most likely by making MsgPack the default for typed
+values and leaving JSON as the readable opt-in, which costs nothing and moves the
+sharp edge to the codec somebody names deliberately.
+
+**What would force it sooner:** any value whose strings can hold arbitrary bytes
+— a key derived from a byte slice, a field carrying a protocol identifier, an
+encrypted or compressed blob stored as a `string` rather than a `[]byte`. For
+those, name `msgpack` today; it is one option and it has no such rule.

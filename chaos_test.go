@@ -142,14 +142,23 @@ func TestChaosLosesNoSynchronouslyWrittenKey(t *testing.T) {
 		t.Fatalf("only %d keys were written; the cluster was too broken to test", len(written))
 	}
 
+	// Through readAnywhere, not a single Get on one node.
+	//
+	// After sixty seconds of kills the surviving nodes are still settling:
+	// ownership has moved, and a membership change starts the activation
+	// guard's delay on every group it moved. Both produce errors that mean
+	// "ask again" rather than "gone", and counting them here would report a
+	// key as lost by chaos when it is merely deferred — a false alarm on the
+	// M5 acceptance criterion, which is the most credible place in the suite
+	// to get one. readAnywhere retries those and only those.
 	var lost []string
 	for key, want := range written {
-		got, err := openNS(f.live()[0]).Get(ctx, key)
+		got, err := readAnywhere(t, f, openNS, key)
 		if err != nil {
 			lost = append(lost, fmt.Sprintf("%s (%v)", key, err))
 			continue
 		}
-		if string(got) != want {
+		if got != want {
 			lost = append(lost, fmt.Sprintf("%s (value %q, want %q)", key, got, want))
 		}
 	}
@@ -205,16 +214,23 @@ func TestChaosAtReplicationFactorTwoCanLoseData(t *testing.T) {
 	f.convergeTo(t, 2)
 	f.settle(t)
 
-	survivor := f.live()[0]
+	// Same reason as above, with one difference worth stating: this test
+	// *expects* losses, because RF=2 does not survive two kills. That makes
+	// distinguishing "not found" from "not yet" more important here, not less
+	// — a deferral counted as either outcome corrupts the number this test
+	// exists to report.
+	rf2NS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("rf2")
+	}
 	lost, kept := 0, 0
 	for key, want := range written {
-		got, err := f.caches[survivor].Namespace("rf2").Get(ctx, key)
+		got, err := readAnywhere(t, f, rf2NS, key)
 		switch {
 		case errors.Is(err, peercache.ErrNotFound):
 			lost++
 		case err != nil:
 			t.Fatalf("unexpected error reading %q: %v", key, err)
-		case string(got) != want:
+		case got != want:
 			t.Fatalf("%q survived with the wrong value %q, want %q; losing data at RF=2 "+
 				"is acceptable and corrupting it is not", key, got, want)
 		default:

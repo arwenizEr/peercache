@@ -429,7 +429,7 @@ node is configured.
 
 The operational rule — open every namespace, with the options you want, on every
 node, before serving — is now in the README guarantees and is the first of the
-four things `deploy/README.md` says must be right.
+things `deploy/README.md` says must be right.
 
 ---
 
@@ -728,6 +728,1301 @@ This is the strongest argument in this file for the method. Four fixes in M1
 were verified by mutation; three held and one turned out to be guarded by a test
 that could not fail. Without running the mutation, all four would have looked
 identical.
+
+---
+
+## M8 — what the verification tools found, including about themselves
+
+M8's tools were a linearizability checker, a deterministic simulation, an
+exhaustive fuzz target and the mutation audit. Each found something the milestone
+that built the code had missed, and in the serious cases the earlier milestone's
+fix had been correct — just aimed at a subset of the problem.
+
+This section grew past its original title, which promised two out-of-memories and
+a partition. What follows is longer than that because the tools kept finding
+things after the defects ran out, and a record that stops at the interesting bugs
+is a record that hides the boring ones. It divides into four:
+
+**Defects in the library** — a remote out-of-memory reachable through every
+message with a `[]byte` field, a second one in the only unguarded slice of
+structs, a partition heal that discarded replicas rather than moving them, and
+the fix for that last one forging writer identity in its first version.
+
+**Gates that did not work** — the M4 acceptance test that had never once run on
+this machine, the `-race -count=2` gate that could not pass inside its own
+timeout, the mutation audit's orphan detector with a hole an M8 entry fell
+straight through, three nightly fuzz jobs naming targets that did not exist and
+exiting 0, a per-commit fuzz step broken by a test added elsewhere, and an
+example printing a number one too high.
+
+**Rules that nothing enforced** — five derived figures wrong out of six checked,
+one exported symbol with no doc comment, a package missing from the repository
+map since it was created, twelve of the nineteen public-API files missing from
+the same map, and the discovery that the rules being broken were exactly the
+rules with no test. `discipline_test.go` grew to cover all of them: every
+mechanical rule in CLAUDE.md now has a test, and so do the build files, the
+repository map, the API documentation's derived figures and the acceptance map —
+the places verification is written down that no Go tool reads.
+
+That sentence used to open with a count of the checks added, and that count is why
+this paragraph is worth reading. It said "five", then "eight", then "nine", then
+"ten", then "eleven" — each correction made by someone who had just been reminded
+the number could be wrong, and each one stale again within the hour, because a
+further check kept landing. Five wrong values for one figure, in the paragraph
+introducing the section about figures going wrong.
+
+The count is now gone rather than corrected a sixth time. "Eleven checks were
+added this milestone" is a property of a diff against a commit that will move,
+which is precisely the category this section concludes cannot be enforced and
+should not be asserted; naming what is now covered is a property of the tree, and
+a reader who wants the total can count the file. Taking that conclusion seriously
+means deleting the number rather than maintaining it better.
+
+**Claims that were true only sometimes** — a guarantee the README states
+unconditionally that holds only for a cluster at rest, five places where a
+retryable error was counted as data loss, and a test written to verify one of
+this milestone's own fixes that turned out unable to fail.
+
+The order below is chronological, because several findings only make sense as
+consequences of the one before. The fourth category above was added after the
+first three, when the section outgrew them. Adding it made the line introducing
+them say three where four were listed — an eighth stale figure, created by the
+fix to the seventh, one line above it. Both are recorded rather than smoothed
+over: the point of this section is not that the author is careful, it is that
+care does not scale and counting does.
+
+### The M4 fix was right and covered fifteen fewer messages than it needed to
+
+`internal/wire/bounded.go` exists because M4 found that a declared length bought
+an allocation. It hardened the collection decoders and `FuzzDecode` covered five
+message types, chosen as a representative sample when the protocol had few more
+than five.
+
+The protocol grew to twenty. The sample stayed at five.
+`FuzzDecodeEveryMessage`, which decodes each input into *all* of them, found
+`SubmitResponse` — the one message with a slice of structs and no custom decoder.
+Six bytes, `91 dd ff ff ff ff`, ask for 4,294,967,295 `GroupFailure` values:
+137 GB. Under `-race` the process does not panic, it dies — ThreadSanitizer
+fails to map the shadow memory and aborts the binary.
+
+**And the same test found a second, larger hole that no bounded decoder could
+have closed.** msgpack v5's allocation limit lives in `Decoder.readN`; its
+byte-string paths (`bytes`, `bytesPtr`) call the package-level `readN` instead,
+whose first statement is `b = append(b, make([]byte, n-len(b))...)` with `n`
+straight off the wire. Every `[]byte` field in every message — ten of the
+twenty — turns `c6 ff ff ff ff` into a 4 GiB allocation. Values, call arguments,
+call results, replicated payloads, catch-up entries.
+
+The fix moved layer: `wire.Decode` now validates the frame's structure before the
+decoder sees it, requiring every declared length to be no larger than the bytes
+behind it. One function, every message, every future message. Decision 0019 has
+the reasoning and the 25 ns it costs.
+
+**The lesson is about where the M4 fix was aimed.** It was applied to the
+decoders this package owns, and it could never have reached a hole in the
+library's byte-string path however carefully it was written. What reached it was
+pointing a fuzzer at the boundary rather than at the code someone had already
+thought about.
+
+### Question 38's own closing assertion was the thing that found the bug
+
+Open question 38 recorded a simulation seed that lost synchronously acknowledged
+keys after a single destruction at RF=3. The investigation proposed replica
+eviction as the cause, wrote `TestEvictionDoesNotDropTheLastCopy` to reproduce
+it, and could not — so the note attributed the losses to the documented AP window
+*by inference*, said so plainly, and recorded what would settle it: assert that a
+write acknowledged on the **majority** side of a split survives the heal.
+
+Writing that assertion took an afternoon and failed immediately. Seed
+`5593891418832731417`: 5 of 12 majority-side keys gone.
+
+The cause was the eviction hazard the question had proposed and discarded. The
+discarding was right about the evidence and wrong about the conclusion: ordinary
+kill-and-rejoin churn does not reach it, because copies placed under the full
+membership stay ranked when a member leaves and returns. **A partition does.**
+Writes taken while one node is cut off place their copies at ranking positions
+computed without it; its return moves the ranking underneath every one of those
+keys at once, and the nodes holding them stop ranking and drop them. The copies
+do not move — they evaporate, and catch-up cannot repair what nobody holds.
+
+Reduced to a pair of tests that separate the steps rather than assuming one:
+heal-only loses nothing, heal-then-two-destructions lost 20 of 94. The counters
+turned it from plausible into measured — twenty-one replicas evicted
+cluster-wide, twenty keys lost. Fixed by handing a moved replica to its new
+holders before dropping the local copy (decision 0020). Both reduced tests pass,
+the seed replays clean, and two 300-seed sweeps pass with 300 of 300 schedules
+asserting at least one key on the second.
+
+### A test helper that reported "wait a moment" as "gone forever"
+
+More than half of that first failing run's lost keys were not lost. They returned
+`ErrActivationPending` — a retryable "ask again shortly" — and `readAnywhere`
+retried three times without advancing the fake clock, so it asked again at the
+same instant and got the same refusal every time.
+
+Had the real defect not also been present, this alone would have produced a
+convincing, entirely false bug report. It is the mirror image of the M1 lesson: a
+test that fails for the wrong reason costs exactly as much as one that passes for
+the wrong reason, and both are found the same way — by reading what the failure
+actually says rather than what it appears to confirm.
+
+### And the audit immediately found the branch the fix's own tests missed
+
+The five M8 mutation entries were written the same day as the fix. Four were
+caught. The fifth — deleting `h.restore(w)` from the hand-off's "could not place
+it anywhere" branch — left
+`TestMajoritySideWritesSurviveAHealAndTwoDestructions` **passing**, because in
+that schedule every hand-off succeeds.
+
+That branch is the one deciding between "this costs memory" and "this loses
+data", and nothing was looking at it. `TestAHandOffThatCannotBePlacedKeepsTheCopy`
+now does: it strands one holder's outbound traffic with a one-way total drop
+before the heal, so the node still learns membership grew but can hand nothing to
+anybody, and asserts the copies come back. The mutation is caught.
+
+Reaching it took four attempts, and each failure was informative rather than
+fiddly. Kill-and-rejoin churn orphans nothing (that is
+`TestEvictionDoesNotDropTheLastCopy`'s whole point). A kill *followed by* a
+revive orphans nothing either, because it returns membership to the identical set
+and the ranking with it. Only a partition heal — membership growing to a set it
+has not been — moves keys. And once it did, the assertion had to be weakened from
+an accounting identity to "some came back", because a restored copy is orphaned
+again by the next reconciliation and retried, so both counters climb together
+while the peer stays unreachable and any snapshot is taken mid-cycle.
+
+### A test that measured the observer
+
+Adding the hand-off broke `TestKeysAdoptedIsCounted`, which touches no drain
+code and asserts a counter about one. It failed with "60 keys were handed off
+and none were adopted; ... both are silent data loss", in a full-package run, on
+a seed that passed when the test ran alone.
+
+No data had been lost. A drain announces its departure and then transfers, with
+nothing synchronising the two, so a receiver takes each key one of two ways:
+**adoption**, when its view already names it the owner as the transfer lands, or
+**promotion**, when the transfer arrives first, is filed as a replica, and the
+next reconciliation moves it. Both end with the key in the owned store; the
+library is built to tolerate either. One goroutine per cache was enough to shift
+the scheduling so that every key took the second path.
+
+The confirmation was the part worth recording. Adding a `t.Logf` above the
+assertion to print the other counters made the test **pass** — the diagnostic
+perturbed the timing it was diagnosing. A test that changes its answer when you
+look at it is not measuring the system.
+
+It now asserts the outcome rather than the route: every handed-off key is
+accounted for by adoption *or* promotion, and every key written is still
+readable. The fear it was written for — "sent and not adopted is silent data
+loss" — is fully covered by that and was never covered by the stricter form,
+which could only ever have been checking which of two correct paths won a race.
+
+**The general point** is that this is the same failure as a vacuous test, seen
+from the other side. A test that passes for the wrong reason and a test that
+fails for the wrong reason cost the same, and the second is more dangerous
+because it arrives looking like evidence.
+
+### The fix's own first version forged provenance
+
+Reviewing the hand-off before calling it done found that it stamped
+`ReplicateRequest.From` with the forwarding node's ID. `From` names the node that
+*wrote* a value, and a replica keeps it precisely so that two writers for one key
+under one epoch can be reported as the split brain they are.
+
+A hand-off is a relocation. Claiming authorship of it makes the receiver see the
+original owner's replication and the forward as two writers — 19 fabricated
+split-brain detections in the reduced test, on every membership change forever.
+`SplitBrainDetections` is the counter README tells operators to investigate
+whenever it is non-zero; a fix that made it lie on every rebalance would have been
+worse than the metric not existing.
+
+Nothing would have caught it. The data was correct, the tests passed, and the
+only symptom was a number rising in a place nobody was looking yet. It was found
+by asking what each field of a message means before sending it, and it is
+recorded here because that is not a technique that scales — the reason it was
+*possible* to spot is that `From` has a doc comment saying what it is for.
+
+### What a coverage run found that the tests did not
+
+Measuring coverage of the new code rather than assuming it turned up three
+things, in descending order of how uncomfortable they were.
+
+**`scan`, the frame validator, was at 67.6%.** Twelve uncovered branches, every
+one a msgpack type byte this protocol's encoder never emits and a peer can send
+freely — the extension family, the fixed-width integer widths, `map16`. Each
+family has its own arithmetic for how many bytes follow, and a family whose
+arithmetic is wrong lets a declared length through silently. Testing only the
+third of the format we emit left the rest asserted by nothing.
+`TestValidateHandlesEveryTypeByte` now walks all 256, accepting the shortest
+well-formed value for each and requiring that same value one byte short to be
+refused. 97.1%, and it cannot fall behind the format without failing.
+
+**The two lines still uncovered are unreachable, and now say so.** The type switch
+turned out to be total — msgpack assigns all 256 leading bytes — so the "unknown
+type byte" default cannot be reached, which `TestEveryTypeByteIsClassified`
+asserts rather than assumes. The `readLen` overflow check is dead on 64-bit and
+live on 32-bit; `GOARCH=386 go build` confirms the platform it protects still
+compiles. Both have comments saying which they are, because an uncovered line
+that looks like a missing test costs the next reader an investigation.
+
+**And the branch M8 itself added as a bug fix was uncovered.** The `rf < 2` guard
+in reconciliation — the one preventing an unbounded restore-and-re-orphan spin —
+had no test. Worse, trying to write one established that the condition cannot be
+constructed through the public API in this harness: a drain at RF=1 pushes to two
+targets and both receivers adopt their share, so the surplus replica the branch
+exists for never appears. The test is kept, skipping, with the reason in its own
+message; the branch carries a comment saying it is reasoned rather than measured.
+
+That last one is the honest half of this section. A fix written in response to a
+bug is exactly where an untested branch is most dangerous, and the recourse when
+it cannot be tested is to say so in the two places somebody will look — not to
+delete the test and leave the comment claiming more than it earned.
+
+### And three goroutines leaked whenever New failed late
+
+Adding a worker to `New` meant reading what happens when the constructor fails
+after starting one. There is exactly one such path — the transport refusing to
+serve — and it closed the ownership guard and nothing else, so a failed `New`
+left the invalidator, the replicator and now the hand-off running with no handle
+to stop them.
+
+Pre-existing, invisible, and invisible for a specific reason: open question 25
+records that goroutine leaks here are caught by targeted per-package
+`TestCloseLeavesNoGoroutines` tests, and no test constructs a cache whose
+transport refuses to serve. A leak on a path nothing exercises is a leak nothing
+finds. All four are now closed on that path.
+
+### The M4 acceptance test had never run on this machine
+
+Checking that the frame validator had not cost anything on the remote path meant
+running the latency gate, which had never been run here. It failed instantly:
+`bind: An attempt was made to access a socket in a way forbidden by its access
+permissions`, on a UDP port inside the 600-wide band this host reserves.
+
+That is open question 27, for the third time. M6 fixed
+`internal/membership`'s tests; M7 found `cluster_test.go` had built its own
+helper and fixed that too, and wrote the closing line "a correct fix applied to
+some of the places that need it reads, in the commit log, exactly like a complete
+one". `acceptance_m4_test.go` had built a *third* helper, and it was never fixed.
+
+What made it invisible is worth more than the bug. The test is behind an opt-in
+latency gate that only CI's Linux runner sets, where the reserved band does not
+exist — so it passed in the one place it ran and could not run in the one place
+it failed. A gate nobody can trip locally is a gate nobody maintains.
+
+The first fix attempt was also wrong, and instructively: wrapping the existing
+`BindPort = 0` in `RetryBind` still failed twelve times out of twelve. `RetryBind`
+is the backstop, not the defence — the defence is `LocalGossipConfig`, which
+*probes* a bindable port before handing it to memberlist. Retrying a re-roll that
+keeps landing in a 600-port band is not a strategy. Using the same helper as the
+other two callers, which was the point all along, fixed it.
+
+**And then it reported numbers that disagree with the record.** Four consecutive
+runs measured 193k–195k rps at p99 244–249 µs, against the 45k–48k this project
+documents as a shortfall for the same criterion.
+
+The first instinct was that the load generator had been changed — and the comment
+above the worker constant does reason to twelve workers while the constant says
+thirty-six, which is a real defect worth fixing on its own. It is not the
+explanation: the recorded table used thirty-six too.
+
+So the sweep open question 29 named as the thing that would settle it was run.
+Throughput does not flatten: 110k rps at twelve workers rising monotonically to
+235k at sixty-four, p99 180 µs to 334 µs. At the same thirty-six workers the
+record cites, the rate is four times higher and p99 six times lower. The
+criterion is met at every point of the range.
+
+**Question 29 is marked met, and the cause of the divergence is not.** Both sets
+of numbers are kept side by side in `docs/benchmarks.md` rather than one
+replacing the other. The one thing checked and eliminated: the 97 µs p50 that
+looked impossibly fast against the recorded 175 µs serial round trip is not a
+contradiction — `BenchmarkInvoke` re-measures at 70–177 µs, so the 175 µs was the
+top of a noisy range quoted as a point.
+
+### A documentation claim that cited a test which did not cover it
+
+`docs/api.md` lists the metrics worth alerting on and closes with "All eight are
+counters ... `TestCorrectnessMetricsAreCounters` fails if one is reclassified as
+a gauge". M8 added two entries to that table and the sentence still said eight —
+so the first correction was to the number.
+
+The number was the smaller problem. The test enumerates the metrics it checks by
+name, and the two new ones were not in the list. Changing "eight" to "ten" would
+have produced a sentence that named a test as its evidence and was wrong about
+what that test did — the exact failure this file exists to catch, in prose rather
+than in code.
+
+Both are now in the test, and reclassifying either to a gauge was confirmed to
+fail it. Counting the table's rows before believing its summary took one command;
+the alternative was a documented guarantee resting on nothing.
+
+### The project's own gate could not pass
+
+CLAUDE.md's Definition of Done requires `go test ./... -race` to pass, and the
+Makefile and CI both run it as `-race -count=2 -timeout 300s`. Running that exact
+command produced:
+
+```
+panic: test timed out after 5m0s
+	running tests:
+		TestRollingUpgradeLosesNoRequests (12s)
+FAIL	github.com/peercache/peercache	300.197s
+```
+
+Not a deadlock — a test was running normally when the alarm fired, part-way
+through the second pass. `-timeout` applies per test binary, so this step has to
+fit *two* race passes of the root package inside 300s, and one pass measures
+~215s.
+
+**It was already failing before M8 touched anything.** The single-pass figure
+measured 202.7s at the start of this milestone and 215.6s at the end; both double
+past 300s. The suite grew across M5–M8 and crossed the line without anyone
+deciding it should.
+
+**What made it invisible is the same shape as the M4 port bug three sections up.**
+`make test-race` is the gate a developer runs by hand, and the number it needed
+had drifted out of reach gradually rather than in one commit — so every run
+failed the same way, looked like an environment problem, and told nobody
+anything. The steps that *do* run in CI on every push use `-timeout 300s` too,
+but for a single non-race pass that takes 24s, where the bound is nowhere near
+binding. One number, two very different jobs.
+
+Split into `TIMEOUT` and `RACE_TIMEOUT` (900s), in the Makefile and in
+`ci.yml`, each with a comment saying which job it belongs to. The corrected gate
+was then run: **439.065s, exit 0**, every package green — 46% over the bound it
+had been given, and comfortably inside the new one.
+
+That run is the first time in this milestone that the `-count=2` check has been
+observed to complete here. M3 credits it with catching a goroutine leak visible
+only on a second pass, so it did work when the suite was smaller; **when it
+stopped is not established.** What is measured is that a single pass was already
+202.7s at the start of M8, so it was failing then, and the suite has grown across
+four milestones since M3.
+
+**Re-run at the end of the milestone: 527.308s, exit 0, every package green.**
+Every test M8 added after the 439s measurement lands in the root package, and the
+gate now costs 18% more than the figure the 900s timeout was chosen against. The
+margin has gone from 2.0x to 1.7x in the space of one milestone.
+
+Nothing is wrong: a timeout is a deadlock detector rather than a performance
+budget, and 1.7x is a long way from binding. It is recorded because the direction
+is one-way and the last time this number was left alone it went from comfortable
+to unpassable without anybody deciding it should. `docs/benchmarks.md` carries the
+figure; the thing to notice is that the *first* correct measurement of this gate
+and the *second* are a milestone apart and 88 seconds apart, which is the rate a
+future budget has to be set against.
+
+The gap is worth naming rather than estimating: nobody was watching the number,
+so the protection CLAUDE.md asks for degraded from real to nominal at some point
+between M3 and M8 without a commit that did it.
+
+Raising the bound is not weakening the gate: a timeout here exists to turn a hang into a failure, and
+900s does that as well as 300s did. What 300s had additionally become was an
+undeclared performance budget, and an undeclared budget that fails closed is a
+gate people learn to ignore.
+
+### The audit's own guard had a hole, and an M8 entry fell through it
+
+M7 built a static check into `scripts/mutation-audit.sh` after an entry lost its
+`mutate` line and sat in the file looking audited for two milestones. The check
+joins backslash continuations into logical lines and requires every line carrying
+a `'TestSomething'` argument to begin with `mutate`.
+
+It matches that argument with `'Test[A-Za-z0-9_|]*'` — every character a bare
+name or an alternation needs, and no anchors. M8 added an entry passing
+`'TestMajoritySideWritesSurviveAHeal$'`, anchored because another test's name
+extends it. That does not match, so the check could not see the entry, and
+deleting its `mutate` line was **silently undetected**.
+
+Found by testing the guard rather than trusting it: the `mutate` line was removed
+on purpose to watch the check fire, and it did not. Widening the character class
+to the metacharacters a `-run` argument may legitimately contain fixes it, and
+the same deletion is now refused by line number. Both directions confirmed —
+intact script passes, orphaned entry caught.
+
+Scanning all 107 entries for arguments the old pattern could not see returns
+exactly one real entry — the M8 one that exposed the hole. Every pre-existing
+entry uses a plain test name, so nothing historical was ever unguarded: the hole
+opened the moment an entry needed a regex anchor, and the first one that needed
+it made it.
+
+**Why this one is worth the space.** The guard exists to stop an entry going
+silently unrun. It was defeated not by the line structure it inspects but by the
+*contents of the argument* it inspects, introduced by someone who had read the
+guard and was relying on it. Every M8 mutation entry was individually
+hand-verified to catch its mutation, so nothing was actually unprotected — but
+that was luck of process, not the guard working, and without checking the guard
+the difference would not have been visible.
+
+### The full audit, run at last — and what two runs of it disagreed about
+
+The audit refuses to run on a dirty tree, so it had not been run against any of
+this milestone's work. It was run against a throwaway snapshot instead: the tree
+copied to a scratch directory, committed there, audited there. The working tree
+is never touched, and the objection the refusal exists for — `git checkout --`
+discarding uncommitted work — does not apply to a commit made for the purpose.
+
+**First run: 104 caught, 1 vacuous, 0 skipped.** All six M8 entries caught. The
+vacuous one was caused by this milestone's own fix, described above: the frame
+validator now refuses the inputs `TestALengthPrefixCannotBuyAnAllocation` uses,
+so the mutation it was guarding — preallocating from a declared length — became
+unobservable through `Decode`. Retargeted at
+`TestABoundedDecoderStillAllocatesOnlyForWhatArrives`, which reaches the bounded
+decoder with a frame the validator *must* accept, and catches the mutation at
+6,266 KiB against a 1 MiB budget.
+
+**Second run: 104 caught, 1 vacuous — a different entry.** "Handed-off keys are
+not adopted by their new owner" was caught in the first run and vacuous in the
+second, on the same code.
+
+**Third and fourth runs: 105 caught, 0 vacuous, 0 skipped, exit 0.** The retarget
+holds and the flaky entry was caught both times.
+
+That disagreement is the finding, and M3 says why: an audit that is not
+deterministic is not evidence. Across four full runs the entry was caught,
+missed, caught, caught; run alone it is caught 5 times out of 5. Eight of nine
+observed runs, so the escape needs the load of a full audit to appear. The likely mechanism —
+likely, because it has not been demonstrated directly — is the same
+adoption-versus-promotion race that made `TestKeysAdoptedIsCounted` fail earlier
+in this milestone: a drain announces its departure and then transfers, and when
+the receiver has not yet processed the departure the transfer is filed as a
+replica and promoted afterwards, which preserves the data by the other path.
+
+The consequence for the entry is worth stating plainly. **The guarantee holds on
+both paths** — a graceful drain at RF=1 loses nothing either way — so this
+mutation targets which store the key lands in rather than whether it is kept. It
+is left in place, because a detector that fires in eight runs of nine is still a
+detector, and annotated in the script with those numbers so the next
+disagreement is recognised rather than investigated from scratch.
+
+**The fourth run was worth doing for a specific reason.**
+`TestDrainSavesDataWithoutReplication` had just been changed to read through
+`readAnywhere`, which retries across every live node — plausibly making this
+mutation *harder* to catch, since a retrying reader might find the key by the
+promotion path. It did not. The mutation makes the receiver store nothing at all
+when it owns the key, so the key is genuinely absent and retrying cannot conjure
+it: retry rescues deferrals, never absence, which is exactly the distinction the
+fix was about. The change removed a false negative without introducing a false
+positive, and the audit is how that was established rather than assumed.
+
+### An example that printed a number one too high
+
+The Makefile says examples are run rather than merely compiled because "an
+example that is only compiled is documentation that can quietly start lying."
+`examples/m7` was lying, quietly, about the size of the metrics surface.
+
+It counted series with `strings.Count(body, "\n# TYPE ")` and added one. The
+addition corrects for a first TYPE line with no newline before it — true of a
+body that begins at `# TYPE `. The body begins at `# HELP`: every series emits
+both lines, so *every* TYPE line is preceded by a newline, the correction became
+an off-by-one, and the example reported 40 series where the endpoint serves 39.
+
+Found by not taking the output on trust. The example prints a count rather than
+asserting one, so nothing could have failed; the number was checked against a
+direct count of `# TYPE ` prefixes and disagreed by exactly one. It now counts by
+prefix, which needs no correction and cannot drift with the exposition format.
+
+**The general point is about which numbers are load-bearing.** This one is
+printed for a human and asserted by nothing, which is precisely why it could be
+wrong for as long as it liked. The metric *count* in `docs/api.md` has the same
+shape and was checked the same way earlier in this milestone — both were wrong,
+in different directions, for the same reason: a derived figure nobody re-derives.
+
+### The exhaustive fuzz target was not exhaustive
+
+`FuzzDecodeEveryMessage` exists because a five-type sample let the M4 defect
+survive in the fifteen types nobody pointed a fuzzer at. Counting the types it
+actually decodes — prompted by the two wrong derived numbers above — gives
+**twenty**, while its sibling `everyMessage()` covers **twenty-one**.
+
+The missing one is `GroupBatch`. It had been added to the *seed* list earlier in
+this milestone and never to the decode list, so inputs were encoded from it and
+never decoded into it. It has its own custom encoder/decoder pair, which is its
+own way to get length handling wrong.
+
+A one-type gap in the target whose entire premise is that a sample is not enough.
+Now decoded, with `GroupBatch.Messages` added to the length invariant, and the
+count corrected in the four places prose asserted it.
+
+**Five findings came from the same question** — "is that number still true?" —
+asked systematically of every figure in this milestone's writing that could be
+checked against the code:
+
+| Claim | Where | Stated | Actual |
+|---|---|---:|---:|
+| exported metric series | `docs/api.md` | 8 alerting, 35 total | 10, 38 |
+| series at the endpoint | `examples/m7` | 40 | 39 |
+| message types fuzzed | four places | 20 | 21 |
+| collection-bearing messages | decision 0019 | six | seven |
+| deepest real nesting | decision 0019 | four levels | five |
+| encoder/decoder pairs a per-message fix would need | decision 0019 | eight | eight ✓ |
+
+Five wrong out of six checked, and every one of them written during this
+milestone by someone who had the code open. Two were merely prose; three had
+teeth — the metric count cited a test that did not cover what it claimed, the
+example printed a false number to an operator, and the fuzz count concealed a
+type the target never decoded.
+
+A derived figure written once and never re-derived is not documentation, it is a
+claim with a decaying half-life. The defence is not care at the time of writing —
+all five were written carefully — it is recomputing rather than reading. The last
+row is the useful control: checking found one claim that was right, which is what
+makes the other five findings evidence rather than a fishing expedition.
+
+**Ten instances accumulated before this milestone ended**, five of them written
+*into this section* while it was being drafted, two of those created by the fix
+to the one before. The rate did not fall as the author became more alert to it,
+which is the argument against relying on alertness.
+
+Three defences emerged, in ascending order of reliability:
+
+1. **Check it mechanically.** Three of the ten are now enforced by tests. Only
+   works for figures that are properties of the current tree — "how many rows in
+   this table" qualifies; "how many checks were added this milestone" does not,
+   being a property of a diff against a commit that will move.
+2. **State the scope.** One figure was *measured* and still wrong, because
+   "named in fourteen places" did not say fourteen places in what — `.go` and
+   `.sh` gives 14, adding `.md` gives 18. A count without its scope is not a
+   fact, it is a fact-shaped string that nobody can re-derive.
+3. **Do not count at all.** The four categories introducing this section have
+   never been wrong, and the reason is that they enumerate rather than total.
+   "Defects in the library — a remote out-of-memory, a second one, a partition
+   heal, a forged provenance" stays true when a fifth is added in a way that
+   "four defects" does not. That was accidental rather than designed, and it is
+   the only one of the three that costs nothing and cannot fail.
+
+### One exported symbol in the repository had no doc comment
+
+CLAUDE.md: "Every exported symbol has a doc comment. Every package has a
+`doc.go`." Both are mechanically checkable and neither had been checked.
+
+Scanning every top-level exported `func`, `type`, `const` and `var` outside test
+files returns exactly one without a preceding comment: `WithTransport`, a public
+constructor option, sitting between two neighbours that are both documented. It
+is described in `docs/api.md`'s options table, so the information existed — it
+just never reached `go doc`, which is where a caller looks.
+
+The first version of the scan reported 45 hits and was wrong. Methods on
+unexported types — `(*cache).Stats`, `(*group).Get` — are documented on the
+interfaces they implement, which is where Go's own convention puts them.
+Narrowing to genuine top-level declarations turned 45 into 1, and the 1 was real.
+A checker that cries wolf 44 times out of 45 would have been abandoned before it
+found anything, which is an argument for tuning the check rather than reading its
+output selectively.
+
+The `doc.go` half passes: every library package has one. The only directories
+without are the eight `examples/mN` programs, which are `package main` and carry
+package comments instead.
+
+**Why that rule and not another** is the part worth keeping. `discipline_test.go`
+already enforces CLAUDE.md's other mechanical rules as tests — no `time.Sleep`,
+no `time.Now` outside `internal/clock`, no `log` package, no TODO markers, no
+internal package importing the root, every package has a `doc.go`. All of them
+hold. The exported-symbol rule was the only one with no test, and it was the only
+one being broken. That is not a coincidence worth admiring; it is a measurement
+of what an unenforced rule is worth.
+
+`TestEveryExportedSymbolIsDocumented` closes it, and was confirmed by deleting
+the comment again and watching it fail. It parses rather than greps, for the
+reason above: the regex version reported 45 violations of which 44 were methods
+on unexported types, and a check that is wrong 44 times in 45 is a check somebody
+switches off.
+
+**Then the same question was asked of every remaining rule.** Comparing
+CLAUDE.md's mechanical rules against the tests in `discipline_test.go` left two
+with no check at all:
+
+- **"No `panic` in library code paths."** A safety non-negotiable. It held —
+  zero panics in the shipping module — but nothing said so. The library recovers
+  panics from *application* callbacks and reports them as `ErrLoaderPanic` and
+  `ErrGroupFuncPanic`; a panic raised by the library itself has no such boundary
+  and unwinds whichever caller's goroutine was running. In a cache embedded in
+  every pod that is the application dying over a bug in its cache, which is what
+  question 34 describes actually happening.
+- **The dependency budget.** "Adding anything else requires a note in
+  `docs/decisions/` first" rested entirely on remembering it at the moment
+  `go get` makes it easiest not to.
+
+Both now have tests — `TestNoPanicInLibraryPaths` and
+`TestDependencyBudgetIsUnchanged` — and both were confirmed by breaking them:
+inserting a `panic` into `namespace.go` and removing a module from the budget
+list each fail with the message a reader needs. The budget test cannot check that a decision note exists
+— it makes the diff demand one, by failing until the new module is recorded with
+the slot it fills, which is the same sentence the note has to make.
+
+Every mechanical rule in CLAUDE.md now has a test. Two of the nine did not an
+hour ago, and one of those two was already broken.
+
+**One documentation claim got the same treatment before it broke.**
+`docs/api.md` opens with a table of every runnable example and what it covers,
+and that table is how a reader decides whether the public API has been
+demonstrated or merely described. Checked against `example_test.go` it was
+exactly right — twelve claimed, twelve defined, no drift in either direction.
+
+That is the moment to nail it down rather than the moment to move on. The failure
+mode is not writing the table wrong; it is adding a thirteenth example and
+forgetting the row. `TestApiDocExampleTableMatchesReality` now fails in both
+directions — a row with no example is a promise the package does not keep, an
+example with no row is a demonstration nobody will find — and was confirmed by
+deleting a row and watching it fail. It is `TestProtoDeclaresEveryMessage`
+applied to prose instead of a schema, which is the pattern this repository
+already uses everywhere the two can disagree.
+
+**And the citation sweep became a test too.** The records in `docs/` lean hard on
+test names — a claim is credible here because it says which test would fail if it
+stopped being true — so a stale name is worse than no name: it reads as evidence
+and resolves to nothing. That sweep was run by hand three times during this
+milestone. `TestDocsCiteOnlyRealTests` now runs it every time, over 132 cited
+names, with an allowlist of four that deliberately do not resolve, each carrying
+its reason. The allowlist is checked in reverse too: an entry that starts
+resolving must be removed, so the exceptions cannot quietly become wrong.
+
+It needed one refinement, and it is the same one the doc-comment check needed.
+The first version flagged `TestReport` in decision 0005 — which is not a citation
+but a `-run` *prefix pattern* in a shell command, matching three real tests.
+Names inside a fenced code block are patterns; names in prose are claims. Skipping
+fences distinguishes them, and shrank the allowlist by one at the same time.
+
+Twice now a checker's first version has been wrong in the same direction: too
+literal, flagging things that were never claims. Both times the fix was to narrow
+what counts as a claim rather than to widen the list of exceptions, because an
+allowlist that absorbs false positives is how a check stops meaning anything.
+
+### A package missing from the map since the day it was created
+
+README's layout block lists every directory in the repository. It listed fifteen
+of the sixteen packages under `internal/`.
+
+The missing one is `internal/wire`: the protocol codec, the only code here that
+interprets bytes it did not write, and the package where two of this milestone's
+four library defects lived. It had been absent since the package was created and
+nothing noticed, because nothing was looking.
+
+An omission from a map is worse than a map with no detail. A reader deciding
+where message encoding lives would have found `codec/` and `transport/` and
+concluded there was nothing between them — the absence reads as an answer.
+
+Added, and `TestReadmeListsEveryInternalPackage` now fails if a package is
+created without one. Confirmed by deleting the line again.
+
+The check is one-directional on purpose. Every real package must appear; a line
+that no longer matches a directory is caught by the same diff that removed the
+directory, and demanding exact equality would fight the block's sub-entries and
+prose for no gain.
+
+**Then the same block was checked one directory over, where it was worse.** The
+repository root is the public API — Go does not let a package span directories,
+so every file a caller's import reaches is there. There are nineteen. The layout
+block listed **seven**, and had listed those seven since M4 while twelve more
+were added underneath it: the whole remote path, replication, promotion,
+catch-up, invalidation, drain, readiness and the stats surface. `handoff.go`,
+written this milestone, would have been the thirteenth.
+
+The `internal/` omission was one package out of sixteen and is the kind of thing
+a careful reader might notice. This one is twelve files out of nineteen, in the
+one directory the map claims to describe completely, and it is the directory a
+reader goes to first. It survived because the check that existed looked at
+directories, and the root is a single directory that happens to contain most of
+the library.
+
+`TestReadmeListsEveryRootFile` closes it on the same terms as its sibling —
+one-directional, confirmed by deleting `handoff.go`'s line and watching it fail.
+
+**And two 17 MB binaries were sitting in that directory.** `m6.exe` and `m7.exe`,
+left by a hand-run `go build ./examples/m6` during M6 debugging. `make examples`
+uses `go run` and leaves nothing, so no target here produced them and no target
+here removed them: `clean` deleted two of the seven artefact patterns
+`.gitignore` names. Being gitignored kept them out of the history and did nothing
+whatever about them being on disk, which is the distinction — an ignore rule
+answers "should this be committed", not "should this be here". `clean` now
+removes everything `.gitignore` lists.
+
+### A false alarm found by running the suite one more time
+
+`TestDrainSavesDataWithoutReplication` failed in a full-package run, on
+unmutated code, reporting that a graceful shutdown had lost a key. It passes five
+times out of five when run alone.
+
+Nothing had been lost. The test read each key from one survivor with a single
+`Get` and counted *any* error as loss. Two of the errors it can legitimately
+receive mean "ask again": `ErrActivationPending`, because a membership change
+starts the activation guard's delay on every group it moved, and `ErrNotOwner`,
+because ownership may have moved off whichever survivor is first in the list.
+Under full-package load one key landed inside that window.
+
+This is the third time in this milestone that a retryable error has been read as
+data loss — after `readAnywhere` reporting deferrals as lost keys, and the
+adoption-versus-promotion race in `TestKeysAdoptedIsCounted`. The fix here is to
+use `readAnywhere`, which already knows the difference and was written for
+exactly this after the first occurrence. This test predates it and never got the
+benefit.
+
+**The general shape is worth naming, because three instances is a pattern.** A
+distributed cache has a large class of errors meaning "not yet" and a small class
+meaning "never". A test that treats the two alike does not fail *less* often than
+one that gets it right — it fails at a rate set by machine load, and every one of
+those failures is a confident, specific, false report of data loss. It is the
+most expensive kind of flake, because the failure message is credible.
+
+Worth noting how it was found: by running the full suite once more after a change
+that could not have affected it. Three earlier full runs had passed.
+
+**Then the pattern was hunted rather than waited for.** Three instances is enough
+to search on, so every loop in the suite that counts keys as lost was checked for
+the same shape — a bare `Get` on one node whose error is treated as loss. Two more
+turned up, both in `chaos_test.go`:
+
+- `TestChaosLosesNoSynchronouslyWrittenKey`, the M5 acceptance criterion, had it
+  exactly. After sixty seconds of kills the survivors are still settling, so a
+  deferral there would have reported a key lost by chaos — a false alarm on an
+  acceptance criterion, which is the most credible place in the suite to get one.
+- `TestChaosAtReplicationFactorTwoCanLoseData` was more careful, separating
+  `ErrNotFound` from other errors, but a deferral still produced a fatal
+  "unexpected error". That test *expects* losses, which makes distinguishing
+  "not found" from "not yet" more important there, not less: a deferral counted
+  as either outcome corrupts the number it exists to report.
+
+Both now use `readAnywhere`. The RF=2 test still reports 83 kept and 17 lost of
+100, so the fix did not paper over the real losses it measures. A final sweep
+confirms no loop in the suite still counts a bare `Get` error as loss.
+
+Five instances, one root cause, found because the third one prompted a search
+instead of a fix.
+
+**And a sixth is now blocked rather than merely unlikely.**
+`TestLossCountingTestsUseARetryAwareRead` requires any test file that counts keys
+as lost to use one of the retry-aware helpers. It is deliberately coarse — a
+file-level property, not a judgement about where in the file the bare read is —
+because three text-based checks written this milestone were wrong on their first
+version by being too literal, and a checker that over-fires is one that gets
+switched off. This one cannot point at the line; it can say the file has no way
+to be doing the right thing, which is enough and is impossible to argue with.
+
+Confirmed by adding a file that counts losses and calls no helper, and watching
+it fail by name. An earlier attempt to reintroduce the bug directly into
+`chaos_test.go` would not compile, because `readAnywhere` returns a string where
+a bare `Get` returns bytes — an accidental guard, and not one to rely on.
+
+### Readable is not replicated, and the test that proved the fix did not know it
+
+The final `-race -count=2` gate failed in a test written earlier the same day to
+verify the hand-off fix: `TestMajoritySideWritesSurviveAHealAndTwoDestructions`
+lost one key of ninety-four, about one run in seven. It had passed every
+non-race run and every earlier gate.
+
+Three hypotheses, two wrong, each eliminated by measurement rather than argument:
+
+1. **A hand-off still in flight.** The queue is drained by a worker, so killing
+   nodes might race it. Waiting for `rehomed + retained` to account for every
+   `evicted` did not fix it.
+2. **The cluster had not re-converged.** Waiting until every key was readable
+   before killing did not fix it either — and the failure moved to *after* that
+   wait, which is what made the third hypothesis findable.
+3. **Readable is not replicated.** A key is readable the moment one node holds
+   it. Surviving two destructions needs three nodes to hold it. After a heal the
+   copies are restored by catch-up, which M5 made an explicit call precisely
+   because it is not automatic — and this test only called it *after* the kills.
+
+Calling `CatchUp` before destroying anything fixed it: **thirty consecutive runs
+under `-race -count=2`**, against a rate that had been roughly one in seven.
+
+**The library was never wrong here.** The test was asserting "RF=3 survives two
+destructions" against a cluster that had not finished restoring RF=3, which is
+the documented behaviour of a cluster that has not caught up and the exact
+situation the README's operational rule addresses — call `CatchUp` before
+serving. The test was skipping the procedure and then blaming the guarantee.
+
+Two things are worth carrying. **A test written to verify a fix is not
+automatically a correct test**, and this one was wrong in a way that made the fix
+look incomplete — the most expensive direction to be wrong in. And the two failed
+hypotheses were not wasted: each was cheap, each was eliminated by a measurement
+rather than by reasoning, and the second one relocated the failure to where the
+third became visible.
+
+**The same gap was then looked for elsewhere rather than assumed absent.** Every
+test that destroys nodes was checked for whether it restores replication first:
+`chaos_test.go` catches up the revived victim each round and never has two nodes
+down at once, so one copy always survives at RF=3; `rolling_test.go` drains
+gracefully; `eviction_test.go` catches up after its single kill-and-revive.
+`partitionheal_test.go` was the only test removing two copies without restoring
+the factor first.
+
+There is a connection worth naming. `chaos_test.go` already carries a long
+comment about M5 discovering this for *restarts* — "558 of 600 keys lost, none of
+them actually gone" — and concluding that a returning node must catch up before
+serving. The failure here is the same class for a *heal*: membership changed,
+placement moved, and the copies had not caught up yet. The project had learned
+the lesson in one shape and did not recognise it in the other, which is the
+ordinary way a lesson fails to transfer.
+
+### A test written for the new guarantee, and deleted for being vacuous
+
+Documenting the settling window raised the obvious next question: is there a test
+that catch-up *restores* the replication factor? There was not — every test in
+this area asserts readability, which is the exact distinction that had just cost
+an afternoon.
+
+So one was written. It counted copies in aggregate: each node reports what it
+owns and what it holds as a replica, and summed across the cluster that should
+come to three times the keyspace at RF=3. It passed, reporting 337 copies of 107
+keys against 321 expected.
+
+**Then it was mutated, and it passed with catch-up deleted entirely.** Vacuous.
+The excess is why: some nodes retain copies they no longer rank for, so an
+aggregate total can sit above the expected number while individual keys sit below
+it. The measure could not see the thing it was named for.
+
+Deleted rather than kept. This project's position on that is not ambiguous —
+question 20 records deleting a test for the same reason, and the mutation audit
+reports VACUOUS as a failure. A test that cannot fail is worse than an absent
+one, because the absence is at least honest about what is not checked.
+
+The guarantee is not unguarded. `TestMajoritySideWritesSurviveAHealAndTwoDestructions`
+covers it behaviourally and far better: catch up, then destroy RF−1 nodes, then
+require every key. That asserts the consequence anybody actually cares about
+rather than a proxy for it, and it is the test whose failure produced the finding
+in the first place.
+
+The general point is the one this file keeps arriving at from different
+directions. A test is not evidence because it passes; it is evidence because it
+would fail. Checking which of those you have takes one mutation and about a
+minute, and the answer here was not the one that was expected.
+
+### Mutating the new tests, including the ones that looked safest
+
+Having deleted one vacuous test, the rest of this milestone's tests were checked
+the same way rather than assumed sound. Two results were worth keeping.
+
+**`TestValidateHandlesEveryTypeByte` is not vacuous.** Changing the 64-bit
+scalars to skip four bytes instead of eight — a plausible off-by-one in a family
+nobody looks at twice — fails it immediately, and fails it on the *truncation*
+half: "validate accepted a truncated value for type byte 0xcb". That half was
+written on the theory that accepting a well-formed value proves nothing on its
+own, and this is the theory paying out.
+
+**The collection element-count bound is a fast path, not a correctness guard.**
+Deleting it left the entire wire package passing. That looked like a coverage gap
+and is not: `scanN` calls `scan` for each declared element, the first one runs
+out of bytes, and the frame is rejected either way. The bound turns a loop over a
+declared four billion into one comparison, and names the problem in the error
+rather than reporting a truncation several levels down — neither of which is
+correctness.
+
+It is now commented as such, which is the same treatment `replicate.go` gives its
+`rf < 2` branch after a mutation audit reached the identical conclusion there. A
+line that cannot be mutated into a failure is either dead or a fast path, and the
+difference belongs in a comment rather than in the reader's inference.
+
+### Every test this milestone added, and the mutation that confirms it
+
+Scattered through the sections above are individual confirmations. Collected, so
+the claim "these tests would fail if the behaviour regressed" is auditable in one
+place rather than reconstructed from a narrative:
+
+| Test | Mutation | Result |
+|---|---|---|
+| `TestNoMessageAllocatesFromADeclaredLength` | run against the pre-validator code | **caught** — 4 GiB on `CallResponse`, 1 MiB on four others |
+| `TestValidateRejectsUnboundedNesting` | `MaxNestingDepth` raised to 1<<30 | **caught** |
+| `TestValidateHandlesEveryTypeByte` | 64-bit scalars skip 4 bytes instead of 8 | **caught** on the truncation half |
+| `TestEveryTypeByteIsClassified` | `map16` case disabled | **caught** — names the byte reaching the default |
+| `TestABoundedDecoderStillAllocatesOnlyForWhatArrives` | preallocate from the declared length | **caught** — 6,266 KiB against a 1 MiB budget |
+| `TestMajoritySideWritesSurviveAHealAndTwoDestructions` | drop moved replicas instead of handing off | **caught** — 20 of 94 lost |
+| `TestAHandOffThatCannotBePlacedKeepsTheCopy` | drop the copy when placement fails | **caught** |
+| `TestMajoritySideWritesSurviveAHeal` | hand-off stamps itself as the writer | **caught** — 19 fabricated detections |
+| `TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy` | degraded counter never increments | **caught** |
+| `TestDegradedWritesStayZeroWhenTheFactorIsMet` | counter fires when the factor *is* met | **caught** — 4 spurious on a healthy cluster |
+| The eleven discipline tests | the rule each enforces, broken | **caught**, each verified individually |
+| `FuzzCodecRoundTrip` | msgpack encodes without the `json` struct tag | **caught** — every string field returned empty |
+| `FuzzPartitionByPrefix` | split on the *last* separator instead of the first | **caught** — idempotence, on a seed |
+| `TestFuzzTargetsNamedInCIExist` | a phantom target, then an unanchored pattern | **caught** both, naming file and pattern |
+| `TestApiDocMetricCountsAreCorrect` | 38 → 37, and "ten" → "nine" | **caught** both halves |
+| `TestReadmeListsEveryRootFile` | `handoff.go` removed from the layout block | **caught** |
+| the audit's own orphan guard | a `mutate` line dropped from a fuzz entry | **VACUOUS twice, then caught** — see above |
+| all five entries above, via `ONLY` | run by the script rather than by hand | **caught: 5, vacuous: 0, skipped: 0** |
+| the aggregate copy-count test (name not kept; it was deleted) | catch-up removed | **VACUOUS — test deleted** |
+
+Two entries are the interesting ones. The last is a test that could not fail and
+was removed rather than kept. And the collection element-count bound in
+`validate.go` survives deletion with the whole package still passing — recorded
+above as a fast path rather than a gap, because `scanN` rejects the frame either
+way.
+
+Everything else in this milestone was confirmed by breaking it first.
+
+Assembling this table tripped `TestDocsCiteOnlyRealTests` immediately: three rows
+carried names truncated with an ellipsis to keep the columns narrow, and a
+truncated name resolves to nothing. Table width is not a reason to write the name
+of a test that does not exist, and the check said so before a reader had to. The
+deleted test now has no code-formatted name at all, which is the honest way to
+refer to something that is gone.
+
+Writing *that* sentence tripped it again, because the first draft quoted one of
+the truncated names to illustrate the problem — and a quoted prefix is exactly as
+unresolvable as the original. Three times now a check added this milestone has
+caught its own documentation while the documentation was being written. Each time
+the fix was to stop naming the thing and describe it instead, which is also the
+better prose.
+
+### The nightly fuzz job named three targets that did not exist
+
+`.github/workflows/nightly.yml` was written at the end of this milestone to carry
+the long-running verification the per-commit gate cannot afford: thousands of
+simulation seeds, an hour of soak, the mutation audit, and a fuzz matrix of seven
+targets. Three of the seven — `FuzzCodecRoundTrip`, `FuzzMethodName` and
+`FuzzPartitionByPrefix` — named tests nobody had written. They were invented
+while writing the workflow, which is where a list of what *ought* to be fuzzed
+turns into a list of what is.
+
+**The part that makes it worth a section is what `go test` does about it.**
+Nothing:
+
+```
+$ go test ./internal/transport -run '^$' -fuzz '^FuzzMethodName$' -fuzztime 5s
+PASS
+ok      github.com/peercache/peercache/internal/transport   1.763s
+```
+
+`-fuzz` takes a regexp. When it matches no target, the command does not error —
+it runs the ordinary tests selected by `-run`, which is `'^$'`, which is none,
+and exits 0. Three of the seven jobs would have gone green every night for as
+long as anybody left them alone, and the only visible symptom is a job that
+finished in two seconds instead of ten minutes, in a workflow nobody watches
+because it passes.
+
+This is the third gate this milestone that could not fail, after the M4
+acceptance test that had never bound a socket and the audit guard with a hole in
+it. All three share a shape: the gate was *configured* correctly and resolved to
+nothing at run time, and the run-time result looked exactly like success.
+
+**And the opposite failure was sitting next to it.** `FuzzDecodeEveryMessage` was
+added to `internal/wire` earlier in this milestone. `ci.yml` ran
+`-fuzz FuzzDecode`, unanchored, which had been unambiguous when it was written:
+
+```
+testing: will not fuzz, -fuzz matches more than one fuzz test: [FuzzDecodeEveryMessage FuzzDecode]
+FAIL
+```
+
+The Makefile had been anchored by hand when the new target went in. `ci.yml` had
+not, and nothing connected the two. A green step in the per-commit gate was
+broken by a test being *added* in a package the step's file does not mention —
+which is the same class as a stale documentation citation, except that the
+compiler cannot see build files at all.
+
+**Both are now checked by `TestFuzzTargetsNamedInCIExist`**, which reads the
+Makefile and every workflow, resolves each `-fuzz` pattern against the fuzz
+targets actually defined in the package the command names, and fails unless the
+match count is exactly one. Zero is a gate that cannot fail; two is a gate that
+cannot pass. Both original failures were reproduced against it and both are
+caught, each naming the file, the pattern and what it found in that package.
+
+**Two of the three invented targets were worth writing, and one was not.**
+`FuzzMethodName` would have fuzzed `shortName`, a nine-line loop over a list of
+compile-time constants that no untrusted input reaches. Writing it would have
+produced a passing test that guards nothing, which is the failure this file spends
+most of its length on; it was deleted from the matrix instead, and that is the
+honest resolution when a gate names work that should not be done.
+
+The other two are real properties, and both were confirmed by mutation before
+being believed. `FuzzPartitionByPrefix` covers the group key, which decides
+ownership — it asserts that the group is a prefix of the key, that grouping is
+idempotent, and that two partitioners built from the same separator agree, the
+last two being what stands between the library and a key with two owners.
+Switching the implementation to split on the last separator rather than the first
+fails it on a seed input.
+
+**`FuzzCodecRoundTrip` found a real one on its first execution.** The
+[`codec.Codec`](../internal/codec/codec.go) interface has said since M1 that "for
+any v that the codec accepts, Unmarshal(Marshal(v)) reproduces v". The JSON
+codec, which is the default, does not: `encoding/json` substitutes U+FFFD for
+every byte of an invalid UTF-8 sequence in a string and reports no error. A value
+written through it comes back changed, silently, which is precisely what the
+sentence beneath that one calls "worse than one that errors".
+
+`TestCodecRoundTrip` existed and did not catch it. It compares three hand-written
+values, and for the two composite fields it compares their *lengths* — a codec
+that replaced every map value with the empty string would pass it. It is the
+same shape as the helper and the acceptance test recorded earlier in this
+milestone: an assertion that something came back, not that the right thing did.
+
+The finding is documented rather than fixed, for a reason recorded in open
+question 41: the substitution happens inside `encoding/json`, no option disables
+it, and it cannot be detected from the encoded bytes, which are valid UTF-8 by
+then. `TestJSONCodecReplacesInvalidUTF8` pins the behaviour and fails if it ever
+changes; the fuzz target excludes that one input class for the JSON codec by name
+so that it still enforces the property everywhere else, rather than the codec
+being exempted whole. MsgPack carries the same bytes through unharmed, and a
+`[]byte` field survives JSON too because it is base64 — only Go strings are
+affected, and `WithCodec` is still inert (question 17), so nothing in the library
+reaches this today. It is a hole in a contract, found before the contract had a
+caller.
+
+**The codec target's own first version passed for the wrong reason.** It iterated
+`codec.Names()`, the package-level registry, on the assumption that the property
+should hold for every codec registered. It does not hold for the stubs that
+neighbouring tests register — one returns `nil` from `Marshal` and ignores
+`Unmarshal` — so the target passed under `-fuzz`, which runs no other test, and
+failed under a plain `go test`, which runs them first. The bug was in the test and
+the invariant was fine, but the shape is worth naming: a check whose result
+depends on which other tests ran is a check that reports the schedule, not the
+code. It now names the two built-in codecs, which are the ones the property is
+about.
+
+Both targets now have entries in `scripts/mutation-audit.sh`, and getting them
+there found a third hole in that script's own guard — recorded below.
+
+**The general point is about where verification is written down.** Every check in
+this repository lives in a `_test.go` file except the ones that live in a
+Makefile or a workflow, and those had nothing checking them. A build file naming
+a test by a string is an unresolved reference that no tool follows: `go vet` does
+not read YAML, and the test it names does not know it is being named.
+
+### Two more derived figures, pinned before they broke
+
+`docs/api.md` tells an operator that "38 series come out of it", repeats the
+figure in the next section — "most of the 38 are ordinary levels and rates" — and
+introduces the alerting table with "these ten are not". Three numbers, all
+derived from code, all maintained by remembering.
+
+Checked: all three are right. 38 is `len(metrics.Names())` exactly, and the table
+under "these ten" has ten rows.
+
+That is the moment to nail them down rather than the moment to move on, which is
+the argument `TestApiDocExampleTableMatchesReality` was written from earlier in
+this milestone and the argument five wrong figures made the hard way. The "38"
+was "35" until three counters were added here, and it was corrected by someone
+who happened to remember.
+
+`TestApiDocMetricCountsAreCorrect` takes the series count from `metrics.Names` —
+the same list the handler writes from, so it cannot drift from the output the way
+a hand-maintained list would — and the alerting count from the table's own rows,
+so a sentence introducing a table has to agree with the table beneath it. It
+reads *every* occurrence rather than the first, because the figure appears twice
+in sections written a milestone apart and a check that fixed one and left the
+other would be the failure it exists to prevent. Both halves were confirmed by
+mutation: 38 → 37 and "ten" → "nine" each fail with the number found and the
+number expected.
+
+It also merged two `numberWords` maps into one. A second had been added for this
+check before it was noticed that the acceptance-map check already had one — the
+same duplication, in the file whose entire purpose is catching duplication that
+drifts.
+
+### A check that tested the directory instead of the reason
+
+`TestEveryPackageHasDocGo` exempted `examples/` by path prefix. The reason in its
+own comment is different: commands document themselves above `package main`, and
+a separate `doc.go` in one would be worse than none. `examples/` was simply the
+only directory that had ever held a command.
+
+The first command written outside it — `scripts/clean`, below — would therefore
+have been asked for a `doc.go` that the convention says not to write, and the
+obvious fix under deadline is to add a second path to the exemption list. That is
+how an exemption list becomes a place where checks go to stop meaning anything.
+
+It now matches on the declaration, which is the property the comment was
+reasoning about all along. This is the third time in this milestone that a check
+was found testing a proxy for its subject rather than its subject: the M4 port
+bug, the audit's `-run` pattern guard, and this.
+
+### The clean target removed two of the seven things it names
+
+`.gitignore` lists seven build and test artefact patterns. `make clean` removed
+two of them — `coverage.out` and `bench.txt`. Two lists that have to agree, with
+nothing checking them, which is the defect this whole section keeps finding one
+level out from the code.
+
+The consequence was sitting in the repository root: `m6.exe` and `m7.exe`, 34 MB
+of example binaries left by a hand-run `go build`, matched by `.gitignore`'s
+`*.exe` and by nothing in the target whose job is removing them. Being gitignored
+kept them out of the history and did nothing whatever about them being on disk —
+an ignore rule answers "should this be committed", not "should this be here".
+
+`clean` now runs `scripts/clean`, which reads the artefact section of
+`.gitignore` and removes what it names, so there is one list. It refuses to run
+if that section is empty rather than silently removing nothing, does not recurse,
+and skips directories — the second section of `.gitignore` names `.idea/` and
+`.vscode/`, which belong to the developer and are not a clean target's business.
+
+**And the first version of this entry was wrong in the way this file exists to
+prevent.** It claimed the old recipe "could not run at all on this machine",
+having seen `mingw32-make clean` fail from PowerShell with
+`CreateProcess(NULL, rm -f ...) failed`. Tested properly, the recipe runs fine
+from Git Bash, where `rm` is on PATH; GNU make reaches for a shell only when it
+recognises something in the command line as needing one, and the glob in that
+recipe did not trigger it. Three neighbouring recipes using pipes and `&&` were
+also asserted to be broken, and measuring showed all three work, because those
+characters do trigger it.
+
+So the Go rewrite is portability, not repair, and the claim in the Makefile now
+says so. The finding that stands on its own is the duplicated list. The one that
+did not survive contact with a second measurement is recorded here at length
+because it was made while writing a section about unverified claims, which is now
+the fourth instance of that in this milestone and no longer a coincidence worth
+remarking on — it is the base rate for asserting anything without running it.
+
+### The audit's guard had a third hole, found by orphaning an entry rather than by reading it
+
+Earlier in this milestone the mutation audit's orphan detector — the check that
+refuses to run when an entry has lost its `mutate` line and would be silently
+skipped — was found to have a hole, and was fixed by widening the character class
+of the `-run` argument it matches on. Adding the first fuzz entries reopened it
+twice more.
+
+**First:** the pattern matched only arguments beginning with `Test`. A fuzz entry
+begins with `Fuzz`, so an orphaned one would have been exactly as invisible as the
+orphaned M6 entry the guard was built for. Adding the alternation was the obvious
+fix.
+
+**Second, and this is the one worth the space:** the obvious fix did not work. A
+`-run` argument is a regexp and the new entries are written anchored, as
+`'^FuzzCodecRoundTrip$'` — and a string beginning with a caret begins with
+neither `Test` nor `Fuzz`. The widened guard was tested by orphaning one of the
+new entries and it did not fire. The leading anchor is now optional too, and the
+same test then produced:
+
+```
+  line 1167:   internal/codec/msgpack.go    'enc.SetCustomStructTag("json")' ...
+refusing to run: an entry above is not attached to a 'mutate' command,
+so it would be silently skipped. Restore its 'mutate' line.
+```
+
+Three widenings, each written against the entries that existed at the time, for a
+guard whose entire job is catching an entry nobody has written yet. The pattern is
+not that the regexp keeps being wrong; it is that reading it is not a test of it.
+Every version of this guard looked right to whoever wrote it, and the two that
+were not were each caught in seconds by orphaning a real entry — which is now how
+it is verified whenever it changes.
+
+**A filter was added at the same time, for a reason that is the same failure in
+another shape.** The audit is a hundred-odd entries, each compiling and running a
+test, and it refuses to start on a dirty tree. Verifying one newly written entry
+therefore meant committing first and then paying for every other entry to find out
+whether the new one worked. The predictable result is that entries get added and
+reasoned about rather than run — the exact failure this script exists to catch,
+committed by the script itself. `ONLY='pattern'` runs a subset, and the summary
+says how many entries were passed over so that a filtered run cannot be read as a
+full one.
+
+**Five entries were added**, covering the two fuzz targets and three of the checks
+on documentation and build files. The last three are the first entries here that
+mutate something other than Go source, which is the point of them: a check that
+reads a workflow or a table in `docs/api.md` is exactly as capable of being
+vacuous as one that reads code, and rather more likely to be, because nothing
+compiles it.
+
+Each pair — mutation and the test that must notice — was applied and reverted by
+hand before being written into the script, and each is in the table below. The
+script was then run over them, which is a different claim and the one that counts:
+
+```
+$ ONLY='codecs stop agreeing|splits on the last separator|fuzz pattern in CI|...' \
+    bash scripts/mutation-audit.sh
+caught   the codecs stop agreeing on field names -- by ^FuzzCodecRoundTrip$
+caught   grouping splits on the last separator, not the first -- by ^FuzzPartitionByPrefix$
+caught   a fuzz pattern in CI goes back to being ambiguous -- by TestFuzzTargetsNamedInCIExist
+caught   the documented metric count drifts from the handler -- by TestApiDocMetricCountsAreCorrect
+caught   a root file disappears from the repository map -- by TestReadmeListsEveryRootFile
+
+caught: 5   vacuous: 0   skipped: 0
+FILTERED RUN: 105 entries were not executed.
+this run makes no claim about them.
+tree clean
+```
+
+Five caught, none vacuous, and the three entries that mutate a `.md` or a `.yml`
+behaved exactly as the Go ones do. The line about 105 unexecuted entries is the
+part of that output worth keeping: it is there so a filtered run cannot be quoted
+as a full one, which is the failure mode a filter introduces and the reason the
+filter had to print something rather than nothing.
+
+### What was counted rather than fixed
+
+Open question 37 — a synchronous write acknowledged below its replication factor
+by a node whose view has shrunk to itself — got its counter and not its cure.
+`Stats().DegradedWrites` makes the window visible; refusing the write would
+convert an available system into an unavailable one during a partition, which is
+an AP/CP decision that should be taken deliberately and on evidence rather than
+as a side effect of tidying up a metric.
+
+---
+
+## The acceptance map
+
+CLAUDE.md's Definition of Done requires that "the milestone's acceptance criteria
+in SPEC.md are each covered by a named test that would fail if the behavior
+regressed". Every section above records a check against *one* invariant. None of
+them answered the question the rule actually asks: is every criterion covered?
+
+That mapping existed only in the heads of whoever wrote each milestone. It is
+written down here because a Definition of Done nobody can audit is a Definition
+of Done in name only — the same failure this whole file exists to prevent, one
+level up.
+
+SPEC.md §4 carries seven `**Acceptance:**` blocks, M0 through M6; M7 states its
+requirements as bullets instead. Broken into individually testable claims they
+come to twenty-one. Each one, and the named test that would fail if it regressed:
+
+| Milestone | Criterion | Named test |
+|---|---|---|
+| M0 | 5-node cluster, 3/2 partition, +1h, heal, assert membership, under 50ms | `TestM0Acceptance` |
+| M0 | zero `time.Sleep` | `TestNoSleepAnywhere` |
+| M1 | local Get p99 under 1 µs at 1M keys | `TestLocalGetP99AtOneMillionKeys` |
+| M1 | correct TTL expiry under a fake clock | `TestTTLExpiryUnderFakeClock` |
+| M1 | 1000 concurrent misses invoke the loader exactly once | `TestGetOrLoadCollapsesConcurrentMisses` |
+| M2 | 10k concurrent `Call`s across 1k groups, serialized under `-race` | `TestTenThousandCallsAcrossOneThousandGroups` |
+| M2 | memory at 1M addressable / 20k active inside budget | `TestMemoryAtOneMillionAddressableGroups` |
+| M2 | deactivate and reactivate preserves state and pending timers | `TestDeactivationPreservesPendingTimers` |
+| M3 | 100k keys over 7 nodes within 5% of uniform | `TestOwnershipIsUniform` |
+| M3 | removing one node moves approximately 1/7 and no more | `TestRemovingANodeMovesOnlyItsKeys` |
+| M3 | a partitioned minority stops activating within `activationDelay` | `TestPartitionedMinorityStopsActivating` |
+| M4 | remote Get p99 under 2 ms, p999 under 10 ms, at 50k rps | `TestRemoteGetThroughputAndLatency` |
+| M4 | 10k messages across 3 owners issues at most 3 RPCs per flush | `TestRouterIssuesOneRequestPerOwner` |
+| M4 | killing the transport mid-request surfaces an error, never a hang | `TestKillingTheTransportMidRequestSurfacesAnError` |
+| M5 | killing an owner ungracefully promotes and resumes service | `TestKillingAnOwnerPromotesAReplica` |
+| M5 | chaos: a kill every 2s for 60s loses no synchronously written key | `TestChaosLosesNoSynchronouslyWrittenKey` |
+| M5 | split-brain writes detected and counted in metrics | `TestTwoOwnersInOneEpochIsAConflict`, `TestEveryStatsFieldIsExported` |
+| M6 | 9-node rolling upgrade: zero failed requests, movement within ±10% | `TestRollingUpgradeLosesNoRequests` |
+| M7 | soak at target throughput, memory flat | `TestSoakMemoryStaysFlat`, `TestSoakGoroutinesStayFlat` |
+| M7 | correctness metrics exported as counters | `TestCorrectnessMetricsAreCounters`, `TestEveryStatsFieldIsExported` |
+| M7 | examples runnable, `docs/api.md` complete | `TestApiDocExampleTableMatchesReality`, `make examples` |
+
+All twenty-three names in the table were verified to exist before it was
+committed to, which is the discipline the rest of this file argues for and which
+five wrong figures in the M8 section demonstrate the need for.
+
+Twice that was not enough, in this paragraph alone. The first draft said
+"eighteen distinct criteria" above a table of twenty-one rows. The second said
+"twenty-two names" where the table cites twenty-three — because the verification
+loop was written from memory of which tests to check rather than from the table,
+and missed one added earlier the same day.
+
+Both are the same mistake as the five above and were caught the same way, by
+counting the artifact instead of recalling it. The instructive part is that they
+were made *while writing the argument against making them*, by someone who had
+spent the preceding hour fixing five instances. A habit of recomputing is not
+acquired by being convinced; the count has to actually be run, every time, and
+the loop has to read the thing it is checking rather than a list of what the
+author believes is in it.
+
+So it is no longer a habit. `TestAcceptanceMapCountsAreCorrect` counts the rows
+and the distinct test names in this section and fails if the prose disagrees with
+either, and it also fails if SPEC.md states an acceptance block with no row here —
+a milestone dropping silently out of the map being the failure the map exists to
+make impossible. Both of the mistakes described above were reproduced against it
+and both are caught, each naming the number it found and the number it expected.
+
+That is the seventh check added this milestone and the only one written because
+the author kept making the same error rather than because someone else had. It is
+the better reason of the two.
+
+**What the map is not.** It says a named test exists for each criterion. It does
+not say that test would fail if the behaviour regressed — that is the mutation
+audit's job, and `scripts/mutation-audit.sh` covers many of these and not all of
+them. Two things are worth knowing about the gap: M6's criterion was audited by
+an entry that could not have caught its own mutation until M7 rewrote it
+(recorded above), and M4's ran for the first time in M8 because the test could
+not bind a socket on this machine. A row in this table is a claim of coverage,
+not of proof.
 
 ---
 

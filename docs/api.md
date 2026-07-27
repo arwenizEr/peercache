@@ -46,8 +46,8 @@ owner so a cold key costs the cluster one load rather than one per pod, and
 Keys are replicated to the runners-up in the same ranking that chose their
 owner, so losing a pod promotes a replica rather than losing its data. Fan-out
 is asynchronous by default with a measured ≈0.1 ms exposure window, and
-`WithSyncReplication()` closes that window at the cost of the group's write
-rate.
+`WithSyncReplication()` closes that window while the writer can see its replicas,
+at the cost of the group's write rate.
 
 A node can now be added or removed on purpose: `Drain` hands its keys to their
 new owners before it stops, `Ready` keeps traffic off a node that has joined but
@@ -55,7 +55,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter the earlier milestones built is exported: `MetricsHandler` serves
-35 series in the Prometheus text exposition format, and PeerCache imports no
+38 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -482,6 +482,20 @@ which it exists on one node. With it, the window closes and the group's write
 rate becomes its slowest replica's round trip, because the fan-out holds the
 group's single activation.
 
+**One case it does not cover.** Replication targets come from the ranking over
+this node's own membership view, so a node cut off from the cluster eventually
+detects every peer as failed, ranks itself the owner of everything, places the
+one copy it can reach and returns `nil`. A caller that asked for three copies got
+one and cannot tell; the window lasts as long as the partition does.
+`Stats().DegradedWrites` and `peercache_degraded_writes_total` count exactly
+this and are the only thing that distinguishes it from a healthy write — alert
+on any non-zero value. While the writer still *sees* its replicas but cannot
+reach them, the write fails instead, which is the guarantee working. See
+`docs/decisions/open.md` question 37 for why this is counted rather than
+refused: refusing converts an available system into an unavailable one during a
+partition, which is an AP/CP choice that should be made deliberately rather than
+as a side effect.
+
 ### `CatchUp` — required after a restart
 
 ```go
@@ -504,6 +518,22 @@ it was started to answer. The application decides when it can afford it.
 Safe to call at any time and alongside live traffic: incoming pages go through
 the same version check as replicated writes, so a page that arrives after a
 newer write is discarded rather than applied.
+
+#### It is also what restores the replication factor after any membership change
+
+The heading says "after a restart" because that is the case that bites hardest,
+but the need is more general. Any membership change moves keys: a node joining, a
+partition healing, a rebalance. Until the copies have been placed, a key can be
+**readable while fewer than RF nodes hold it** — one node answering is enough to
+be readable and is not enough to survive a failure.
+
+So `Replication survives the loss of RF−1 nodes` describes a cluster at rest.
+Inside the settling window it does not hold, and no error distinguishes the two
+states: a read succeeds either way.
+
+If you depend on the replication factor after a topology change — draining a
+node, scaling up, recovering from a partition — call `CatchUp` and let it finish
+first. `Stats().ReplicasPulled` stops rising when it has.
 
 ### Conflicts
 
@@ -667,13 +697,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 35 series come out of it.
+format with the content type a scraper expects, and 38 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 35 are ordinary levels and rates. These eight are not — each counts a
+Most of the 38 are ordinary levels and rates. These ten are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
@@ -682,20 +712,24 @@ window was entered.
 | `peercache_split_brain_detections_total` | A replica saw writes for one key from two nodes under one membership epoch. Two nodes believed they owned it. This is the AP consequence in CLAUDE.md §5 actually happening. |
 | `peercache_stale_epoch_refusals_total` | A caller's view was older than this node's and the operation was refused. Sustained under stable membership means callers disagree about ownership. |
 | `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** It is a silent misconfiguration that looks exactly like a data-loss bug; it cost most of M6 to diagnose. |
+| `peercache_degraded_writes_total` | A **synchronous** write was acknowledged holding fewer copies than its namespace's replication factor asked for. **Alert on this being non-zero.** It means a caller was told a write reached RF nodes when it reached fewer, and it is the only signal that distinguishes the two. Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns nil. See open question 37. |
 | `peercache_replications_failed_total` | A replica write did not land. Under async replication the caller was told the write succeeded. |
 | `peercache_replications_dropped_total` | A replica write was never attempted, because the queue was full. |
+| `peercache_replicas_retained_total` | A replica this node stopped ranking for could not be handed to the nodes that now rank for it, so it was kept. Memory rather than data loss — the safe direction — but sustained under stable membership it means hand-offs are failing and the cluster is not converging. |
 | `peercache_catchup_failures_total` | A restarted node could not pull the keys it now ranks for and may be serving misses for data that exists. |
 | `peercache_mailbox_rejections_total` | A group's mailbox was full and the call was refused with `ErrGroupOverloaded`. Backpressure working, not a fault — but it is the first sign of saturation and it arrives before the latency does. |
 | `peercache_version_conflicts_total` | A replicated copy was rejected because a newer one was already held. Distinct from split brain: this is one owner's writes arriving out of order. A steady low rate is normal under async replication; a rising one means reordering under load. |
 
-All eight are counters, so `rate()` and `increase()` work on them. That is
+All ten are counters, so `rate()` and `increase()` work on them. That is
 deliberate and tested: `TestCorrectnessMetricsAreCounters` fails if one is
 reclassified as a gauge, because "did this happen in the last hour" is a rate
 question and a gauge cannot answer it.
 
-These are the five SPEC.md names as correctness metrics, plus the three this
-implementation found it needed. Transfer failures are covered by
-`peercache_replications_failed_total`: the drain handoff reuses the replication
+These are the five SPEC.md names as correctness metrics, plus the five this
+implementation found it needed — the last two added in M8, when a partition heal
+turned out to move replicas that the reconciler had been discarding.
+
+Transfer failures are covered by `peercache_replications_failed_total`: the drain handoff reuses the replication
 path rather than inventing a transfer protocol, so a failed transfer *is* a
 failed replication, and a second counter could only disagree with the first.
 

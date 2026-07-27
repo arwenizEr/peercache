@@ -384,7 +384,8 @@ a 3-node real-network test". Three cache instances in one process over real gRPC
 on loopback TCP: real sockets, real serialisation, real deadlines, real
 connection pool.
 
-**The latency criterion is met. The rate criterion is not met on this machine.**
+**M4 verdict: the latency criterion is met, the rate criterion is not.**
+**M8 re-measurement contradicts the rate half — see below the sweep.**
 
 | | Measured (5 consecutive runs) | Budget | Verdict |
 |---|---|---:|---|
@@ -411,6 +412,36 @@ machine, not out of headroom:
 | 64 | 56k | 1.7–2.9 ms, unstable |
 
 Throughput flattens between 45k and 56k while p99 degrades by a factor of three.
+
+#### M8 re-measurement: the rate criterion is met, by 4x
+
+This test had never executed on Machine A. It built its gossip nodes through a
+third helper that never received open question 27's port fix, so every run failed
+at the bind, and it sits behind an opt-in gate that only CI's Linux runner sets —
+so the failure was invisible and the table above cannot have come from this
+machine in this configuration. Fixed in M8; the sweep below is Machine A.
+
+| Workers | Rate | p50 | p99 | p99.9 |
+|---:|---:|---:|---:|---:|
+| 12 | 110,494 | 97 µs | 180 µs | 376 µs |
+| 24 | 164,782 | 143 µs | 211 µs | 222 µs |
+| 36 | **191,153** | 189 µs | **249 µs** | 292 µs |
+| 64 | 235,361 | 270 µs | 334 µs | 373 µs |
+
+At the same 36 workers the table above records, the rate is four times higher and
+p99 is six times lower. Throughput does not flatten anywhere in the range, and
+the criterion — 50k rps, p99 under 2 ms — is met at every point of it, with the
+lowest point offering more than twice the required rate at a ninth of the budget.
+
+Four consecutive runs at 36 workers: 195,015 / 193,199 / 195,324 / 194,865 rps,
+p99 248 / 249 / 244 / 245 µs. It is stable.
+
+**What changed is not established**, and this records both sets rather than
+replacing one with the other. The worker count is identical, so that is not the
+explanation. `BenchmarkInvoke` re-measures at 70–177 µs against the ~175 µs this
+document cites, and `BenchmarkInvokeParallel` at 12–15 µs against 28 µs — both
+consistent with the whole remote path having become faster, and neither
+establishing why. See open question 29.
 Reaching 50k with the latency budget intact needs the load offered from
 somewhere that is not competing for the same cores — a separate process, or the
 three machines "3-node real-network" literally implies. That is out of scope for
@@ -481,6 +512,30 @@ arrive rather than sizing the slice from a declared length — a trusted length
 would save the reallocations and reintroduce the remote out-of-memory that
 `FuzzDecode` found in two seconds. The trade is deliberate and cheap at any
 realistic batch size.
+
+#### Frame validation (M8)
+
+Every decode now walks the frame first and checks that no declared length exceeds
+the bytes behind it. Decision 0019 has the defect this closes — five bytes could
+turn any message with a `[]byte` field into a 4 GiB allocation, because msgpack
+v5's byte-string path bypasses its own allocation limit.
+
+| Benchmark | ns/op | B/op | allocs/op | Notes |
+|---|---:|---:|---:|---|
+| `Validate/GetRequest` | 25 | 0 | 0 | 1.95 GB/s |
+| `Validate/GetResponse` | 51 | 0 | 0 | 256-byte value, 6.7 GB/s |
+| `Validate/BatchGetResponse/100` | 4130 | 0 | 0 | 1.89 GB/s |
+| `Validate/SubmitRequest/10x10` | 365 | 0 | 0 | 10 groups x 10 messages |
+
+Zero allocations, by construction: the walk carries offsets and nothing else, and
+`TestValidateAllocatesNothing` fails if that changes.
+
+Against decoding the same message it is 8% on a `GetRequest` and 7% on a
+hundred-entry `BatchGetResponse`. Against the 175 µs remote round trip it
+defends, it is three orders of magnitude below the noise. Dispatch checks the
+four inline-length msgpack families first, by high bits, because between them
+they cover almost every byte this protocol emits; ordering them behind the
+twenty-odd equality tests for the rare shapes measured meaningfully worse.
 
 ### internal/transport — gRPC round trip
 
@@ -747,6 +802,57 @@ makes the observation free by comparison.
 The fast and slow paths costing the same (15.64 vs 15.82 ns) says the linear
 bucket scan is not the cost — the atomics are. That is why a finer bucket set
 would be nearly free and a lock-based sketch would not.
+
+---
+
+## What the test suite itself costs
+
+Measured on Machine A, because the CI timeout is set from it and a timeout
+without the measurement behind it is a number somebody will halve.
+
+| | Wall clock |
+|---|---:|
+| `go test .` (root package, no race) | ~25 s |
+| `go test . -race` | ~208 s |
+| `go test . -race -count=2` | ~442 s |
+| `go test ./... -race -count=2` (the CI gate) | **527 s** |
+
+The last row is a re-measurement and the reason the table now marks it as the
+gate. It was 448 s when this section was written, mid-M8. Every test the rest of
+that milestone added lands in the root package, and the same command now measures
+**527.3 s, exit 0, every package green** — 18% more, for tests that did not exist
+when the budget was set.
+
+That is not a regression; it is what a milestone that added twenty-odd tests costs
+under the detector. It is recorded because the 900 s timeout was chosen against
+the 448 s figure and the margin has quietly gone from 2.0x to 1.7x. A timeout is a
+deadlock detector, not a performance budget, so 1.7x is still the right side of
+the line — but the direction is one-way, and the next milestone should re-measure
+rather than assume.
+
+Three tests are **81%** of a race pass:
+
+| Test | `-race` | no race | multiplier |
+|---|---:|---:|---:|
+| `TestRollingUpgradeLosesNoRequests` | 67.1 s | 3.8 s | 17.5x |
+| `TestSimulation` | 57.0 s | 4.3 s | 13.2x |
+| `TestChaosLosesNoSynchronouslyWrittenKey` | 44.2 s | 2.8 s | 15.7x |
+| everything else, together | ~40 s | ~12 s | ~3x |
+
+The multiplier is the interesting column. Everything else pays roughly 3x for the
+race detector; these three pay 13-17x, because all three run many nodes doing
+concurrent work and that is exactly what the detector instruments. The cost is
+inherent to what they test rather than an inefficiency in how they test it.
+
+Two of the three are acceptance criteria — M6's rolling upgrade and M5's chaos
+run — so trimming them means weakening the Definition of Done rather than
+speeding up a test.
+
+**The one safe lever**, if the gate ever needs to fit a smaller budget:
+`TestSimulation`'s seed count is environment-driven (`PEERCACHE_SIM_SEEDS`,
+default 8) and the nightly workflow already runs 2000. Halving the default saves
+roughly 28 s a pass without changing what the per-commit gate proves, because the
+seeds that find things are in the nightly sweep either way.
 
 ---
 

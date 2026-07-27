@@ -419,15 +419,28 @@ func TestDrainSavesDataWithoutReplication(t *testing.T) {
 	f.settle(t)
 
 	// Every key must still be readable from a survivor.
-	survivor := f.live()[0]
+	//
+	// Through readAnywhere rather than a single Get on one node, because the
+	// two errors this can legitimately return mean "ask again", not "gone". A
+	// membership change starts the activation guard's delay on every group it
+	// moved, and ownership may have moved off whichever survivor is first in
+	// the list.
+	//
+	// Counting those as loss is how this test failed in a full-package run
+	// while passing five times out of five alone: under load one key landed
+	// inside the deferral window, the loop recorded it as lost by a graceful
+	// shutdown, and no data had gone anywhere. It is the same mistake
+	// readAnywhere was written to stop making, in a test that predates it.
 	var lost int
 	for key, want := range written {
-		got, err := f.caches[survivor].Namespace("solo").Get(ctx, key)
+		got, err := readAnywhere(t, f, func(id string) peercache.Namespace {
+			return f.caches[id].Namespace("solo")
+		}, key)
 		if err != nil {
 			lost++
 			continue
 		}
-		if string(got) != want {
+		if got != want {
 			t.Fatalf("%q = %q after the drain, want %q", key, got, want)
 		}
 	}

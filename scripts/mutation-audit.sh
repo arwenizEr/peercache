@@ -92,7 +92,37 @@ def logical_lines(text):
     return out
 
 
-testarg = re.compile(r"'Test[A-Za-z0-9_|]*'")
+# The character class carries the regex metacharacters a -run argument may
+# legitimately contain, not just the ones a bare test name does, and the prefix
+# alternation carries both kinds of target.
+#
+# It has now been widened twice, and the second time is the instructive one.
+#
+# It matched only names beginning with Test until the first Fuzz entry was
+# written, at which point an orphaned fuzz entry would have been exactly as
+# invisible as the orphaned M6 entry this guard was built for. Adding the
+# alternation looked like the fix and was not: a -run argument is a regexp, the
+# new entries are written anchored as '^FuzzCodecRoundTrip$', and a string
+# starting with a caret begins with neither Test nor Fuzz. The widened guard was
+# tested by orphaning one of those entries and it did not fire.
+#
+# So the leading anchor is now optional too. The pattern this guard has to
+# survive is that every widening is written against the entries that exist,
+# while the thing it protects against is an entry nobody has written yet -- which
+# is why it is verified by orphaning a real entry each time it changes rather
+# than by reading it.
+#
+# It was [A-Za-z0-9_|] until M8, which is every character a name or an
+# alternation needs and none of the anchors. An entry passing
+# 'TestSomethingSpecific$' -- an anchor, to select one test where another name
+# extends it -- therefore did not match, so this check could not see the entry
+# at all, and dropping its `mutate` line was silently undetected. Confirmed by
+# removing that line and watching the run proceed.
+#
+# That is precisely the failure this check exists to prevent, reintroduced
+# through the argument it inspects rather than the line it inspects. Anchors,
+# character classes and escapes are all ordinary in a -run pattern.
+testarg = re.compile(r"'\^?(?:Test|Fuzz)[A-Za-z0-9_|$^.*+?()\[\]{}\-]*'")
 bad = [(n, t.strip()) for n, t in logical_lines(open(sys.argv[1], encoding="utf-8").read())
        if testarg.search(t) and not t.strip().startswith("mutate ")]
 if bad:
@@ -138,6 +168,7 @@ trap cleanup EXIT INT TERM
 caught=0
 vacuous=0
 skipped=0
+filtered=0
 
 # mutate NAME FILE FROM TO TEST PACKAGE
 #
@@ -145,6 +176,25 @@ skipped=0
 # and reports whether the test noticed. The file is always restored.
 mutate() {
   local name="$1" file="$2" from="$3" to="$4" test="$5" pkg="$6"
+
+  # ONLY runs a subset, matched against the entry name as a POSIX ERE.
+  #
+  # A full run is a hundred-odd entries, each compiling and running a test, and
+  # it refuses to start on a dirty tree -- so verifying one newly written entry
+  # meant committing first and then paying for every other entry to learn
+  # whether the new one works. The result was predictable: entries were added
+  # and reasoned about rather than run, which is the exact failure this script
+  # exists to catch, committed by the script itself.
+  #
+  #     ONLY='degraded|hand-off' bash scripts/mutation-audit.sh
+  #
+  # Skipped entries are not counted as caught, vacuous or skipped: a filtered
+  # run makes no claim about what it did not execute, and the summary says how
+  # many it passed over so that a filtered run cannot be mistaken for a full one.
+  if [ -n "${ONLY:-}" ] && ! printf '%s' "$name" | grep -Eq "$ONLY"; then
+    filtered=$((filtered + 1))
+    return
+  fi
 
   mutated="$mutated $file"
   if ! python - "$file" "$from" "$to" <<'PY'
@@ -527,13 +577,24 @@ mutate "the guard never learns the membership" \
 
 # ---------------------------------------------------------------- M4
 
+# Retargeted in M8. This guarded bounded.go through
+# TestALengthPrefixCannotBuyAnAllocation until the frame validator landed in
+# front of the decoders, at which point that test's inputs were refused before
+# any decoder saw them and the entry went VACUOUS -- the audit said so on its
+# first full run after the change.
+#
+# The bounded decoders still have a job the validator cannot do. A declared count
+# no larger than the bytes behind it is structurally honest, so validation passes,
+# and the elements can still fail to decode: 100,000 fixints are not BatchEntry
+# values. Appending as they arrive costs nothing when the first one fails;
+# preallocating from the count costs megabytes to learn the same thing.
 mutate "a length prefix buys an allocation" \
   internal/wire/bounded.go \
   'var out []BatchEntry
 	for i := 0; i < n; i++ {' \
   'out := make([]BatchEntry, 0, n)
 	for i := 0; i < n; i++ {' \
-  'TestALengthPrefixCannotBuyAnAllocation' ./internal/wire/
+  'TestABoundedDecoderStillAllocatesOnlyForWhatArrives' ./internal/wire/
 
 mutate "the L1 tier compares versions, ignoring the epoch" \
   internal/l1/l1.go \
@@ -846,6 +907,26 @@ mutate "drain does not announce its departure" \
   'if err := error(nil); err != nil {' \
   'TestDrainStopsPeersRoutingImmediately' .
 
+# NOT DETERMINISTIC. Four full audit runs disagreed about this entry: caught,
+# VACUOUS, caught, caught. Run on its own it is caught 5 times out of 5, so the
+# escape needs the load of a full audit -- 8 of 9 observed runs caught it.
+#
+# The likely mechanism, stated as likely because it has not been demonstrated
+# directly: a drain announces its departure and then transfers, with nothing
+# ordering the two. When the receiver has already processed the departure it owns
+# the key and takes the adoption branch this mutation deletes, so the key is
+# dropped and the test fails. When it has not, the transfer is filed as a replica
+# instead and the next reconciliation promotes it — which the hard kill below
+# guarantees will happen — so the data survives and the test passes.
+#
+# What that means for the entry: the *guarantee* (a graceful drain at RF=1 loses
+# nothing) holds on both paths, so this mutation targets which store the key
+# lands in rather than whether it is kept. Left in place because it is caught
+# in 8 of 9 observed runs and a mostly-reliable detector is still a detector;
+# recorded here so the next disagreement is recognised rather than investigated
+# from scratch. See
+# docs/verification.md, and TestKeysAdoptedIsCounted for the same race found and
+# fixed on the counter side.
 mutate "handed-off keys are not adopted by their new owner" \
   handler.go \
   'if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
@@ -996,8 +1077,138 @@ mutate "a stats field is exported under the wrong name" \
   '{"peercache_split_brains_total", Counter,' \
   'TestEveryStatsFieldIsExported' ./internal/metrics/
 
+
+# --- M8 -------------------------------------------------------------------
+
+# The frame validator is the whole defence against a declared length buying an
+# allocation. Removing the call restores the defect decision 0019 describes: a
+# five-byte bin32 header becomes a 4 GiB make. The test asserts the allocation
+# rather than the error, because a decoder that rejects the message *after*
+# allocating is still a remote out-of-memory.
+mutate "a frame is decoded without validating its declared lengths" \
+  internal/wire/wire.go \
+  '	if err := validate(data); err != nil {' \
+  '	if err := error(nil); err != nil {' \
+  'TestNoMessageAllocatesFromADeclaredLength' ./internal/wire/
+
+# The depth bound is what keeps the recursive walk off the stack. Raising it far
+# enough that a frame can nest as deep as its byte count allows is the shape of
+# the hazard, and the test names the limit rather than merely observing an error.
+mutate "the validator's nesting bound is effectively unbounded" \
+  internal/wire/validate.go \
+  'const MaxNestingDepth = 16' \
+  'const MaxNestingDepth = 1 << 30' \
+  'TestValidateRejectsUnboundedNesting' ./internal/wire/
+
+# Hand-off before eviction is decision 0020. Dropping the orphans instead of
+# queueing them is precisely the pre-M8 behaviour, and it loses keys whenever a
+# partition heals -- which is what the test constructs.
+mutate "a moved replica is dropped instead of handed off" \
+  promote.go \
+  '		for key, e := range orphans {
+			p.evicted.Add(1)
+			c.handoff.enqueue(handoffWork{namespace: name, key: key, entry: e})
+		}' \
+  '		for range orphans {
+			p.evicted.Add(1)
+		}' \
+  'TestMajoritySideWritesSurviveAHealAndTwoDestructions' .
+
+# Every hand-off failure path must keep the copy. Dropping on failure is the
+# same data loss by a slower route: a peer that is briefly unreachable during a
+# membership change is the ordinary case, not the exceptional one.
+mutate "a hand-off that cannot be placed drops the copy" \
+  handoff.go \
+  '	if !placed {
+		h.restore(w)
+		return
+	}' \
+  '	if !placed {
+		return
+	}' \
+  'TestAHandOffThatCannotBePlacedKeepsTheCopy' .
+
+# A hand-off is a relocation, not a write. Stamping it with the forwarding node's
+# ID makes the receiver see the original owner's replication and the forward as
+# two writers under one epoch, and manufacture split-brain detections -- in the
+# one counter the README says to investigate whenever it is non-zero.
+mutate "a hand-off claims to be the writer of what it forwards" \
+  handoff.go \
+  'from := w.entry.From
+	if from == "" {
+		from = c.self().ID
+	}' \
+  'from := c.self().ID' \
+  'TestMajoritySideWritesSurviveAHeal$' .
+
+# The degraded-write counter is the only signal separating a synchronous write
+# that placed RF copies from one that placed one. Question 37 is about it being
+# invisible; a counter that never increments restores exactly that.
+mutate "a synchronous write below the replication factor is not counted" \
+  namespace.go \
+  '	if n.cache.degradedWrites.Add(1) == 1 {' \
+  '	if false {' \
+  'TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy' .
+
+# --- M8, part two: the fuzz targets and the checks on the build files ---
+#
+# Every entry below was applied and reverted by hand before being written here,
+# and the result recorded in docs/verification.md. They are entered so that the
+# hand-check becomes a standing one; the pairs are not new claims.
+#
+# The three that mutate a .md or a .yml are the first entries here that mutate
+# something other than Go source. That is the point of them: a check that reads
+# the documentation or a workflow is exactly as capable of being vacuous as one
+# that reads code, and rather more likely to be, because nothing compiles it.
+
+# The two codecs are configured to key on the json struct tag so that neither is
+# positional. Making the encoder key on something else leaves the decoder
+# looking for fields the encoder never wrote.
+mutate "the codecs stop agreeing on field names" \
+  internal/codec/msgpack.go \
+  'enc.SetCustomStructTag("json")' \
+  'enc.SetCustomStructTag("msgpack")' \
+  '^FuzzCodecRoundTrip$' ./internal/codec/
+
+# The group key decides ownership. Splitting on the last separator rather than
+# the first still returns a prefix of the key, so only the idempotence property
+# notices -- which is the property standing between this and a key with two
+# owners.
+mutate "grouping splits on the last separator, not the first" \
+  internal/core/group.go \
+  'if i := strings.Index(key, sep); i >= 0 {' \
+  'if i := strings.LastIndex(key, sep); i >= 0 {' \
+  '^FuzzPartitionByPrefix$' .
+
+# An unanchored -fuzz pattern is a prefix waiting for a sibling. This is the
+# exact line FuzzDecodeEveryMessage broke when it was added.
+mutate "a fuzz pattern in CI goes back to being ambiguous" \
+  .github/workflows/ci.yml \
+  "-fuzz '^FuzzDecode\$' -fuzztime 60s" \
+  "-fuzz FuzzDecode -fuzztime 60s" \
+  'TestFuzzTargetsNamedInCIExist' .
+
+# A derived figure in the operator-facing documentation, moved by one.
+mutate "the documented metric count drifts from the handler" \
+  docs/api.md \
+  '38 series come out of it' \
+  '37 series come out of it' \
+  'TestApiDocMetricCountsAreCorrect' .
+
+# A public-API file dropping out of the repository map, which is how twelve of
+# the nineteen came to be missing in the first place.
+mutate "a root file disappears from the repository map" \
+  README.md \
+  'handoff.go        Moves replicas on a membership change rather' \
+  'handoff_go        Moves replicas on a membership change rather' \
+  'TestReadmeListsEveryRootFile' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
+if [ "$filtered" -ne 0 ]; then
+  echo "FILTERED RUN: $filtered entries were not executed (ONLY=$ONLY)."
+  echo "this run makes no claim about them."
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "ERROR: mutations were left behind:" >&2

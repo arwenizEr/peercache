@@ -13,12 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/memberlist"
-
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/membership"
+	"github.com/peercache/peercache/internal/testkit"
 	"github.com/peercache/peercache/internal/transport"
 )
 
@@ -77,12 +76,26 @@ func newGRPCCluster(t *testing.T, n int) []*grpcNode {
 			t.Fatalf("transport.New(%s): %v", id, err)
 		}
 
-		cfg := memberlist.DefaultLocalConfig()
-		cfg.Name = id
-		cfg.BindAddr = "127.0.0.1"
-		cfg.BindPort = 0
-		cfg.AdvertisePort = 0
-		g, err := membership.New(membership.Options{Self: info, Config: cfg})
+		// Through RetryBind, because this host reserves UDP ports the OS will
+		// still hand out. See open question 27: `netsh interface ipv4 show
+		// excludedportrange protocol=udp` reports 600 contiguous ports
+		// excluded here, and binding port 0 lands inside that band often
+		// enough to fail this test most times it is run.
+		//
+		// This is the third caller to need the fix and the second to
+		// rediscover the bug rather than inherit it. M6 fixed
+		// internal/membership's tests, M7 found cluster_test.go had its own
+		// helper and fixed that too, and this one built a third — so it kept
+		// failing, invisibly, because the test is behind an opt-in latency
+		// gate that only CI's Linux runner sets. Question 27's closing
+		// sentence is about exactly this: a correct fix applied to some of the
+		// places that need it reads, in the commit log, like a complete one.
+		g, err := testkit.RetryBind(func() (*membership.Gossip, error) {
+			return membership.New(membership.Options{
+				Self:   info,
+				Config: testkit.LocalGossipConfig(id),
+			})
+		})
 		if err != nil {
 			t.Fatalf("membership.New(%s): %v", id, err)
 		}
@@ -244,6 +257,19 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	// A serial round trip costs ~175µs (see BenchmarkInvoke), so a worker
 	// sustains ~5,700 rps and twelve of them offer ~68k — comfortably past
 	// the target without driving the system into its queue.
+	//
+	// The constant below is 36, not the twelve that paragraph reasons to. The
+	// prose was left behind by a change to the number and M8 found the two
+	// disagreeing, which is worth a sentence rather than a silent correction:
+	// a comment that argues carefully to a value the code does not use is
+	// worse than no comment, because it is read as evidence.
+	//
+	// Thirty-six is kept. The M8 sweep (open question 29) measured 110k rps at
+	// twelve workers and 235k at sixty-four, with p99 rising 180µs → 334µs
+	// across that range — so the queueing the paragraph above warns about does
+	// not begin anywhere near here, and offering ~4x the target rather than
+	// ~1.4x leaves the criterion asserted with margin rather than by a
+	// whisker.
 	const (
 		workers  = 36
 		duration = 5 * time.Second

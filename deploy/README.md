@@ -19,7 +19,7 @@ restarted pod a new identity, which rendezvous hashing treats as a departure
 plus an unrelated arrival — two rebalances instead of none. With stable names a
 restarted pod hashes to the same place and reclaims exactly what it had.
 
-## The four things that must be right
+## The five things that must be right
 
 ### 1. Open every namespace on every node, before serving
 
@@ -40,7 +40,43 @@ In testing, a cluster where one of five nodes had opened the namespace placed
 `Stats().ImplicitNamespaces` counts this. **Alert on it being non-zero** — it
 means a node is running with configuration your application never chose.
 
-### 2. Peer discovery needs a headless service
+### 2. Alert on the two counters that mean "your writes are not what you think"
+
+`peercache_implicit_namespaces_total` is one. The other is
+`peercache_degraded_writes_total`, and it is the sharper of the two because the
+misconfiguration above is at least static, while this one appears and disappears
+with the network.
+
+**It counts synchronous writes acknowledged holding fewer copies than the
+namespace's replication factor asked for.** Replication targets come from the
+ranking over *that node's own membership view*, so a pod cut off from the cluster
+eventually detects every peer as failed, ranks itself the owner of everything,
+places the one copy it can reach, and returns success. A caller that asked for
+RF=3 got one copy and cannot tell. The window lasts as long as the partition.
+
+```
+- alert: PeerCacheDegradedWrites
+  expr: increase(peercache_degraded_writes_total[5m]) > 0
+  annotations:
+    summary: "{{ $labels.pod }} acknowledged writes below its replication factor"
+
+- alert: PeerCacheImplicitNamespace
+  expr: peercache_implicit_namespaces_total > 0
+  annotations:
+    summary: "{{ $labels.pod }} is running a namespace its application never configured"
+```
+
+Worth watching but not paging on: `peercache_replicas_retained_total`, which
+counts replica copies a pod could not hand to the nodes that now rank for them
+and kept instead. That is memory rather than data loss — the safe direction —
+but rising under stable membership it means hand-offs are failing and the
+cluster is not converging.
+
+No `PrometheusRule` ships with these manifests. Alerting thresholds belong to
+whoever runs the cluster, and the two above are the ones worth having before any
+of the throughput or latency series.
+
+### 3. Peer discovery needs a headless service
 
 Both manifests include a headless service (`clusterIP: None`). It exists so DNS
 returns every pod's address rather than one load-balanced address, which is what
@@ -50,7 +86,7 @@ whichever one a service IP happens to pick.
 `SEEDS` is set to the headless service name. Resolve it at startup and pass the
 addresses to `Join`.
 
-### 3. Two ports, and they are not interchangeable
+### 4. Two ports, and they are not interchangeable
 
 - **7946** — gossip (SWIM). memberlist binds this itself.
 - **7947** — data (gRPC). The peer transport binds this.
@@ -60,7 +96,7 @@ metadata; assuming the two are the same makes every peer dial memberlist
 expecting gRPC, which fails with `error reading server preface: EOF`. This is
 not hypothetical — it is how M4's first real-network run failed.
 
-### 4. The readiness probe and PreStop hook are not optional
+### 5. The readiness probe and PreStop hook are not optional
 
 ```
 readinessProbe -> GET /readyz -> cache.Ready()
@@ -82,6 +118,18 @@ replication factor 1 the pod's entire share is lost.
 `terminationGracePeriodSeconds` must exceed the time a drain takes. It is set to
 60 here; measure yours. A grace period shorter than the drain turns a graceful
 shutdown into a kill halfway through a hand-off.
+
+**Leave a gap between pod replacements.** Readiness tells you a pod can serve; it
+does not tell you the cluster is back at its replication factor. Any membership
+change moves keys, and until the copies are placed a key can be readable while
+fewer than RF nodes hold it — one node answering is enough for the first and not
+for the second.
+
+That is why a rolling update should not replace the next pod the instant the
+previous one is ready. `maxUnavailable: 1` and a `minReadySeconds` long enough
+for catch-up to finish is the shape you want; `Stats().ReplicasPulled` going flat
+is the signal it has. Replacing pods faster than the cluster restores copies is
+how a rolling upgrade at RF=3 ends up, briefly, at RF=1.
 
 ## What these manifests deliberately do not include
 

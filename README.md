@@ -48,8 +48,19 @@ the feature list rather than after it.
 - **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
   1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
   acknowledged inside it exists on one node only. `WithSyncReplication()` closes
-  the window entirely, at the cost of bounding a group's write rate by its
-  slowest replica.
+  the window while the writer can see its replicas, at the cost of bounding a
+  group's write rate by its slowest replica.
+- **A synchronous write can still be acknowledged below its replication factor.**
+  Replication targets come from the ranking over the *writer's own membership
+  view*, so a node cut off from the cluster eventually detects every peer as
+  failed, ranks itself the owner of everything, places the one copy it can reach
+  and returns `nil`. The caller asked for three copies, got one, and cannot tell.
+  The window lasts as long as the partition. `Stats().DegradedWrites` and
+  `peercache_degraded_writes_total` count it and are the only signal that
+  separates it from a healthy write — **alert on any non-zero value**. The
+  neighbouring case is correct and worth knowing: while the writer still *sees*
+  its replicas but cannot reach them, the write fails rather than being
+  acknowledged.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write
   with *default* options — replication factor 1 — and options cannot be changed
@@ -74,6 +85,26 @@ the feature list rather than after it.
   that is what RF=2 means, and it is asserted as a test rather than left as a
   caveat. Survivors are always correct: losing data is possible, corrupting it
   is not.
+- **That guarantee describes a cluster at rest, not one still settling.** A
+  membership change — a node joining, a partition healing — moves keys, and until
+  the copies have been restored a key can be *readable* while fewer than RF nodes
+  hold it. Readable and replicated are not the same condition: one node answering
+  is enough for the first and not for the second. Losing RF−1 nodes during that
+  window can therefore lose a key that would have survived once the cluster had
+  settled.
+
+  `CatchUp` is what closes the window, which is why it is an explicit call. The
+  operational rule is the same one restarts already have: after a membership
+  change, catch up before you rely on the replication factor again. A test that
+  skipped this reported the loss as a failure of RF=3, roughly one run in seven,
+  and the cache was behaving exactly as documented.
+- **A membership change moves replicas rather than discarding them.** When the
+  ranking reassigns a key, the node holding a copy hands it to the nodes that now
+  rank for it before dropping its own; if it cannot place it anywhere, it keeps
+  it. Dropping on the local ranking alone lost keys whenever a partition healed,
+  because the copies had been placed at positions computed without the absent
+  node — 20 of 94 acknowledged writes in the reduced case. `ReplicasRehomed` and
+  `ReplicasRetained` account for every moved copy.
 - **Failure detection must be faster than your failure rate.** A cluster losing
   a node every two seconds while taking three to notice never converges. This is
   a deployment constraint the library cannot fix.
@@ -107,9 +138,19 @@ the next begins.
 | M5 | Replication and failure handling | **complete** |
 | M6 | Rebalancing and Kubernetes lifecycle | **complete** |
 | M7 | Observability and hardening | **complete** |
+| M8 | Adversarial verification | **complete** |
 
-All seven are done. `ErrNotImplemented` no longer marks unbuilt scaffolding —
-nothing returns it for that reason any more. It remains reachable in two places
+All seven SPEC milestones are done, and M8 — linearizability checking, a
+deterministic fault simulation and exhaustive protocol fuzzing — went looking for
+what they had missed. It found three things worth naming: a five-byte frame that
+could allocate 4 GiB on any node that received it, a partition heal that
+discarded replicas instead of moving them, and a synchronous write that reports
+success while holding one copy of three. The first two are fixed; the third is
+counted and documented, because refusing it is an availability decision rather
+than a bug fix. `docs/verification.md` has the full account.
+
+`ErrNotImplemented` no longer marks unbuilt scaffolding — nothing returns it for
+that reason any more. It remains reachable in two places
 that are not about milestones at all: an RPC method this binary does not
 recognise, which is what a rolling upgrade to a newer peer looks like, and a
 cache configured without a transport being asked to reach another node.
@@ -118,14 +159,32 @@ cache configured without a transport being asked to reach another node.
 
 ## Repository layout
 
+The root directory is the public API. Go does not allow one package to span
+directories, so everything a caller imports lives here and everything else lives
+under `internal/`.
+
 ```
+doc.go            Package documentation
 peercache.go      Cache construction, lifecycle
 namespace.go      Namespace handle
 group.go          Group handle
-router.go         Queue-message routing with owner batching
 types.go          Shared public types
 errors.go         Sentinel errors
 options.go        Functional options and partitioners
+context.go        Nil-context guard at every API boundary
+
+router.go         Queue-message routing with owner batching     (M4)
+remote.go         Owner lookup and the remote read/write path   (M4)
+handler.go        Server side: dispatches an inbound RPC        (M4)
+replicate.go      Replica fan-out, sync and async               (M5)
+promote.go        Reconciles held state against membership      (M5)
+catchup.go        Pulls the replicas this node should hold      (M5)
+invalidate.go     Best-effort L1 invalidation broadcast         (M5)
+drain.go          Hands work away without closing               (M6)
+handoff.go        Moves replicas on a membership change rather
+                  than dropping them                            (M8)
+ready.go          Readiness and its three conditions            (M6)
+observe.go        Stats and the metric series they export       (M7)
 
 internal/
   core/           Type definitions shared by the public and internal packages
@@ -141,13 +200,19 @@ internal/
   ownership/      Rendezvous hashing, ring epochs             (M3)
   membership/     Gossip membership over memberlist           (M3)
   transport/      gRPC client and server                      (M4)
+  wire/           Protocol messages, bounded decoders, frame
+                  validation. The only code here that interprets
+                  bytes it did not write.                     (M4)
   replication/    Replica fan-out, promotion, catch-up        (M5)
   rebalance/      Move planning and streaming transfer        (M6)
   metrics/        Metric collection, text format, histograms  (M7)
 
 proto/            gRPC service definitions                   (M4)
 examples/         One runnable example per milestone
-docs/             api.md, benchmarks.md, decisions/
+deploy/           Kubernetes manifests and the operational guide (M6)
+scripts/          mutation-audit.sh, clean/ (the `make clean` implementation)
+docs/             api.md, benchmarks.md, verification.md, decisions/
+.github/          ci.yml per commit, nightly.yml for the long runs
 ```
 
 ---
@@ -163,12 +228,18 @@ make test-race     # the gate: -race -count=2
 make vet lint      # go vet and staticcheck
 make examples      # run every example to completion; they assert what they show
 make bench         # benchmarks, 5 runs
-make fuzz          # fuzz the frame parser
+make fuzz          # fuzz the frame parser, the decoder, the codecs, the partitioner
 make bench-l1-eval # re-run the cache-library comparison (nested module)
 
 bash scripts/mutation-audit.sh   # break each invariant, check its test notices
 make ci            # exactly what the pipeline runs
 ```
+
+The long-running verification is nightly rather than per-commit, in
+`.github/workflows/nightly.yml`: two thousand simulation seeds, repeated
+linearizability checks, an hour of soak, ten minutes per fuzz target, and the
+mutation audit. A failure there prints the seed or commits the crasher, so it
+reproduces with one command.
 
 On Windows without GNU make, `mingw32-make` works, or run the `go` commands
 directly.
