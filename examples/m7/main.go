@@ -213,8 +213,20 @@ func scrapeEndpoint(c *cluster) error {
 			shown++
 		}
 	}
-	total := strings.Count(rec.Body.String(), "\n# TYPE ")
-	fmt.Printf("  ... %d series in total, no dependency required\n", total+1)
+	// Counted by prefix, not by a "newline then # TYPE" substring.
+	//
+	// That substring misses a TYPE line not preceded by a newline, which is why
+	// this used to add one — correcting for a body that began at "# TYPE ". The
+	// body begins at "# HELP": every series emits both lines, so every TYPE line
+	// is preceded by a newline, the correction became an off-by-one, and this
+	// printed one series more than the endpoint actually serves.
+	total := 0
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if strings.HasPrefix(line, "# TYPE ") {
+			total++
+		}
+	}
+	fmt.Printf("  ... %d series in total, no dependency required\n", total)
 	return nil
 }
 

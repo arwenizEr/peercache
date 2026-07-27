@@ -1,0 +1,166 @@
+name: nightly
+
+# The long-running verification that cannot go in the per-commit gate.
+#
+# CI on every push has to finish in minutes or people stop reading it. These
+# jobs take tens of minutes to hours, and their value is cumulative: a thousand
+# simulation seeds find schedules a handful never will, and a fuzz campaign
+# measured in minutes finds inputs a sixty-second regression pass does not.
+#
+# Everything here is designed so a failure is actionable on its own. The
+# simulation prints the seed that reproduces it; the fuzzers commit their
+# crashers to testdata/ where they become permanent regression cases.
+
+on:
+  schedule:
+    # 03:00 UTC. Nothing depends on the hour beyond it being quiet.
+    - cron: "0 3 * * *"
+  # So a change to this file can be verified without waiting a day.
+  workflow_dispatch:
+    inputs:
+      sim_seeds:
+        description: "simulation seeds to run"
+        required: false
+        default: "2000"
+      fuzz_minutes:
+        description: "minutes per fuzz target"
+        required: false
+        default: "10"
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  simulation:
+    name: deterministic simulation
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Thousands of seeded fault schedules. A failure prints the seed and the
+      # whole schedule that produced it, so the reproduction is one command.
+      - name: simulate
+        env:
+          PEERCACHE_SIM_SEEDS: ${{ github.event.inputs.sim_seeds || '2000' }}
+        run: go test . -run TestSimulation -count=1 -timeout 170m
+
+  simulation-race:
+    name: deterministic simulation (race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Fewer seeds under -race, because it is roughly an order of magnitude
+      # slower. The simulation is single-goroutine by design, so this is not
+      # looking for races in the schedule -- it is looking for races the
+      # schedule provokes inside the library.
+      - name: simulate under the race detector
+        env:
+          PEERCACHE_SIM_SEEDS: "200"
+        run: go test . -run TestSimulation -race -count=1 -timeout 170m
+
+  linearizability:
+    name: linearizability
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Repeated so the histories differ: each run seeds afresh, and the
+      # interleavings come from the scheduler.
+      - name: check histories
+        run: go test . -run 'Linearizable|TestTheCheckerRejectsAViolation' -race -count=20 -timeout 50m
+
+  fuzz:
+    name: fuzz ${{ matrix.target.pkg }}/${{ matrix.target.fn }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # Every entry here must name a fuzz target that exists in that package,
+      # and TestFuzzTargetsNamedInCIExist fails if one does not. The check is
+      # not hypothetical: three of the seven entries first written here named
+      # targets nobody had written, and `go test -fuzz` exits 0 when its regexp
+      # matches nothing, so all three jobs would have gone green having fuzzed
+      # for zero seconds.
+      matrix:
+        target:
+          - { pkg: ./internal/codec, fn: FuzzUnframe }
+          - { pkg: ./internal/codec, fn: FuzzFrameRoundTrip }
+          - { pkg: ./internal/codec, fn: FuzzCodecRoundTrip }
+          - { pkg: ./internal/wire, fn: FuzzDecode }
+          - { pkg: ./internal/wire, fn: FuzzDecodeEveryMessage }
+          - { pkg: ., fn: FuzzPartitionByPrefix }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: fuzz
+        run: |
+          go test ${{ matrix.target.pkg }} -run '^$' \
+            -fuzz '^${{ matrix.target.fn }}$' \
+            -fuzztime ${{ github.event.inputs.fuzz_minutes || '10' }}m
+
+      # A crasher is only useful if it survives the job that found it.
+      - name: upload any crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ matrix.target.fn }}
+          path: |
+            **/testdata/fuzz/**
+          if-no-files-found: ignore
+
+  soak:
+    name: soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # An hour, not the twenty-four SPEC.md names. The harness takes any
+      # duration and reports the one it actually ran; docs/benchmarks.md records
+      # the measured figure with its duration rather than the aspiration.
+      - name: soak for an hour
+        env:
+          PEERCACHE_SOAK: "60m"
+        run: go test . -run TestSoak -count=1 -timeout 85m
+
+  mutation-audit:
+    name: mutation audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Not in the per-commit gate because it rewrites source files, and a
+      # mutation left behind by a crashed run is worse than the coverage it
+      # buys. Nightly is the right cadence: it catches a test that has quietly
+      # stopped guarding its invariant within a day of the change that did it.
+      - name: audit
+        run: bash scripts/mutation-audit.sh

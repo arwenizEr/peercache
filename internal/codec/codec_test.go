@@ -272,3 +272,79 @@ func TestCodecErrorsAreReported(t *testing.T) {
 		})
 	}
 }
+
+// TestJSONCodecReplacesInvalidUTF8 pins behaviour this package does not want and
+// cannot change: encoding/json substitutes U+FFFD for every byte of an invalid
+// UTF-8 sequence in a string, and reports no error doing it. A value written
+// through the JSON codec and read back is therefore not always the value that
+// went in.
+//
+// FuzzCodecRoundTrip found it on its first run, against a codec that had shipped
+// since M1 with a round-trip guarantee in the interface doc above it.
+//
+// It is pinned rather than fixed because there is no fix inside this package.
+// The substitution happens inside encoding/json, no option disables it, and
+// detecting it would mean walking every value by reflection before every
+// marshal. Question 41 in docs/decisions/open.md carries the decision; this test
+// exists so that the day the behaviour changes — a Go release, or a wrapper
+// added here — it is a failing assertion rather than a silent one.
+//
+// The two facts worth keeping separate: MsgPack carries the same bytes through
+// unharmed, and a []byte field survives JSON too, because it is base64. Only
+// Go strings are affected.
+func TestJSONCodecReplacesInvalidUTF8(t *testing.T) {
+	type value struct {
+		S string `json:"s"`
+		B []byte `json:"b"`
+	}
+	// 0xff is not a legal UTF-8 byte in any position.
+	in := value{S: "\xff\xfe", B: []byte{0xff, 0xfe}}
+
+	jsonCodec, err := codec.Get(codec.NameJSON)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", codec.NameJSON, err)
+	}
+	encoded, err := jsonCodec.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal reported an error; if encoding/json now rejects "+
+			"invalid UTF-8 rather than substituting, question 41 is resolved "+
+			"and this test should assert that instead: %v", err)
+	}
+	var got value
+	if err := jsonCodec.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.S == in.S {
+		t.Fatal("the JSON codec now round-trips invalid UTF-8 in a string; " +
+			"question 41 is resolved, and FuzzCodecRoundTrip's exclusion for " +
+			"it should be removed")
+	}
+	if want := "��"; got.S != want {
+		t.Errorf("string came back as %q, want the replacement characters %q; "+
+			"the corruption is not the shape this test and question 41 describe",
+			got.S, want)
+	}
+	if !slices.Equal(got.B, in.B) {
+		t.Errorf("bytes came back as %v, want %v; the []byte field is base64 in "+
+			"JSON and must be unaffected", got.B, in.B)
+	}
+
+	// The same value through MsgPack, which has no such rule.
+	msgpackCodec, err := codec.Get(codec.NameMsgPack)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", codec.NameMsgPack, err)
+	}
+	encoded, err = msgpackCodec.Marshal(in)
+	if err != nil {
+		t.Fatalf("MsgPack Marshal: %v", err)
+	}
+	var viaMsgPack value
+	if err := msgpackCodec.Unmarshal(encoded, &viaMsgPack); err != nil {
+		t.Fatalf("MsgPack Unmarshal: %v", err)
+	}
+	if viaMsgPack.S != in.S {
+		t.Errorf("MsgPack changed the string too: %q -> %q; the difference "+
+			"between the codecs is the reason question 41 recommends naming one",
+			in.S, viaMsgPack.S)
+	}
+}

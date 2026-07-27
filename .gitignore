@@ -1,5 +1,6 @@
 # Build and test artefacts
 /coverage.out
+/cov
 /bench.txt
 *.test
 *.exe

@@ -513,7 +513,7 @@ func ExampleCache_WriteMetrics() {
 		panic(err)
 	}
 
-	// Print a few series rather than all 35, so the example stays readable.
+	// Print a few series rather than all 38, so the example stays readable.
 	want := map[string]bool{
 		"peercache_members":                      true,
 		"peercache_owned_keys":                   true,

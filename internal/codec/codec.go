@@ -14,6 +14,13 @@ import (
 // v that the codec accepts, Unmarshal(Marshal(v)) reproduces v. A codec that
 // silently drops fields is worse than one that errors, because the loss is
 // discovered by whoever reads the data next, days later.
+//
+// FuzzCodecRoundTrip enforces that on every registered codec. One built-in
+// breaks it: [NameJSON] replaces invalid UTF-8 in a string with U+FFFD and
+// reports success, for reasons that live in encoding/json rather than here. The
+// exception is documented on the codec, pinned by
+// TestJSONCodecReplacesInvalidUTF8 and excluded by name from the fuzz target, so
+// that it is a known hole rather than an unenforced sentence.
 type Codec interface {
 	// Name is the registry key. It appears in configuration, so it is part
 	// of the public contract and must not change.

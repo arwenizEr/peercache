@@ -106,8 +106,22 @@ jobs:
       # -count=2 is not padding. It catches state that survives between runs of
       # the same test, which is the failure mode a harness with shared fakes is
       # most likely to introduce.
+      #
+      # The timeout is 900s, not the 300s the other steps use, and the two are
+      # different for a reason worth stating. `-timeout` applies per test binary,
+      # so this step has to fit *two* race passes of the root package inside it.
+      # One pass measures ~215s on Machine A; 300s could not hold two, and M8
+      # confirmed it by running this exact command and getting `panic: test timed
+      # out after 5m0s` with a test running normally at the alarm. The corrected
+      # gate measures 527s end-to-end, so the margin here is 1.7x — it was 2.0x
+      # before M8's tests landed. Re-measure it rather than inherit it.
+      #
+      # A timeout here is a deadlock detector, not a performance budget. 900s
+      # still turns a hang into a failure rather than a job that runs until the
+      # runner's own limit; what 300s had quietly become was a budget the suite
+      # outgrew without anybody deciding it should.
       - name: test -race
-        run: go test ./... -race -count=2 -timeout 300s
+        run: go test ./... -race -count=2 -timeout 900s
 
   bench:
     name: bench
@@ -141,15 +155,37 @@ jobs:
       # Short by design: this is a regression gate, not a fuzzing campaign. The
       # seed corpus runs on every `go test`; this adds a bounded search on top,
       # and any crasher it finds is committed to testdata/ and becomes a
-      # permanent case.
+      # permanent case. The long campaign is nightly.yml.
+      #
+      # Every pattern is anchored, and that is not style. `-fuzz` takes a
+      # regexp, and an unanchored one is a prefix waiting for a sibling: adding
+      # FuzzDecodeEveryMessage next to FuzzDecode made `-fuzz FuzzDecode` match
+      # two targets, which Go refuses with "will not fuzz, -fuzz matches more
+      # than one fuzz test" — this step was broken by a test being *added*
+      # elsewhere. TestFuzzTargetsNamedInCIExist now fails on an ambiguous
+      # pattern, and on one that matches nothing.
       - name: fuzz the frame parser
         run: |
-          go test ./internal/codec -run '^$' -fuzz FuzzUnframe -fuzztime 60s
-          go test ./internal/codec -run '^$' -fuzz FuzzFrameRoundTrip -fuzztime 60s
+          go test ./internal/codec -run '^$' -fuzz '^FuzzUnframe$' -fuzztime 60s
+          go test ./internal/codec -run '^$' -fuzz '^FuzzFrameRoundTrip$' -fuzztime 60s
+
+      # The codecs carry application values. This is the only check that what
+      # goes into one comes back out unchanged; TestCodecRoundTrip compares
+      # lengths.
+      - name: fuzz the codecs
+        run: |
+          go test ./internal/codec -run '^$' -fuzz '^FuzzCodecRoundTrip$' -fuzztime 60s
 
       - name: fuzz the message decoder
         run: |
-          go test ./internal/wire -run '^$' -fuzz FuzzDecode -fuzztime 60s
+          go test ./internal/wire -run '^$' -fuzz '^FuzzDecode$' -fuzztime 60s
+          go test ./internal/wire -run '^$' -fuzz '^FuzzDecodeEveryMessage$' -fuzztime 60s
+
+      # The group key decides ownership, so a partitioner that disagrees with
+      # itself is a key with two owners.
+      - name: fuzz the partitioner
+        run: |
+          go test . -run '^$' -fuzz '^FuzzPartitionByPrefix$' -fuzztime 60s
 
   coverage:
     name: coverage

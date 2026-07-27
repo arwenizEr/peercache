@@ -10,6 +10,18 @@ const NameJSON = "json"
 // It is the default because it is the one every operator can read in a debug
 // dump, not because it is the fastest. When size or speed matters, name
 // [NameMsgPack] instead.
+//
+// It does not round-trip a string containing invalid UTF-8. encoding/json
+// substitutes U+FFFD for each bad byte and returns no error, so the value read
+// back is not the value written and nothing says so. There is no option to
+// disable it and no way to detect it from the encoded bytes, which are always
+// valid UTF-8 by then.
+//
+// A []byte field is unaffected — JSON carries it as base64 — and [NameMsgPack]
+// is unaffected entirely. Name MsgPack for any value whose strings may hold
+// arbitrary bytes. TestJSONCodecReplacesInvalidUTF8 pins the behaviour and
+// question 41 in docs/decisions/open.md carries the decision not to work
+// around it.
 type jsonCodec struct{}
 
 // Name implements [Codec].
