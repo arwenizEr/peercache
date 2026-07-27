@@ -269,10 +269,17 @@ func Encode(v any) ([]byte, error) {
 // A decode failure is [core.ErrInvalidOption] rather than a bare codec error,
 // because from the receiver's point of view a message it cannot parse is a
 // malformed request, and the transport maps that to InvalidArgument.
+//
+// The frame is structurally validated before the decoder sees it, so that no
+// length prefix the decoder acts on can be larger than the bytes behind it. See
+// validate.go for why that check cannot live in the decoders themselves.
 func Decode(data []byte, v any) error {
 	c, err := codec.Get(Encoding)
 	if err != nil {
 		return fmt.Errorf("wire: %w", err)
+	}
+	if err := validate(data); err != nil {
+		return fmt.Errorf("wire: decoding %T: %w", v, err)
 	}
 	if err := c.Unmarshal(data, v); err != nil {
 		return fmt.Errorf("wire: decoding %T: %w: %w", v, err, core.ErrInvalidOption)

@@ -308,6 +308,78 @@ func (r *SubmitRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return err
 }
 
+// decodeFailures reads a submit response's failure list under the same rule.
+func decodeFailures(dec *msgpack.Decoder) ([]GroupFailure, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxSliceElements {
+		return nil, fmt.Errorf("wire: array of %d elements exceeds the %d cap: %w",
+			n, MaxSliceElements, core.ErrInvalidOption)
+	}
+	var out []GroupFailure
+	for i := 0; i < n; i++ {
+		var f GroupFailure
+		if err := dec.Decode(&f); err != nil {
+			return nil, fmt.Errorf("wire: failure %d of %d: %w", i, n, err)
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// EncodeMsgpack implements [msgpack.CustomEncoder].
+func (r SubmitResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
+	if err := enc.EncodeArrayLen(1); err != nil {
+		return err
+	}
+	if err := enc.EncodeArrayLen(len(r.Failures)); err != nil {
+		return err
+	}
+	for i := range r.Failures {
+		if err := enc.Encode(&r.Failures[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DecodeMsgpack implements [msgpack.CustomDecoder].
+//
+// # Why this pair exists, when M4 was meant to have finished this work
+//
+// Every other variable-length message got a bounded decoder in M4. This one did
+// not, and the reason is the reason it is worth writing down: the M4 fuzz target
+// covered five message types chosen as a representative sample, and
+// SubmitResponse was not among the five. The defect the sample was written to
+// catch was therefore still present, in the one shape nobody had pointed the
+// fuzzer at.
+//
+// Six bytes reproduce it — 91 dd ff ff ff ff, an array of one containing an
+// array32 declaring 4,294,967,295 elements. [GroupFailure] is 32 bytes, so the
+// pre-allocation msgpack v5 performs from that declared length asks the
+// allocator for 137 GB before reading a single element. Under the race detector
+// the process aborts outright; without it, the machine swaps until something
+// gives.
+//
+// A peer sends this. So can anything that can reach the port.
+//
+// Found by FuzzDecodeEveryMessage, which decodes each input into all twenty-one
+// message types rather than a subset, precisely so that "no input from a peer
+// may panic a node" is checked against the word "no".
+func (r *SubmitResponse) DecodeMsgpack(dec *msgpack.Decoder) error {
+	if _, err := dec.DecodeArrayLen(); err != nil {
+		return err
+	}
+	var err error
+	r.Failures, err = decodeFailures(dec)
+	return err
+}
+
 // decodeCatchUpEntries reads a catch-up page without trusting its length.
 func decodeCatchUpEntries(dec *msgpack.Decoder) ([]CatchUpEntry, error) {
 	n, err := dec.DecodeArrayLen()
@@ -368,6 +440,8 @@ var (
 	_ msgpack.CustomDecoder = (*GroupBatch)(nil)
 	_ msgpack.CustomEncoder = SubmitRequest{}
 	_ msgpack.CustomDecoder = (*SubmitRequest)(nil)
+	_ msgpack.CustomEncoder = SubmitResponse{}
+	_ msgpack.CustomDecoder = (*SubmitResponse)(nil)
 	_ msgpack.CustomEncoder = BatchGetRequest{}
 	_ msgpack.CustomDecoder = (*BatchGetRequest)(nil)
 	_ msgpack.CustomEncoder = BatchGetResponse{}
