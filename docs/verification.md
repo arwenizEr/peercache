@@ -1204,6 +1204,22 @@ it: retry rescues deferrals, never absence, which is exactly the distinction the
 fix was about. The change removed a false negative without introducing a false
 positive, and the audit is how that was established rather than assumed.
 
+**Fifth run, at the end of the milestone: 110 caught, 0 vacuous, 0 skipped, exit
+0, tree clean.** The five entries added for the fuzz targets and the
+documentation checks bring the total from 105, and the flaky drain entry was
+caught for the third consecutive time — nine of ten observed runs now.
+
+This is the run the rest of this file has been writing cheques against. Every
+claim of the form "this test would fail if the behaviour regressed" was made
+about one entry at a time, verified by hand at the moment it was written, and
+then left to age. Executing all 110 against the tree as it now stands is a
+different statement from 110 statements about the tree as it was, and it is the
+only one that covers the interactions — a test weakened in service of a later fix
+would show here and nowhere else.
+
+Nothing showed. That is the least interesting possible outcome and the reason for
+running it.
+
 ### An example that printed a number one too high
 
 The Makefile says examples are run rather than merely compiled because "an
@@ -1641,6 +1657,7 @@ place rather than reconstructed from a narrative:
 | `TestMutationAuditCitesOnlyRealTests` | an entry's test name renamed in the script | **caught** — names the script and line, not the test |
 | `examples/m8` | the hand-off deleted from promote.go | **VACUOUS at first, then caught** — readability survives, the rehomed count does not |
 | `examples/m8`, second half | the degraded counter never incremented | **caught** |
+| every entry in the audit, all 110 | run end to end against the final tree | **caught: 110, vacuous: 0, skipped: 0** |
 | the aggregate copy-count test (name not kept; it was deleted) | catch-up removed | **VACUOUS — test deleted** |
 
 Two entries are the interesting ones. The last is a test that could not fail and
