@@ -774,10 +774,8 @@ mutate "Restore overwrites a newer value" \
 
 mutate "snapshot ignores its page limit" \
   internal/store/store.go \
-  'if len(candidates) > limit {
-		return candidates[:limit], true
-	}' \
-  '' \
+  '	more := len(candidates) > limit' \
+  '	more := false' \
   'TestSnapshotPagesInKeyOrder' ./internal/store/
 
 mutate "snapshot ignores the paging cursor" \
