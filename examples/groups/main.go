@@ -1,15 +1,15 @@
-// Command m2 demonstrates the group actor runtime completed by milestone M2.
+// Command groups demonstrates the group actor runtime.
 //
 // A group is a virtual actor: addressable always, activated lazily, deactivated
 // when idle, and while activated it owns exactly one goroutine. Every operation
 // on it runs as one turn on that goroutine, which is why there is no lock in
 // the API and why a group function needs none.
 //
-// Still single-node. M3 decides which node owns which group.
+// Single-node. ./examples/ownership shows which node owns which group.
 //
 // Run it with:
 //
-//	go run ./examples/m2
+//	go run ./examples/groups
 package main
 
 import (

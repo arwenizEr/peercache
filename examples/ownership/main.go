@@ -1,7 +1,7 @@
-// Command m3 demonstrates membership and ownership, completed by milestone M3.
+// Command ownership demonstrates membership and ownership.
 //
-// M2 left a single node that owned everything. This one forms a real three-node
-// cluster over loopback gossip and shows the three things M3 adds:
+// It forms a real three-node cluster over loopback gossip and shows three
+// things:
 //
 //   - Every node independently computes the same owner for a key, from nothing
 //     but the membership list. There is no coordinator and no lookup table.
@@ -12,13 +12,13 @@
 //     moment, and says so with a distinct retryable error rather than by
 //     hanging or by quietly running a second copy.
 //
-// There is still no networking between the caches themselves — a call to a
-// group this node does not own returns ErrNotOwner rather than being forwarded.
-// M4 adds the transport and the router that makes that hop invisible.
+// No transport is configured between the caches here, so a call to a group
+// this node does not own returns ErrNotOwner rather than being forwarded.
+// ./examples/remote adds the transport that makes that hop invisible.
 //
 // Run it with:
 //
-//	go run ./examples/m3
+//	go run ./examples/ownership
 package main
 
 import (
@@ -284,7 +284,7 @@ func departureMovesOnlyItsKeys(nodes []*node) error {
 	return nil
 }
 
-// acquiredGroupsAreDeferred shows the third M3 behaviour: a node that has just
+// acquiredGroupsAreDeferred shows the third behaviour: a node that has just
 // taken over a group waits before activating it, and reports that wait as a
 // retryable error rather than as a hang or a second live copy.
 func acquiredGroupsAreDeferred(nodes []*node) error {
@@ -372,7 +372,7 @@ func acquiredGroupsAreDeferred(nodes []*node) error {
 	// the cluster. Recorded as an open question in docs/decisions/open.md.
 	fmt.Println("  the window closed and every node resumed serving what it owns")
 	fmt.Println("\nErrActivationPending is retryable here; ErrNotOwner means go elsewhere.")
-	fmt.Println("M4 does the going-elsewhere for you.")
+	fmt.Println("With a transport configured, the cache does the going-elsewhere for you.")
 	return nil
 }
 

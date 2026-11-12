@@ -1,10 +1,9 @@
-// Command m4 demonstrates transport and remote routing, completed by milestone
-// M4.
+// Command remote demonstrates transport and remote routing.
 //
-// M3 left a cluster that agreed on who owned what and refused everything else:
-// a call for a group this node did not own returned ErrNotOwner and the caller
-// was on its own. This one puts a real gRPC transport underneath, so ownership
-// stops being something the caller has to know about.
+// Without a transport, a cluster agrees on who owns what and refuses everything
+// else: a call for a group this node does not own returns ErrNotOwner and the
+// caller is on its own. This one puts a real gRPC transport underneath, so
+// ownership stops being something the caller has to know about.
 //
 // It shows five things:
 //
@@ -22,7 +21,7 @@
 //
 // Run it with:
 //
-//	go run ./examples/m4
+//	go run ./examples/remote
 package main
 
 import (
@@ -94,7 +93,7 @@ func run() error {
 
 	fmt.Println("\nOwnership is now invisible to the caller: every operation above was")
 	fmt.Println("written the same way whether the data was here or three hops away.")
-	fmt.Println("M5 adds replicas, so losing a pod stops losing its data.")
+	fmt.Println("examples/replication adds replicas, so losing a pod stops losing its data.")
 	return nil
 }
 

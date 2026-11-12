@@ -1,18 +1,14 @@
-// Command m0 demonstrates the skeleton and lifecycle fixed by milestone M0:
-// construction, option validation, registration, and shutdown.
+// Command lifecycle demonstrates a cache's lifecycle: construction, option
+// validation, registration, and shutdown.
 //
-// Nothing distributed happens here, and nothing is meant to. M0 exists so that
-// every later milestone is provable — the interfaces from SPEC.md section 3 are
-// defined and compiling, and configuration is validated at startup rather than
-// on the first request.
-//
-// The namespace and group data paths were M0 scaffolding and are now real; see
-// ./examples/m1 and ./examples/m2. What remains here is what M0 itself
-// delivered and what is still true: everything below the data path.
+// Nothing distributed happens here, and nothing is meant to. Configuration is
+// validated at startup rather than on the first request, and this shows what
+// that looks like. The data paths are in ./examples/namespace and
+// ./examples/groups.
 //
 // Run it with:
 //
-//	go run ./examples/m0
+//	go run ./examples/lifecycle
 package main
 
 import (
@@ -63,7 +59,7 @@ func run() error {
 	if err := sessions.Set(ctx, "user:123/cart", []byte("3"), time.Minute); err != nil {
 		return fmt.Errorf("set: %w", err)
 	}
-	fmt.Println("namespace constructed and usable; its data path is M1's subject")
+	fmt.Println("namespace constructed and usable; see examples/namespace for its data path")
 
 	// Registered functions are how computation moves to the data. Closures
 	// never cross the network; an RPC carries the name and argument bytes.

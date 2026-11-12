@@ -1,8 +1,8 @@
-// Command m7 demonstrates observability, completed by milestone M7.
+// Command observability demonstrates the operational surface.
 //
-// The earlier milestones built the counters — split-brain detections,
-// stale-epoch refusals, implicit namespaces, replication failures. This one
-// exports them, and shows the operational surface an application should wire
+// The library counts what its guarantees leave open — split-brain detections,
+// stale-epoch refusals, implicit namespaces, replication failures. This
+// exports those counters, and shows the operational surface an application should wire
 // up: a scrape endpoint, readiness and liveness probes, a drain hook, and
 // pprof.
 //
@@ -11,7 +11,7 @@
 //
 // Run it with:
 //
-//	go run ./examples/m7
+//	go run ./examples/observability
 //
 // It prints the metrics endpoint's output and the handler wiring, then exits.
 // Nothing here listens on a port; the handlers are shown so they can be copied.
@@ -76,8 +76,7 @@ func run() error {
 	}
 
 	printWiring()
-	fmt.Println("\nThat is the whole system: seven milestones, and the honest")
-	fmt.Println("guarantees are in README.md.")
+	fmt.Println("\nThe guarantees these counters measure are in README.md.")
 	return nil
 }
 
@@ -167,8 +166,7 @@ func (c *cluster) close() {
 	_ = c.net.Close()
 }
 
-// ns opens the namespace on every node, which M6 established is a correctness
-// requirement: a namespace created implicitly by a routed write gets default
+// ns opens the namespace on every node, which is a correctness requirement: a namespace created implicitly by a routed write gets default
 // options and silently replicates nothing.
 func (c *cluster) openAll(name string, opts ...peercache.NamespaceOption) {
 	for _, id := range c.live() {
@@ -269,7 +267,7 @@ func correctnessCountersMove(c *cluster) error {
 	fmt.Printf("    peercache_implicit_namespaces_total  %d\n", implicit)
 	fmt.Printf("    replications for those 200 keys      %d  (RF=2 wants 200)\n", sent)
 	fmt.Println("    ^ this is the misconfiguration that looked like a data-loss bug for")
-	fmt.Println("      most of M6. Alert on the first counter being non-zero.")
+	fmt.Println("      weeks. Alert on the first counter being non-zero.")
 	return nil
 }
 

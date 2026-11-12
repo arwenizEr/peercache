@@ -699,7 +699,7 @@ Measured on Machine A.
 anything at runtime — the promoter reconciles incrementally, per key, using
 `Table.Owner` and `Table.Replicas` directly. Planning is an analysis API: it is
 what lets a test assert that a membership change moves only the share the
-ranking reassigns, and what `examples/m6` uses to show the figure. So 215 ms for
+ranking reassigns, and what `examples/rolling-upgrade` uses to show the figure. So 215 ms for
 100,000 keys does not delay a node's reaction to a failure, because no node does
 this when a peer dies.
 

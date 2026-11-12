@@ -171,7 +171,7 @@ HPA that flaps will rebalance continuously.
 
 ## Wiring it up
 
-The HTTP endpoints the probes use are yours to write; `examples/m6` has a
+The HTTP endpoints the probes use are yours to write; `examples/rolling-upgrade` has a
 complete one. The shape is:
 
 ```go

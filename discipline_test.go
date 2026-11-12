@@ -59,7 +59,7 @@ var realTimePackages = []string{
 // spread. acceptance_m4_test.go measures latency over real gRPC, which no
 // injected clock can time. cluster_test.go is the only test in the repository
 // that runs two real caches against real gossip — it exists because every other ownership test
-// verifies a seam in isolation and none of them proves the seams are connected. examples/m3
+// verifies a seam in isolation and none of them proves the seams are connected. examples/ownership
 // demonstrates the same thing to a reader.
 //
 // Both bound every wait and poll rather than sleeping, so the rule they are
@@ -71,11 +71,11 @@ var realTimeFiles = []string{
 	"acceptance_m4_test.go",
 	"lossfabric_test.go",
 	"soak_test.go",
-	"examples/m3/main.go",
-	"examples/m4/main.go",
-	"examples/m5/main.go",
-	"examples/m6/main.go",
-	"examples/m7/main.go",
+	"examples/ownership/main.go",
+	"examples/remote/main.go",
+	"examples/replication/main.go",
+	"examples/rolling-upgrade/main.go",
+	"examples/observability/main.go",
 }
 
 // exemptFromClockRule reports whether path may use the time package directly.

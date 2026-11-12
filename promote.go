@@ -114,7 +114,7 @@ func (p *promoter) reconcile() {
 			// same crippled handle. The node then evicts replicas it
 			// should hold and never promotes the ones handed to it.
 			//
-			// In examples/m6 that lost 53 of 300 keys in a *graceful*
+			// In examples/rolling-upgrade that lost 53 of 300 keys in a *graceful*
 			// drain, and it took the example to find it: every test
 			// created its namespaces before anything could race them.
 			//

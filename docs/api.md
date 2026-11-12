@@ -29,14 +29,15 @@ and output-checked by `go test`:
 | `ExampleNewRouter` | queue-workload routing |
 | `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
 
-End-to-end programs, one per milestone: `go run ./examples/m0` (skeleton and
-lifecycle), `m1` (the local data path), `m2` (the group actor runtime), `m3` (a
-real three-node cluster over loopback gossip), `m4` (remote routing), `m5`
-(replication and failure), `m6` (rebalancing and drain), `m7` (the scrape
-endpoint and the counters that matter) and `m8` (a partition heal that moves
-replicas rather than dropping them, and the synchronous write acknowledged below
-its replication factor). Each one asserts what it demonstrates and all are run by
-CI.
+End-to-end programs, each run with `go run ./examples/<name>`: `lifecycle`
+(construction, validation and shutdown), `namespace` (the local data path),
+`groups` (the group actor runtime), `ownership` (a real three-node cluster over
+loopback gossip), `remote` (remote routing), `replication` (replication and
+failure), `rolling-upgrade` (rebalancing and drain), `observability` (the scrape
+endpoint and the counters that matter) and `failure-guarantees` (a partition heal
+that moves replicas rather than dropping them, and the synchronous write
+acknowledged below its replication factor). Each one asserts what it demonstrates
+and all are run by CI.
 
 **Milestone status:** all seven complete. Namespaces are fully functional on
 a single node; groups run as virtual actors with a single goroutine each,

@@ -1,9 +1,8 @@
-// Command m8 demonstrates the two things milestone M8 changed about what this
-// library promises under failure.
+// Command failure-guarantees demonstrates two things about what this library
+// promises under failure.
 //
-// M8 built no features. It built verification — a deterministic simulation, a
-// linearizability checker, an exhaustive protocol fuzzer — and this is what that
-// found:
+// Both were found by verification rather than by features — a deterministic
+// simulation, a linearizability checker, an exhaustive protocol fuzzer:
 //
 //  1. A partition heal used to lose data. A node that stopped ranking for a key
 //     it held as a replica evicted its copy, so recomputing ownership across a
@@ -18,7 +17,7 @@
 //
 // Run it with:
 //
-//	go run ./examples/m8
+//	go run ./examples/failure-guarantees
 //
 // Everything runs in one process against a simulated network and a fake clock,
 // so it is deterministic and takes milliseconds. The numbers it prints are
@@ -139,8 +138,7 @@ func (c *cluster) close() {
 
 // openAll opens a namespace on every node.
 //
-// M6 established that this is a correctness requirement rather than a
-// convenience: a namespace a node has not opened is created on the first routed
+// This is a correctness requirement rather than a convenience: a namespace a node has not opened is created on the first routed
 // write with default options, which means replication factor 1.
 func (c *cluster) openAll(name string, opts ...peercache.NamespaceOption) {
 	for _, id := range c.ids {
@@ -326,8 +324,8 @@ func handOffOnAHeal(c *cluster) error {
 	// which is worth stating because the first version of this example
 	// stopped there and was vacuous.
 	//
-	// Deleting the hand-off entirely -- reverting to the eviction this
-	// milestone replaced -- still leaves all 60 keys readable here, because
+	// Deleting the hand-off entirely -- reverting to the eviction it
+	// replaced -- still leaves all 60 keys readable here, because
 	// CatchUp then pulls the copies back. The loss only becomes visible when
 	// nodes are destroyed inside the settling window, which is what
 	// TestMajoritySideWritesSurviveAHealAndTwoDestructions does.
@@ -337,11 +335,11 @@ func handOffOnAHeal(c *cluster) error {
 	// zero and the example fails, which was confirmed by removing it.
 	if rehomed == 0 {
 		return errors.New("no replica was handed off across the heal; keys are still " +
-			"readable because catch-up refetched them, which is the behaviour M8 " +
-			"replaced rather than the one it introduced")
+			"readable because catch-up refetched them, which is the old eviction " +
+			"behaviour rather than the hand-off")
 	}
 
-	fmt.Println("\n  Before M8 the rehomed count was zero and those replicas were")
+	fmt.Println("\n  Without the hand-off the rehomed count is zero and those replicas are")
 	fmt.Println("  evicted. TestMajoritySideWritesSurviveAHealAndTwoDestructions lost")
 	fmt.Println("  20 keys of 94 with the old behaviour.")
 	fmt.Println()
@@ -435,7 +433,7 @@ func degradedWriteIsCounted(c *cluster) error {
 }
 
 func printClosing() {
-	fmt.Println("\n--- what M8 changed about the promises ---")
+	fmt.Println("\n--- what the promises are ---")
 	fmt.Println()
 	fmt.Println("  Readable is not replicated. One node answering is enough for the")
 	fmt.Println("  first and not for the second, so a key can be served while fewer")
@@ -446,8 +444,5 @@ func printClosing() {
 	fmt.Println("  Readiness does not imply the replication factor is restored. A node")
 	fmt.Println("  inside the settling window serves correctly; draining the next pod")
 	fmt.Println("  because it went ready is how an RF=3 cluster walks down to RF=1.")
-	fmt.Println("  Open question 40 is that this has no counter yet.")
-	fmt.Println()
-	fmt.Println("  Neither of these is new behaviour. Both were true before M8 and")
-	fmt.Println("  neither was written down, which is the milestone in one sentence.")
+	fmt.Println("  Ready().ReplicasCurrent reports whether it is.")
 }

@@ -316,7 +316,7 @@ worse than the node being unavailable.
 established is that calling it is a *required* step in the restart procedure
 rather than an optimisation — a distinction that only shows up when processes
 actually die. It is now stated in the README guarantees, `docs/api.md`, decision
-0015, and demonstrated in `examples/m5`.
+0015, and demonstrated in `examples/replication`.
 
 ### And two tests that were wrong rather than the code
 
@@ -376,7 +376,7 @@ silent under-configuration that reports success.
 
 ### The symptom
 
-`examples/m6` hard-killed one node of five at replication factor 3 with
+`examples/rolling-upgrade` hard-killed one node of five at replication factor 3 with
 synchronous replication, and 53 of 300 keys became permanently unreachable —
 `ErrNotFound`, not deferred. A node failure at RF=3 is supposed to be
 survivable by definition, so this read as a serious replication bug.
@@ -538,7 +538,7 @@ rediscovering the bug.
 
 ### And the M7 example was reporting two numbers it had not earned
 
-`examples/m7` printed `peercache_replications_sent_total 573` next to the
+`examples/observability` printed `peercache_replications_sent_total 573` next to the
 explanation "RF=2 over 200 keys wants 200". The counter is cumulative across
 every namespace, so it was including the healthy namespace's traffic in a figure
 presented as the broken one's shortfall. Measuring the delta gives 73 of 200,
@@ -1224,7 +1224,7 @@ running it.
 
 The Makefile says examples are run rather than merely compiled because "an
 example that is only compiled is documentation that can quietly start lying."
-`examples/m7` was lying, quietly, about the size of the metrics surface.
+`examples/observability` was lying, quietly, about the size of the metrics surface.
 
 It counted series with `strings.Count(body, "\n# TYPE ")` and added one. The
 addition corrects for a first TYPE line with no newline before it — true of a
@@ -1266,7 +1266,7 @@ checked against the code:
 | Claim | Where | Stated | Actual |
 |---|---|---:|---:|
 | exported metric series | `docs/api.md` | 8 alerting, 35 total | 10, 38 |
-| series at the endpoint | `examples/m7` | 40 | 39 |
+| series at the endpoint | `examples/observability` | 40 | 39 |
 | message types fuzzed | four places | 20 | 21 |
 | collection-bearing messages | decision 0019 | six | seven |
 | deepest real nesting | decision 0019 | four levels | five |
@@ -1444,7 +1444,7 @@ the library.
 one-directional, confirmed by deleting `handoff.go`'s line and watching it fail.
 
 **And two 17 MB binaries were sitting in that directory.** `m6.exe` and `m7.exe`,
-left by a hand-run `go build ./examples/m6` during M6 debugging. `make examples`
+left by a hand-run `go build ./examples/rolling-upgrade` during M6 debugging. `make examples`
 uses `go run` and leaves nothing, so no target here produced them and no target
 here removed them: `clean` deleted two of the seven artefact patterns
 `.gitignore` names. Being gitignored kept them out of the history and did nothing
@@ -1655,8 +1655,8 @@ place rather than reconstructed from a narrative:
 | the audit's own orphan guard | a `mutate` line dropped from a fuzz entry | **VACUOUS twice, then caught** — see above |
 | all five entries above, via `ONLY` | run by the script rather than by hand | **caught: 5, vacuous: 0, skipped: 0** |
 | `TestMutationAuditCitesOnlyRealTests` | an entry's test name renamed in the script | **caught** — names the script and line, not the test |
-| `examples/m8` | the hand-off deleted from promote.go | **VACUOUS at first, then caught** — readability survives, the rehomed count does not |
-| `examples/m8`, second half | the degraded counter never incremented | **caught** |
+| `examples/failure-guarantees` | the hand-off deleted from promote.go | **VACUOUS at first, then caught** — readability survives, the rehomed count does not |
+| `examples/failure-guarantees`, second half | the degraded counter never incremented | **caught** |
 | every entry in the audit, all 110 | run end to end against the final tree | **caught: 110, vacuous: 0, skipped: 0** |
 | the aggregate copy-count test (name not kept; it was deleted) | catch-up removed | **VACUOUS — test deleted** |
 
@@ -1993,7 +1993,7 @@ evicting them, and a synchronous write below its replication factor is now
 counted. Both are user-visible, both are things an operator has to know, and
 neither had a demonstration a reader could run.
 
-`examples/m8` runs both against a simulated network and a fake clock, and asserts
+`examples/failure-guarantees` runs both against a simulated network and a fake clock, and asserts
 what it prints rather than only printing it:
 
 ```

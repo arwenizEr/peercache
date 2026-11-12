@@ -1,12 +1,12 @@
-// Command m1 demonstrates the local namespace API completed by milestone M1.
+// Command namespace demonstrates the local namespace API.
 //
 // Everything here runs on a single node with no networking. Namespaces are
 // fully functional: Get, Set, Delete, Exists, the batch forms, and GetOrLoad
-// with singleflight collapsing. Groups arrive in M2.
+// with singleflight collapsing. Groups are in ./examples/groups.
 //
 // Run it with:
 //
-//	go run ./examples/m1
+//	go run ./examples/namespace
 package main
 
 import (
@@ -97,9 +97,8 @@ func basics(ctx context.Context, cache peercache.Cache) error {
 
 func batches(ctx context.Context, cache peercache.Cache) error {
 	counters := cache.Namespace("counters",
-		// Configured now, inert until M3. Grouping decides which node
-		// owns a key, and on a single node with no ownership there is
-		// nothing for it to decide. It is set here because the
+		// Grouping decides which node owns a key, so on a single node it
+		// changes nothing visible. It is set here because the
 		// configuration is validated at startup and because changing it
 		// later moves keys between owners, which is a decision worth
 		// making before there is data.

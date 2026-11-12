@@ -660,7 +660,7 @@ func (c *cache) sweepLoop() {
 			// them.
 			//
 			// That lost 53 of 300 keys in a graceful drain at
-			// replication factor 3, found by examples/m6 rather than
+			// replication factor 3, found by examples/rolling-upgrade rather than
 			// by any test, because the tests exercised the two
 			// orderings where a change happened to follow.
 			//

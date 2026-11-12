@@ -7,7 +7,7 @@ Format: what is unresolved, what was picked for now, and what would force a
 change.
 
 Numbers are permanent once assigned, because the code cites them by hand:
-`examples/m6/main.go` refers to question 26, `acceptance_m4_test.go` to questions
+`examples/rolling-upgrade/main.go` refers to question 26, `acceptance_m4_test.go` to questions
 27 and 29, and question 38 is named fourteen times in `.go` and `.sh` files alone. There is no question 19 —
 the gap predates this record's current form — and renumbering to close it would
 invalidate every one of those references for no gain.

@@ -1,10 +1,9 @@
-// Command m6 demonstrates rebalancing and the Kubernetes lifecycle, completed
-// by milestone M6.
+// Command rolling-upgrade demonstrates rebalancing and the Kubernetes lifecycle.
 //
-// M5 left a cluster that survived failures and one documented trap: a restarted
-// node becomes an owner the instant it joins but holds nothing until CatchUp
-// runs, so it answers "not found" for data that exists elsewhere. This one
-// closes that with a readiness gate, and adds the graceful shutdown a PreStop
+// Replication survives failures but leaves one trap: a restarted node becomes
+// an owner the instant it joins but holds nothing until CatchUp runs, so it
+// answers "not found" for data that exists elsewhere. This closes that with a
+// readiness gate, and adds the graceful shutdown a PreStop
 // hook needs.
 //
 // It shows four things:
@@ -21,7 +20,7 @@
 //
 // Run it with:
 //
-//	go run ./examples/m6
+//	go run ./examples/rolling-upgrade
 package main
 
 import (
@@ -168,7 +167,7 @@ func (c *cluster) kill(id string) error {
 	//
 	// Leaving it open leaves a stale view still subscribed to the network's
 	// change notifications — a corpse that keeps refreshing and re-announcing
-	// a cluster it is no longer part of. In examples/m6 that presented as 53
+	// a cluster it is no longer part of. In examples/rolling-upgrade that presented as 53
 	// of 300 keys unreachable after a restart, which looked exactly like a
 	// data-loss bug in the library and was not one.
 	c.members[id].Close()
@@ -284,7 +283,7 @@ func readinessGatesTraffic(c *cluster) error {
 	// so that owner then replicates nothing and keeps
 	// ignoring the RF=3 asked for later. Killing it loses its whole share.
 	//
-	// CLAUDE.md assumes every pod runs the same binary; the corollary is
+	// The library assumes every pod runs the same binary; the corollary is
 	// that every pod must configure its namespaces identically, and before
 	// anything can be written to it.
 	for _, id := range c.live() {

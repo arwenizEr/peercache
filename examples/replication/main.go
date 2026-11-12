@@ -1,8 +1,7 @@
-// Command m5 demonstrates replication and failure handling, completed by
-// milestone M5.
+// Command replication demonstrates replication and failure handling.
 //
-// M4 left a cluster where every key had exactly one home: losing a pod lost its
-// data. This one keeps copies, promotes them when an owner dies, and shows the
+// With replication factor 1 every key has exactly one home, and losing a pod
+// loses its data. This keeps copies, promotes them when an owner dies, and shows the
 // two things an operator most needs to know before running it.
 //
 // It shows five things:
@@ -22,7 +21,7 @@
 //
 // Run it with:
 //
-//	go run ./examples/m5
+//	go run ./examples/replication
 package main
 
 import (
@@ -85,7 +84,7 @@ func run() error {
 	}
 
 	fmt.Println("\nReplication survives the loss of RF-1 nodes and no more.")
-	fmt.Println("M6 adds planned rebalancing and a graceful drain on shutdown, so a")
+	fmt.Println("examples/rolling-upgrade adds a graceful drain on shutdown, so a")
 	fmt.Println("deliberate restart stops looking like a failure.")
 	return nil
 }

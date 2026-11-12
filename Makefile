@@ -44,15 +44,15 @@ ci: vet lint test test-race latency examples bench
 ## compiled is documentation that can quietly start lying. M1 broke the M0
 ## example and nothing noticed.
 examples:
-	$(GO) run ./examples/m0
-	$(GO) run ./examples/m1
-	$(GO) run ./examples/m2
-	$(GO) run ./examples/m3
-	$(GO) run ./examples/m4
-	$(GO) run ./examples/m5
-	$(GO) run ./examples/m6
-	$(GO) run ./examples/m7
-	$(GO) run ./examples/m8
+	$(GO) run ./examples/lifecycle
+	$(GO) run ./examples/namespace
+	$(GO) run ./examples/groups
+	$(GO) run ./examples/ownership
+	$(GO) run ./examples/remote
+	$(GO) run ./examples/replication
+	$(GO) run ./examples/rolling-upgrade
+	$(GO) run ./examples/observability
+	$(GO) run ./examples/failure-guarantees
 
 ## test runs the suite without the race detector, which is the fast feedback loop.
 test:

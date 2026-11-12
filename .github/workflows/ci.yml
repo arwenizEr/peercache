@@ -77,15 +77,15 @@ jobs:
 
       - name: examples run
         run: |
-          go run ./examples/m0
-          go run ./examples/m1
-          go run ./examples/m2
-          go run ./examples/m3
-          go run ./examples/m4
-          go run ./examples/m5
-          go run ./examples/m6
-          go run ./examples/m7
-          go run ./examples/m8
+          go run ./examples/lifecycle
+          go run ./examples/namespace
+          go run ./examples/groups
+          go run ./examples/ownership
+          go run ./examples/remote
+          go run ./examples/replication
+          go run ./examples/rolling-upgrade
+          go run ./examples/observability
+          go run ./examples/failure-guarantees
 
       # internal/l1/eval is a nested module, so `go test ./...` never sees it.
       # Compiling it keeps the cache-library comparison from rotting into

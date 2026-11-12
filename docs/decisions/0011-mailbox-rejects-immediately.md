@@ -36,7 +36,7 @@ saturation is visible quickly.
 ## What callers must do
 
 `ErrGroupOverloaded` is **retryable**, and that is the contract: a caller that
-receives it should back off and try again, exactly as `examples/m2` does. This
+receives it should back off and try again, exactly as `examples/groups` does. This
 is not a failure mode, it is flow control. The counter behind
 `Stats().Rejections` rising is a signal to add capacity or shard the hot group,
 not a bug report.
