@@ -47,7 +47,7 @@ jobs:
       - name: simulate
         env:
           PEERCACHE_SIM_SEEDS: ${{ github.event.inputs.sim_seeds || '2000' }}
-        run: go test . -run TestSimulation -count=1 -timeout 170m
+        run: go test ./tests -run TestSimulation -count=1 -timeout 170m
 
   race-twice:
     name: test -race -count=2
@@ -87,7 +87,7 @@ jobs:
       - name: simulate under the race detector
         env:
           PEERCACHE_SIM_SEEDS: "200"
-        run: go test . -run TestSimulation -race -count=1 -timeout 170m
+        run: go test ./tests -run TestSimulation -race -count=1 -timeout 170m
 
   linearizability:
     name: linearizability
@@ -103,7 +103,7 @@ jobs:
       # Repeated so the histories differ: each run seeds afresh, and the
       # interleavings come from the scheduler.
       - name: check histories
-        run: go test . -run 'Linearizable|TestTheCheckerRejectsAViolation' -race -count=20 -timeout 50m
+        run: go test ./tests -run 'Linearizable|TestTheCheckerRejectsAViolation' -race -count=20 -timeout 50m
 
   fuzz:
     name: fuzz ${{ matrix.target.pkg }}/${{ matrix.target.fn }}
@@ -170,7 +170,7 @@ jobs:
       - name: soak for an hour per test
         env:
           PEERCACHE_SOAK: "60m"
-        run: go test . -run TestSoak -count=1 -timeout 135m
+        run: go test ./tests -run TestSoak -count=1 -timeout 135m
 
   mutation-audit:
     name: mutation audit

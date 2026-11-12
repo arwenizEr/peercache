@@ -354,8 +354,10 @@ in [`docs/design.md`](docs/design.md) to the test that proves it.
 ## Repository layout
 
 The root directory is the public API. Go does not allow one package to span
-directories, so everything a caller imports lives here and everything else lives
-under `internal/`.
+directories, so everything a caller imports lives here, everything else lives
+under `internal/`, and the tests live under `tests/`. The only test files in the
+root are godoc examples, benchmarks and a fuzz target, which belong next to the
+code they document or measure.
 
 ```
 doc.go            Package documentation
@@ -406,6 +408,10 @@ internal/
   rebalance/      Move planning
   metrics/        Metric collection, text format, histograms
 
+tests/            Behavioural, cluster, acceptance, chaos and simulation tests,
+                  against the public API and the in-process harness
+tests/repo/       Tests that read the repository as text: engineering rules,
+                  docs and CI agree with the code, an external module builds
 proto/            gRPC service definitions
 examples/         Runnable programs, one per feature: lifecycle, namespace,
                   groups, ownership, remote, replication, rolling-upgrade,
@@ -455,7 +461,7 @@ graceful kill, hard kill and revival. Simulated time is free: five nodes, a 3/2
 partition and an hour advanced on each side of a heal run in about **1.5 ms** of
 wall clock.
 
-`discipline_test.go` reads the repository as text and fails the build on any
+`tests/repo/discipline_test.go` reads the repository as text and fails the build on any
 `time.Sleep`; any direct `time.Now`, `time.After`, timer, ticker or
 `context.WithTimeout` outside `internal/clock`; the `log` package; an
 `internal/` package importing the root package; a package without a `doc.go`;

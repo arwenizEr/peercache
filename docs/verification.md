@@ -127,7 +127,7 @@ oversight: each constructs a node, asserts something, and exits. A goroutine
 that leaks *after* the assertion cannot fail the assertion.
 
 What found it was the M1 p99 acceptance test, which has nothing to do with
-membership. Adding `cluster_test.go` to the root package put four gossip nodes
+membership. Adding `tests/cluster_test.go` to the root package put four gossip nodes
 in the same binary; under `-count=2`, the goroutines leaked by the first
 iteration pushed the second iteration's p99 from 0.5µs to 1.475µs and broke the
 1µs budget.
@@ -525,7 +525,7 @@ made to access a socket in a way forbidden by its access permissions.
 
 That is the Windows reserved ephemeral range (50510-51109 on this machine),
 which M6 already diagnosed and fixed — in `internal/membership`, whose tests got
-a bounded retry. The root package's `cluster_test.go` builds its gossip nodes
+a bounded retry. The root package's `tests/cluster_test.go` builds its gossip nodes
 through its own helper and never received it. Two tests, binding real sockets
 through a second code path, latent for a milestone.
 
@@ -684,7 +684,7 @@ that package's own tests. Those two break *wiring* — they leave
 connecting it to the membership authority or to activation. Nothing in
 `internal/ownership` notices, because from its point of view nothing is wrong.
 
-They are the reason `cluster_test.go` exists. Before it, thirteen ownership
+They are the reason `tests/cluster_test.go` exists. Before it, thirteen ownership
 invariants were verified inside a package the library could have stopped calling
 without a single test failing.
 
@@ -759,7 +759,7 @@ example printing a number one too high.
 one exported symbol with no doc comment, a package missing from the repository
 map since it was created, twelve of the nineteen public-API files missing from
 the same map, and the discovery that the rules being broken were exactly the
-rules with no test. `discipline_test.go` grew to cover all of them: every
+rules with no test. `tests/repo/discipline_test.go` grew to cover all of them: every
 mechanical rule in docs/design.md now has a test, and so do the build files, the
 repository map, the API documentation's derived figures and the acceptance map —
 the places verification is written down that no Go tool reads.
@@ -999,10 +999,10 @@ running the latency gate, which had never been run here. It failed instantly:
 permissions`, on a UDP port inside the 600-wide band this host reserves.
 
 That is open question 27, for the third time. M6 fixed
-`internal/membership`'s tests; M7 found `cluster_test.go` had built its own
+`internal/membership`'s tests; M7 found `tests/cluster_test.go` had built its own
 helper and fixed that too, and wrote the closing line "a correct fix applied to
 some of the places that need it reads, in the commit log, exactly like a complete
-one". `acceptance_remote_test.go` had built a *third* helper, and it was never fixed.
+one". `tests/acceptance_remote_test.go` had built a *third* helper, and it was never fixed.
 
 What made it invisible is worth more than the bug. The test is behind an opt-in
 latency gate that only CI's Linux runner sets, where the reserved band does not
@@ -1329,7 +1329,7 @@ The `doc.go` half passes: every library package has one. The only directories
 without are the eight `examples/mN` programs, which are `package main` and carry
 package comments instead.
 
-**Why that rule and not another** is the part worth keeping. `discipline_test.go`
+**Why that rule and not another** is the part worth keeping. `tests/repo/discipline_test.go`
 already enforces docs/design.md's other mechanical rules as tests — no `time.Sleep`,
 no `time.Now` outside `internal/clock`, no `log` package, no TODO markers, no
 internal package importing the root, every package has a `doc.go`. All of them
@@ -1344,7 +1344,7 @@ on unexported types, and a check that is wrong 44 times in 45 is a check somebod
 switches off.
 
 **Then the same question was asked of every remaining rule.** Comparing
-docs/design.md's mechanical rules against the tests in `discipline_test.go` left two
+docs/design.md's mechanical rules against the tests in `tests/repo/discipline_test.go` left two
 with no check at all:
 
 - **"No `panic` in library code paths."** A safety non-negotiable. It held —
@@ -1485,7 +1485,7 @@ that could not have affected it. Three earlier full runs had passed.
 **Then the pattern was hunted rather than waited for.** Three instances is enough
 to search on, so every loop in the suite that counts keys as lost was checked for
 the same shape — a bare `Get` on one node whose error is treated as loss. Two more
-turned up, both in `chaos_test.go`:
+turned up, both in `tests/chaos_test.go`:
 
 - `TestChaosLosesNoSynchronouslyWrittenKey`, the M5 acceptance criterion, had it
   exactly. After sixty seconds of kills the survivors are still settling, so a
@@ -1515,7 +1515,7 @@ to be doing the right thing, which is enough and is impossible to argue with.
 
 Confirmed by adding a file that counts losses and calls no helper, and watching
 it fail by name. An earlier attempt to reintroduce the bug directly into
-`chaos_test.go` would not compile, because `readAnywhere` returns a string where
+`tests/chaos_test.go` would not compile, because `readAnywhere` returns a string where
 a bare `Get` returns bytes — an accidental guard, and not one to rely on.
 
 ### Readable is not replicated, and the test that proved the fix did not know it
@@ -1556,13 +1556,13 @@ third became visible.
 
 **The same gap was then looked for elsewhere rather than assumed absent.** Every
 test that destroys nodes was checked for whether it restores replication first:
-`chaos_test.go` catches up the revived victim each round and never has two nodes
-down at once, so one copy always survives at RF=3; `rolling_test.go` drains
-gracefully; `eviction_test.go` catches up after its single kill-and-revive.
-`partitionheal_test.go` was the only test removing two copies without restoring
+`tests/chaos_test.go` catches up the revived victim each round and never has two nodes
+down at once, so one copy always survives at RF=3; `tests/rolling_test.go` drains
+gracefully; `tests/eviction_test.go` catches up after its single kill-and-revive.
+`tests/partitionheal_test.go` was the only test removing two copies without restoring
 the factor first.
 
-There is a connection worth naming. `chaos_test.go` already carries a long
+There is a connection worth naming. `tests/chaos_test.go` already carries a long
 comment about M5 discovering this for *restarts* — "558 of 600 keys lost, none of
 them actually gone" — and concluding that a returning node must catch up before
 serving. The failure here is the same class for a *heal*: membership changed,
@@ -2171,7 +2171,7 @@ probe that blocked on the busy group, and a wait that never moved the fake
 clock — and were rewritten so that nothing in them can block. Every fix has an
 audit entry except the activation-delay order, which no test can distinguish.
 
-**Also fixed: a harness bug.** `ownership_move_test.go`'s transport wrapper hid
+**Also fixed: a harness bug.** `tests/ownership_move_test.go`'s transport wrapper hid
 `Ready`, so `New` returned before the node was serving and the node was
 sometimes never admitted: 40 failures in 60 runs without `-race`, none with it.
 The two older wrappers already forwarded it.
@@ -2229,7 +2229,7 @@ caught by hand.
 - **Ownership moving under a write.** `Set` and `Group.Call` re-resolve once on
   `ErrNotOwner` and send to the new owner. No test had reached the branch that
   follows a *changed* answer, because ordinary gossip never makes a caller stale
-  on the first attempt and fresh on the second. `ownership_move_test.go` freezes
+  on the first attempt and fresh on the second. `tests/ownership_move_test.go` freezes
   one node's view, revives a node so the rest re-rank, and thaws the view from
   inside the transport at the first `ErrNotOwner`. The first version passed for
   `Call` and failed for `Set`: the chosen key was the stale caller's own under

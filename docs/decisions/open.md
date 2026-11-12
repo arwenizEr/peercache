@@ -7,7 +7,7 @@ Format: what is unresolved, what was picked for now, and what would force a
 change.
 
 Numbers are permanent once assigned, because the code cites them by hand:
-`examples/rolling-upgrade/main.go` refers to question 26, `acceptance_remote_test.go` to questions
+`examples/rolling-upgrade/main.go` refers to question 26, `tests/acceptance_remote_test.go` to questions
 27 and 29, and question 38 is named fourteen times in `.go` and `.sh` files alone. There is no question 19 —
 the gap predates this record's current form — and renumbering to close it would
 invalidate every one of those references for no gain.
@@ -539,7 +539,7 @@ recognised rather than investigated twice.
 ---
 
 **M7 addendum.** The M6 fix was applied to `internal/membership`'s tests only.
-The root package's `cluster_test.go` builds gossip nodes through its own helper
+The root package's `tests/cluster_test.go` builds gossip nodes through its own helper
 and kept failing — latent for a milestone, surfaced by M7's `-count=2` gate.
 Both now call `testkit.RetryBind` and `testkit.IsPortRefused`, one exported
 implementation, so a third caller inherits the fix instead of rediscovering the
@@ -548,7 +548,7 @@ of the places that need it reads, in the commit log, exactly like a complete one
 
 **M8 addendum. There was a third caller, and the sentence above was right.**
 
-`acceptance_remote_test.go` builds gossip nodes through a helper of its own and never
+`tests/acceptance_remote_test.go` builds gossip nodes through a helper of its own and never
 got the fix. It failed on every attempt here — `bind: An attempt was made to
 access a socket in a way forbidden by its access permissions`, on a port inside
 the reserved band — which means the M4 acceptance criterion had not executed on

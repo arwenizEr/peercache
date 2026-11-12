@@ -309,7 +309,7 @@ mutate "namespaces share one store" \
   peercache.go \
   'ns = c.newNamespaceLocked(name, resolved)' \
   'if len(c.order) > 0 { ns = &namespace{cache: c, name: name, opts: resolved, store: c.namespaces[c.order[0]].store} } else { ns = c.newNamespaceLocked(name, resolved) }' \
-  'TestNamespacesAreIsolated' .
+  'TestNamespacesAreIsolated' ./tests
 
 mutate "singleflight bypassed" \
   namespace.go \
@@ -323,7 +323,7 @@ mutate "singleflight bypassed" \
 		return v, nil
 	}
 	result := n.flight.Do(ctx, key, func(loadCtx context.Context) ([]byte, time.Duration, error) {' \
-  'TestGetOrLoadCollapsesConcurrentMisses' .
+  'TestGetOrLoadCollapsesConcurrentMisses' ./tests
 
 mutate "store version stops incrementing" \
   internal/store/store.go \
@@ -369,14 +369,14 @@ mutate "namespace skips the context check" \
 	}' \
   'func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 	ctx = ctxOrBackground(ctx)' \
-  'TestCancelledContextIsReportedFirst' .
+  'TestCancelledContextIsReportedFirst' ./tests
 
 mutate "loader runs without the namespace deadline" \
   namespace.go \
   'loadCtx, cancel := clock.WithTimeout(loadCtx, n.cache.opts.Clock, n.opts.LoaderTimeout)
 		defer cancel()' \
   '' \
-  'TestLoaderTimeoutIsTheNamespacesNotTheCallers' .
+  'TestLoaderTimeoutIsTheNamespacesNotTheCallers' ./tests
 
 mutate "escaped group state is honoured instead of ignored" \
   internal/actor/state.go \
@@ -467,7 +467,7 @@ mutate "the Items snapshot aliases group state" \
 				copy(dup, val)
 				items[key] = dup' \
   'items[key] = val' \
-  'TestItemsSnapshotDoesNotAliasGroupState' .
+  'TestItemsSnapshotDoesNotAliasGroupState' ./tests
 
 mutate "ownership ignores the node identity" \
   internal/ownership/table.go \
@@ -576,13 +576,13 @@ mutate "the guard is built but never consulted" \
   peercache.go \
   'canActivate = guard.CanActivate' \
   'canActivate = nil' \
-  'TestTwoNodesAgreeOnOwnership' .
+  'TestTwoNodesAgreeOnOwnership' ./tests
 
 mutate "the guard never learns the membership" \
   peercache.go \
   'guard.Watch(resolved.Membership)' \
   '_ = resolved.Membership' \
-  'TestJoiningNodeDefersNewlyAcquiredGroups' .
+  'TestJoiningNodeDefersNewlyAcquiredGroups' ./tests
 
 # ---------------------------------------------------------------- remote
 
@@ -681,7 +681,7 @@ mutate "the router batches per group rather than per owner" \
   '		work, seen := byOwner[id]' \
   '		id = id + g
 		work, seen := byOwner[id]' \
-  'TestRouterIssuesOneRequestPerOwner' .
+  'TestRouterIssuesOneRequestPerOwner' ./tests
 
 mutate "a group batch is applied one message at a time" \
   router.go \
@@ -689,7 +689,7 @@ mutate "a group batch is applied one message at a time" \
   'for _, m := range byGroup[g] {
 			work.batches = append(work.batches, wire.GroupBatch{Group: g, Messages: [][]byte{m}})
 		}' \
-  'TestRouterSubmit' .
+  'TestRouterSubmit' ./tests
 
 mutate "every node runs its own loader" \
   namespace.go \
@@ -699,7 +699,7 @@ mutate "every node runs its own loader" \
 	return n.remoteGetOrLoad(ctx, p, key, true)' \
   '	_ = p
 	return n.localGetOrLoad(ctx, key)' \
-  'TestTheLoaderRunsOnlyOnTheOwner' .
+  'TestTheLoaderRunsOnlyOnTheOwner' ./tests
 
 mutate "gossip advertises the SWIM port as the RPC address" \
   membership/gossip.go \
@@ -716,7 +716,7 @@ mutate "enqueueing an invalidation blocks when the queue is full" \
 		iv.dropped.Add(1)
 	}' \
   '	iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}' \
-  'TestInvalidationBacklogIsDroppedNotQueued' .
+  'TestInvalidationBacklogIsDroppedNotQueued' ./tests
 # ---------------------------------------------------------------- replication
 
 mutate "an older replica copy overwrites a newer one" \
@@ -803,7 +803,7 @@ mutate "sync replication does not wait" \
 	return r.fanOut(ctx, w)' \
   'r.enqueue(w)
 	return nil' \
-  'TestSyncReplicationPlacesCopiesBeforeReturning' .
+  'TestSyncReplicationPlacesCopiesBeforeReturning' ./tests
 
 mutate "async replication waits for its replicas" \
   replicate.go \
@@ -813,7 +813,7 @@ mutate "async replication waits for its replicas" \
 	}
 	return r.fanOut(ctx, w)' \
   'return r.fanOut(ctx, w)' \
-  'TestAsyncReplicationDoesNotBlockTheWrite' .
+  'TestAsyncReplicationDoesNotBlockTheWrite' ./tests
 
 mutate "replication does nothing at all" \
   replicate.go \
@@ -823,7 +823,7 @@ mutate "replication does nothing at all" \
 	}
 	return r.fanOut(ctx, w)' \
   'return nil' \
-  'TestChaosLosesNoSynchronouslyWrittenKey' .
+  'TestChaosLosesNoSynchronouslyWrittenKey' ./tests
 
 mutate "deletions are not replicated" \
   namespace.go \
@@ -831,7 +831,7 @@ mutate "deletions are not replicated" \
 		return err
 	}' \
   '' \
-  'TestADeletionReplicates' .
+  'TestADeletionReplicates' ./tests
 
 mutate "a remote write skips replication" \
   handler.go \
@@ -839,14 +839,14 @@ mutate "a remote write skips replication" \
 		return nil, err
 	}' \
   'ns.store.Set(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos))' \
-  'TestKillingAnOwnerPromotesAReplica' .
+  'TestKillingAnOwnerPromotesAReplica' ./tests
 
 mutate "promotion drains nothing" \
   promote.go \
   'taken := c.replicas.Drain(name, func(key string) bool {' \
   'taken := c.replicas.Drain(name, func(key string) bool { return false
 			_ = func() bool {' \
-  'TestKillingAnOwnerPromotesAReplica' .
+  'TestKillingAnOwnerPromotesAReplica' ./tests
 
 mutate "catch-up sends whatever is asked for" \
   handler.go \
@@ -857,13 +857,13 @@ mutate "catch-up sends whatever is asked for" \
 		}
 		return false' \
   'return true' \
-  'TestCatchUpOnlySendsKeysTheAskerRanksFor' .
+  'TestCatchUpOnlySendsKeysTheAskerRanksFor' ./tests
 
 mutate "catch-up does not reconcile what it pulled" \
   catchup.go \
   'defer c.promoter.reconcile()' \
   '' \
-  'TestARestartedNodeRecoversItsColdReplicas' .
+  'TestARestartedNodeRecoversItsColdReplicas' ./tests
 # ---------------------------------------------------------------- lifecycle
 
 mutate "readiness ignores catch-up" \
@@ -873,7 +873,7 @@ mutate "readiness ignores catch-up" \
 		return st
 	}' \
   '' \
-  'TestANodeIsNotReadyBeforeCatchUp' .
+  'TestANodeIsNotReadyBeforeCatchUp' ./tests
 
 mutate "readiness ignores whether the view has settled" \
   ready.go \
@@ -883,7 +883,7 @@ mutate "readiness ignores whether the view has settled" \
 		return st
 	}' \
   'st.Settled = true' \
-  'TestANodeIsNotReadyWhileMembershipMoves' .
+  'TestANodeIsNotReadyWhileMembershipMoves' ./tests
 
 mutate "a draining node still reports ready" \
   ready.go \
@@ -892,14 +892,14 @@ mutate "a draining node still reports ready" \
 		return st' \
   'case false:
 		return st' \
-  'TestDrainingIsPermanentlyNotReady' .
+  'TestDrainingIsPermanentlyNotReady' ./tests
 
 mutate "Settled always says yes" \
   internal/ownership/guard.go \
   'elapsed := g.clk.Now().UnixNano() - g.changedAt.Load()
 	return elapsed >= int64(g.activationDelay)' \
   'return true' \
-  'TestANodeIsNotReadyWhileMembershipMoves' .
+  'TestANodeIsNotReadyWhileMembershipMoves' ./tests
 
 mutate "drain does not hand off its keys" \
   drain.go \
@@ -907,13 +907,13 @@ mutate "drain does not hand off its keys" \
 		problems = errors.Join(problems, err)
 	}' \
   '' \
-  'TestDrainSavesDataWithoutReplication' .
+  'TestDrainSavesDataWithoutReplication' ./tests
 
 mutate "drain does not announce its departure" \
   drain.go \
   'if err := c.opts.Membership.Leave(ctx); err != nil {' \
   'if err := error(nil); err != nil {' \
-  'TestDrainStopsPeersRoutingImmediately' .
+  'TestDrainStopsPeersRoutingImmediately' ./tests
 
 # NOT DETERMINISTIC. Four full audit runs disagreed about this entry: caught,
 # VACUOUS, caught, caught. Run on its own it is caught 5 times out of 5, so the
@@ -942,7 +942,7 @@ mutate "handed-off keys are not adopted by their new owner" \
 		}
 		h.cache.pressure.noteWrite(len(in.Value))' \
   'h.cache.pressure.noteWrite(len(in.Value))' \
-  'TestDrainSavesDataWithoutReplication' .
+  'TestDrainSavesDataWithoutReplication' ./tests
 
 mutate "an implicitly created namespace is not counted" \
   handler.go \
@@ -950,7 +950,7 @@ mutate "an implicitly created namespace is not counted" \
 		h.cache.implicitNamespaces.Add(1)' \
   'if false {
 		h.cache.implicitNamespaces.Add(1)' \
-  'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' .
+  'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' ./tests
 
 mutate "the plan counts promotions as moves" \
   internal/rebalance/plan.go \
@@ -994,7 +994,7 @@ mutate "drain hands off nothing" \
 		problems = errors.Join(problems, err)
 	}' \
   '' \
-  'TestDrainHandsOffKeysNothingElseWouldSave' .
+  'TestDrainHandsOffKeysNothingElseWouldSave' ./tests
 
 mutate "drain transfers before announcing departure" \
   drain.go \
@@ -1019,7 +1019,7 @@ mutate "drain transfers before announcing departure" \
 		c.opts.Logger.Warn("could not announce departure; peers will detect the failure instead",
 			"error", err)
 	}' \
-  'TestDrainAnnouncesDepartureBeforeTransferring' .
+  'TestDrainAnnouncesDepartureBeforeTransferring' ./tests
 
 # --- observability ------------------------------------------------------------
 #
@@ -1077,7 +1077,7 @@ mutate "mailbox rejections never reach Stats" \
   peercache.go \
   'MailboxRejections: groups.Rejections,' \
   'MailboxRejections: 0,' \
-  'TestMailboxRejectionsAreCounted' .
+  'TestMailboxRejectionsAreCounted' ./tests
 
 mutate "a stats field is exported under the wrong name" \
   internal/metrics/metrics.go \
@@ -1120,7 +1120,7 @@ mutate "a moved replica is dropped instead of handed off" \
   '		for range orphans {
 			p.evicted.Add(1)
 		}' \
-  'TestMajoritySideWritesSurviveAHealAndTwoDestructions' .
+  'TestMajoritySideWritesSurviveAHealAndTwoDestructions' ./tests
 
 # Every hand-off failure path must keep the copy. Dropping on failure is the
 # same data loss by a slower route: a peer that is briefly unreachable during a
@@ -1134,7 +1134,7 @@ mutate "a hand-off that cannot be placed drops the copy" \
   '	if !placed {
 		return
 	}' \
-  'TestAHandOffThatCannotBePlacedKeepsTheCopy' .
+  'TestAHandOffThatCannotBePlacedKeepsTheCopy' ./tests
 
 # A hand-off is a relocation, not a write. Stamping it with the forwarding node's
 # ID makes the receiver see the original owner's replication and the forward as
@@ -1147,7 +1147,7 @@ mutate "a hand-off claims to be the writer of what it forwards" \
 		from = c.self().ID
 	}' \
   'from := c.self().ID' \
-  'TestMajoritySideWritesSurviveAHeal$' .
+  'TestMajoritySideWritesSurviveAHeal$' ./tests
 
 # The degraded-write counter is the only signal separating a synchronous write
 # that placed RF copies from one that placed one. Question 37 is about it being
@@ -1156,7 +1156,7 @@ mutate "a synchronous write below the replication factor is not counted" \
   namespace.go \
   '	if n.cache.degradedWrites.Add(1) == 1 {' \
   '	if false {' \
-  'TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy' .
+  'TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy' ./tests
 
 # --- Question 37, options 2 and 3: WithRequireReplicationFactor ---
 #
@@ -1166,14 +1166,14 @@ mutate "a synchronous write below the replication factor is not counted" \
 # The opt-in refusal itself. Without it the strict namespace acknowledges the
 # isolated write exactly as the default one does, which is the behaviour the
 # option exists to change.
-mutate "a namespace requiring its factor still acknowledges below it"   namespace.go   'return n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'return false && n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'TestRequireReplicationFactorRefusesAnIsolatedWrite$' .
+mutate "a namespace requiring its factor still acknowledges below it"   namespace.go   'return n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'return false && n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'TestRequireReplicationFactorRefusesAnIsolatedWrite$' ./tests
 
 # The refusal after a partial placement. An isolated node has no targets and
 # takes the other branch, so only a cluster with some replicas but not enough
 # reaches this one.
 mutate "a write placed on some replicas but not enough is acknowledged"   namespace.go   '	// and takes precedence: it is the more specific diagnosis.
 	if n.underFactor(len(targets)) {'   '	// and takes precedence: it is the more specific diagnosis.
-	if false {'   'TestRequireReplicationFactorRefusesThroughAForwardedWrite$' .
+	if false {'   'TestRequireReplicationFactorRefusesThroughAForwardedWrite$' ./tests
 
 # The sentinel has to survive gRPC, or a write through any non-owner sees a
 # generic unreachable error and the distinction exists only for local writes.
@@ -1183,15 +1183,15 @@ mutate "ErrUnderReplicated stops surviving the gRPC hop"   transport/client.go  
 
 # Requiring the factor under asynchronous replication cannot be honoured. Letting
 # it through would be an option that silently does nothing.
-mutate "requiring the factor without sync replication is accepted"   internal/core/options.go   'if o.RequireReplicationFactor && !o.SyncReplication {'   'if false {'   'TestNamespaceOptionValidationSurfaces$' .
+mutate "requiring the factor without sync replication is accepted"   internal/core/options.go   'if o.RequireReplicationFactor && !o.SyncReplication {'   'if false {'   'TestNamespaceOptionValidationSurfaces$' ./tests
 
 # The nightly soak's step timeout, put back to the figure that fitted one test
 # when the pattern selects two.
 mutate "the nightly soak timeout fits one soak test, not two" \
   .github/workflows/nightly.yml \
-  'run: go test . -run TestSoak -count=1 -timeout 135m' \
-  'run: go test . -run TestSoak -count=1 -timeout 85m' \
-  'TestNightlySoakFitsItsTimeouts$' .
+  'run: go test ./tests -run TestSoak -count=1 -timeout 135m' \
+  'run: go test ./tests -run TestSoak -count=1 -timeout 85m' \
+  'TestNightlySoakFitsItsTimeouts$' ./tests/repo
 
 # --- Question 40: ReplicasCurrent, and the CatchUp error it exposed ---
 
@@ -1201,7 +1201,7 @@ mutate "CatchUp drops the errors of the peers it could not reach" \
   catchup.go \
   'failures = errors.Join(failures, fmt.Errorf(' \
   '_ = errors.Join(failures, fmt.Errorf(' \
-  'TestCatchUpReportsAPeerItCouldNotReach$' .
+  'TestCatchUpReportsAPeerItCouldNotReach$' ./tests
 
 # Without the epoch comparison, one catch-up makes a node current forever, which
 # is the one-shot CaughtUp flag question 40 was opened about.
@@ -1209,7 +1209,7 @@ mutate "ReplicasCurrent ignores membership changes" \
   ready.go \
   'return at != 0 && at-1 == uint64(c.guard.Stats().Epoch)' \
   'return at != 0' \
-  'TestReplicasCurrentFollowsCatchUpAndMembership$' .
+  'TestReplicasCurrentFollowsCatchUpAndMembership$' ./tests
 
 # A catch-up that failed against some peers must not count as current.
 mutate "a failed catch-up still marks replicas current" \
@@ -1218,7 +1218,7 @@ mutate "a failed catch-up still marks replicas current" \
 		c.readiness.markCurrent(epoch)' \
   '	if true {
 		c.readiness.markCurrent(epoch)' \
-  'TestCatchUpReportsAPeerItCouldNotReach$' .
+  'TestCatchUpReportsAPeerItCouldNotReach$' ./tests
 
 # --- resource pressure, part one: the memory budget (decision 0022) ---
 
@@ -1243,7 +1243,7 @@ mutate "a shed owned key sends its replicas no removal" \
 		return
 	}
 	targets' \
-  'TestAShedKeyIsNeverServedAtAnOlderValue$' .
+  'TestAShedKeyIsNeverServedAtAnOlderValue$' ./tests
 
 # Replicas before owned data.
 mutate "owned data is shed while replicas could have been" \
@@ -1252,7 +1252,7 @@ mutate "owned data is shed while replicas could have been" \
 	if excess > 0 {' \
   '	// 2. Replicas.
 	if false {' \
-  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' .
+  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' ./tests
 
 # L1 before everything.
 mutate "the L1 tier is never shed" \
@@ -1261,13 +1261,13 @@ mutate "the L1 tier is never shed" \
 		excess -= ns.l1.Shed()' \
   '		entries := 0
 		_ = ns.l1.Len()' \
-  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' .
+  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' ./tests
 
 mutate "catch-up ignores the memory budget" \
   catchup.go \
   '		if c.pressure.over() {' \
   '		if false {' \
-  'TestCatchUpStopsAtTheMemoryBudget$' .
+  'TestCatchUpStopsAtTheMemoryBudget$' ./tests
 
 mutate "local writes never check the budget" \
   pressure.go \
@@ -1278,7 +1278,7 @@ mutate "local writes never check the budget" \
   '}
 
 // check sheds' \
-  'TestASingleNodeStaysWithinItsMemoryBudget$' .
+  'TestASingleNodeStaysWithinItsMemoryBudget$' ./tests
 
 # The inflow a failover produces is copies from peers, not local writes.
 mutate "replica arrivals never check the budget" \
@@ -1286,7 +1286,7 @@ mutate "replica arrivals never check the budget" \
   '	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {' \
   '	if conflict {' \
-  'TestAReplicaOnlyNodeStaysWithinItsBudget$' .
+  'TestAReplicaOnlyNodeStaysWithinItsBudget$' ./tests
 
 # --- resource pressure, part two: join probation (decision 0023) ---
 
@@ -1294,7 +1294,7 @@ mutate "probation hides nobody" \
   probation.go \
   '		if !ok || now-started >= int64(period) {' \
   '		if true {' \
-  'TestACrashloopingNodeIsNeverRanked$' .
+  'TestACrashloopingNodeIsNeverRanked$' ./tests
 
 mutate "a probation ending never reaches the ranking" \
   probation.go \
@@ -1303,19 +1303,19 @@ mutate "a probation ending never reaches the ranking" \
   '	return
 	before := p.lastIDs
 	p.refreshLocked()' \
-  'TestAProbationedNodeIsRankedOnceItHasLasted$' .
+  'TestAProbationedNodeIsRankedOnceItHasLasted$' ./tests
 
 mutate "a cold start ranks nobody" \
   probation.go \
   '	if len(established) == 0 {' \
   '	if false {' \
-  'TestColdStartRanksEveryNode$' .
+  'TestColdStartRanksEveryNode$' ./tests
 
 # --- resource pressure, part three: a slow node ---
 
 # Asynchronous writes that waited on their replicas would make every write
 # whose replica is a throttled node as slow as that node.
-mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{'   '	if err := n.cache.replicator.replicate(ctx, true, replicaWork{'   'TestAStarvedNodeSlowsOnlyItsOwnKeys$' .
+mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{'   '	if err := n.cache.replicator.replicate(ctx, true, replicaWork{'   'TestAStarvedNodeSlowsOnlyItsOwnKeys$' ./tests
 
 # --- TTL across failover: replicas hold the owner's deadline ---
 #
@@ -1325,11 +1325,11 @@ mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err :
 # removing either check changes nothing a test can see. See
 # docs/verification.md.
 
-mutate "promotion restarts a key's lifetime"   promote.go   'if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {'   'if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version) {'   'TestAPromotedKeyKeepsItsRemainingTTL$' .
+mutate "promotion restarts a key's lifetime"   promote.go   'if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {'   'if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version) {'   'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
 
-mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano(), e.TTLNanos),'   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano()+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' .
+mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano(), e.TTLNanos),'   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano()+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' ./tests
 
-mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' .
+mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' ./tests
 
 mutate "a replica at its deadline still counts as live"   internal/replication/replica.go   '	return left, left > 0'   '	return left, left >= 0'   'TestRemainingAndDeadline$' ./internal/replication/
 
@@ -1341,7 +1341,7 @@ mutate "a Set gives up when ownership moved under it" \
 		}' \
   '			return err
 		}' \
-  'TestASetFollowsOwnershipThatMovedUnderIt$' .
+  'TestASetFollowsOwnershipThatMovedUnderIt$' ./tests
 
 mutate "a Call gives up when ownership moved under it" \
   group.go \
@@ -1349,7 +1349,7 @@ mutate "a Call gives up when ownership moved under it" \
 }' \
   '	return nil, err
 }' \
-  'TestAGroupCallFollowsOwnershipThatMovedUnderIt$' .
+  'TestAGroupCallFollowsOwnershipThatMovedUnderIt$' ./tests
 
 mutate "GetOrLoad without a loader asks the owner anyway" \
   namespace.go \
@@ -1359,7 +1359,7 @@ mutate "GetOrLoad without a loader asks the owner anyway" \
 
 	p, err := n.cache.route.locate' \
   '	p, err := n.cache.route.locate' \
-  'TestRemoteGetOrLoadWithoutALoaderOnTheOwner$' .
+  'TestRemoteGetOrLoadWithoutALoaderOnTheOwner$' ./tests
 
 mutate "a peer's own failure is reported as unreachable" \
   transport/client.go \
@@ -1371,25 +1371,25 @@ mutate "probation swallows the departure announcement" \
   probation.go \
   'func (p *probationAuthority) Leave(ctx context.Context) error { return p.inner.Leave(ctx) }' \
   'func (p *probationAuthority) Leave(ctx context.Context) error { return nil }' \
-  'TestDrainUnderJoinProbationAnnouncesTheDeparture$' .
+  'TestDrainUnderJoinProbationAnnouncesTheDeparture$' ./tests
 
 mutate "a second Drain hands everything off again" \
   drain.go \
   '	if !c.readiness.draining.CompareAndSwap(false, true) {' \
   '	if c.readiness.draining.Swap(true) && false {' \
-  'TestASecondDrainDoesNothing$' .
+  'TestASecondDrainDoesNothing$' ./tests
 
 mutate "Drain hides a failed departure announcement" \
   drain.go \
   '		problems = errors.Join(problems, fmt.Errorf("peercache: announcing departure: %w", err))' \
   '		_ = fmt.Errorf("peercache: announcing departure: %w", err)' \
-  'TestDrainReportsAFailedDepartureAndStillHandsOff$' .
+  'TestDrainReportsAFailedDepartureAndStillHandsOff$' ./tests
 
 mutate "a remote BatchGet returns nothing" \
   handler.go \
   '		out.Entries = append(out.Entries, wire.BatchEntry{' \
   '		_ = append(out.Entries, wire.BatchEntry{' \
-  'TestBatchGetAcrossNodes$' .
+  'TestBatchGetAcrossNodes$' ./tests
 
 mutate "a remote Exists is always false" \
   namespace.go \
@@ -1399,27 +1399,27 @@ mutate "a remote Exists is always false" \
   '	case err == nil:
 		return false, nil
 	case errors.Is(err, ErrNotFound):' \
-  'TestExistsAcrossNodes$' .
+  'TestExistsAcrossNodes$' ./tests
 
 mutate "remote latency is never observed" \
   remote.go \
   '			r.cache.remoteLatency.Observe(uint64(elapsed))' \
   '			_ = elapsed' \
-  'TestLatencyHistogramsRecordRemoteOperations$' .
+  'TestLatencyHistogramsRecordRemoteOperations$' ./tests
 
 mutate "lifecycle events are never delivered" \
   internal/actor/record.go \
   '		r.rt.opts.OnEvent(e)' \
   '		_ = e' \
-  'TestEventHandlerSeesEveryLifecycleEvent$' .
+  'TestEventHandlerSeesEveryLifecycleEvent$' ./tests
 
 # --- Decision 0024: WithSeeds joins ---
 
 mutate "seeds are never joined"   peercache.go   '	if len(resolved.Seeds) > 0 {
 		if err := resolved.Membership.Join(resolved.Seeds); err != nil {'   '	if false {
-		if err := resolved.Membership.Join(resolved.Seeds); err != nil {'   'TestWithSeedsJoinsThroughTheMembership$' .
+		if err := resolved.Membership.Join(resolved.Seeds); err != nil {'   'TestWithSeedsJoinsThroughTheMembership$' ./tests
 
-mutate "seeds without a membership are accepted"   internal/core/options.go   '	if len(o.Seeds) > 0 && o.Membership == nil {'   '	if false {'   'TestSeedsWithoutMembershipAreRejected$' .
+mutate "seeds without a membership are accepted"   internal/core/options.go   '	if len(o.Seeds) > 0 && o.Membership == nil {'   '	if false {'   'TestSeedsWithoutMembershipAreRejected$' ./tests
 
 # --- failure guarantees, part two: the fuzz targets and the checks on the build files ---
 #
@@ -1457,14 +1457,14 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
   .github/workflows/ci.yml \
   "-fuzz '^FuzzDecode\$' -fuzztime 60s" \
   "-fuzz FuzzDecode -fuzztime 60s" \
-  'TestFuzzTargetsNamedInCIExist' .
+  'TestFuzzTargetsNamedInCIExist' ./tests/repo
 
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
   '46 series come out of it' \
   '45 series come out of it' \
-  'TestApiDocMetricCountsAreCorrect' .
+  'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
 # the nineteen came to be missing in the first place.
@@ -1472,7 +1472,7 @@ mutate "a root file disappears from the repository map" \
   README.md \
   'handoff.go        Moves replicas on a membership change rather' \
   'handoff_go        Moves replicas on a membership change rather' \
-  'TestReadmeListsEveryRootFile' .
+  'TestReadmeListsEveryRootFile' ./tests/repo
 
 # --- typed namespaces (decision 0025) ---
 
@@ -1480,43 +1480,43 @@ mutate "one name may hold two types" \
   namespace.go \
   '	if n.valueType != t {' \
   '	if false {' \
-  'TestOneNameTwoTypesIsInvalid$' .
+  'TestOneNameTwoTypesIsInvalid$' ./tests
 
 mutate "a typed loader of the wrong type is accepted" \
   typed.go \
   'if spec := ns.opts.TypedLoader; spec != nil && spec.ValueType() != want {' \
   'if spec := ns.opts.TypedLoader; false && spec != nil {' \
-  'TestATypedLoaderOfTheWrongTypeIsInvalid$' .
+  'TestATypedLoaderOfTheWrongTypeIsInvalid$' ./tests
 
 mutate "WithLoader and WithTypedLoader together are accepted" \
   internal/core/options.go \
   '	if o.TypedLoader != nil && o.Loader != nil {' \
   '	if false {' \
-  'TestTypedLoaderAndLoaderConflict$' .
+  'TestTypedLoaderAndLoaderConflict$' ./tests
 
 mutate "the default typed codec is JSON" \
   typed.go \
   'const DefaultTypedCodec = codec.NameMsgPack' \
   'const DefaultTypedCodec = codec.NameJSON' \
-  'TestInvalidUTF8SurvivesTheDefaultCodec$' .
+  'TestInvalidUTF8SurvivesTheDefaultCodec$' ./tests
 
 mutate "a decode failure is not ErrCodec" \
   typed.go \
   'return zero, fmt.Errorf("peercache: decoding %q with %s: %v: %w", key, t.codec.Name(), err, ErrCodec)' \
   'return zero, fmt.Errorf("peercache: decoding %q with %s: %w", key, t.codec.Name(), err)' \
-  'TestAnUndecodableValueIsErrCodec$' .
+  'TestAnUndecodableValueIsErrCodec$' ./tests
 
 mutate "the typed loader is never installed" \
   peercache.go \
   '		ns.opts.Loader = opts.TypedLoader.Loader(valueCodec.Marshal)' \
   '		_ = opts.TypedLoader' \
-  'TestTypedGetOrLoadAcrossNodes$' .
+  'TestTypedGetOrLoadAcrossNodes$' ./tests
 
 mutate "a typed BatchGet drops what it decoded" \
   typed.go \
   '		out[key] = v' \
   '		_ = v' \
-  'TestTypedValuesRoundTripAcrossNodes$' .
+  'TestTypedValuesRoundTripAcrossNodes$' ./tests
 
 # A two-digit milestone's row. The map's row pattern was M[0-9], so M10 rows
 # were not counted at all until it became M[0-9]+; renaming one must be noticed.
@@ -1524,7 +1524,7 @@ mutate "a two-digit milestone row stops being counted" \
   docs/verification.md \
   '| M10 | a typed value set on one node reads back equal on every node through Get and BatchGet |' \
   '| X10 | a typed value set on one node reads back equal on every node through Get and BatchGet |' \
-  'TestAcceptanceMapCountsAreCorrect$' .
+  'TestAcceptanceMapCountsAreCorrect$' ./tests/repo
 
 # --- Question 42: a lost tombstone ---
 
@@ -1535,7 +1535,7 @@ mutate "a deletion no longer raises the version floor" \
 			sh.floor = e.version
 		}' \
   '		// docs/decisions/open.md question 42.' \
-  'TestALostDeleteDoesNotResurrectAnOlderValue$' .
+  'TestALostDeleteDoesNotResurrectAnOlderValue$' ./tests
 
 # --- Typed group functions ---
 
@@ -1543,7 +1543,7 @@ mutate "CallTyped does not check the registered types" \
   typed_group.go \
   '		if sig.arg != reflect.TypeFor[A]() || sig.result != reflect.TypeFor[R]() {' \
   '		if false && sig.arg != nil {' \
-  'TestCallTypedWithTheWrongTypesIsInvalid$' .
+  'TestCallTypedWithTheWrongTypesIsInvalid$' ./tests
 
 mutate "an undecodable typed argument is not ErrCodec" \
   typed_group.go \
@@ -1551,7 +1551,7 @@ mutate "an undecodable typed argument is not ErrCodec" \
 				name, reflect.TypeFor[A](), err, ErrCodec)' \
   '			return nil, fmt.Errorf("peercache: group function %q: decoding its argument as %v: %w",
 				name, reflect.TypeFor[A](), err)' \
-  'TestATypedGroupFuncRejectsAnUndecodableArgument$' .
+  'TestATypedGroupFuncRejectsAnUndecodableArgument$' ./tests
 
 mutate "ErrCodec stops surviving the gRPC hop" \
   transport/client.go \
@@ -1563,7 +1563,7 @@ mutate "typed signatures are never recorded" \
   typed_group.go \
   '		cc.typedFuncs.Store(name, typedSignature{arg: reflect.TypeFor[A](), result: reflect.TypeFor[R]()})' \
   '		_ = cc' \
-  'TestATypedGroupFuncRunsOnTheOwnerAcrossNodes$' .
+  'TestATypedGroupFuncRunsOnTheOwnerAcrossNodes$' ./tests
 
 # --- Code review findings ---
 
@@ -1572,10 +1572,10 @@ mutate "the peer handler checks ownership by the raw key" \
   handler.go \
   '		groupKey = ns.groupKeyFor(key)' \
   '		_ = ns' \
-  'TestAPartitionedNamespaceServesRemoteCallers$' .
+  'TestAPartitionedNamespaceServesRemoteCallers$' ./tests
 
 # BatchSet wrote into the calling node's own store, bypassing routing.
-mutate "BatchSet writes locally instead of routing"   namespace.go   '		if err := n.Set(ctx, key, val, ttl); err != nil {'   '		if err := (error)(nil); n.store.Set(key, n.encode(val), ttl) == 0 && err != nil {'   'TestBatchSetRoutesEachKeyToItsOwner$' .
+mutate "BatchSet writes locally instead of routing"   namespace.go   '		if err := n.Set(ctx, key, val, ttl); err != nil {'   '		if err := (error)(nil); n.store.Set(key, n.encode(val), ttl) == 0 && err != nil {'   'TestBatchSetRoutesEachKeyToItsOwner$' ./tests
 
 # A peer write to a namespace misconfigured on its owner reached a nil store
 # and panicked on the handler goroutine.
@@ -1584,7 +1584,7 @@ mutate "a misconfigured namespace's nil store is reachable from a peer"   handle
 		return nil, h.misconfigured(ns)
 	}
 	if !existed {'   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
-	if !existed {'   'TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash$' .
+	if !existed {'   'TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash$' ./tests
 
 # Compression across nodes: the wire and L1 carry plain values, the stores
 # framed ones. Each side once got the other's form.
@@ -1598,17 +1598,17 @@ mutate "a remote Get unframes a value the owner already unframed"   namespace.go
 	return n.decode(value)
 }
 
-'   'TestCompressedValuesSurviveEveryRemotePath$' .
+'   'TestCompressedValuesSurviveEveryRemotePath$' ./tests
 
-mutate "an adopted hand-off is framed a second time"   handler.go   '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {'   '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {'   'TestACompressedHandOffIsNotFramedTwice$' .
+mutate "an adopted hand-off is framed a second time"   handler.go   '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {'   '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {'   'TestACompressedHandOffIsNotFramedTwice$' ./tests
 
 # A load that raced a Set stored its older value over the newer one.
 mutate "a load overwrites a write that raced it"   internal/store/store.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
 		return old.val, false
-	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' .
+	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' ./tests
 
 # A replicated tombstone removed the replica's copy whatever its stamp.
-mutate "a stale tombstone deletes a newer replica"   internal/replication/replica.go   '	if !held || e.Stamp.NewerThan(stamp) {'   '	if !held {'   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' .
+mutate "a stale tombstone deletes a newer replica"   internal/replication/replica.go   '	if !held || e.Stamp.NewerThan(stamp) {'   '	if !held {'   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' ./tests
 
 # A timer whose turn could not be queued was dropped, its entry left behind.
 mutate "a timer due on a full mailbox is dropped"   internal/actor/record.go   '	if r.timers[gt.name] == gt && r.act != nil {
@@ -1624,10 +1624,10 @@ mutate "a timer naming no function keeps its entry"   internal/actor/record.go  
 # Leaks found by the code review.
 mutate "Close leaves each L1 tier's goroutine running"   peercache.go   '			if ns.l1 != nil {
 				if err := ns.l1.Close(); err != nil {'   '			if false {
-				if err := ns.l1.Close(); err != nil {'   'TestCloseReleasesTheL1Tier$' .
+				if err := ns.l1.Close(); err != nil {'   'TestCloseReleasesTheL1Tier$' ./tests
 
 mutate "a failed New leaves the sweep ticker armed"   peercache.go   '				c.ticker.Stop()
-				_ = groups.Close(context.Background())'   '				_ = groups.Close(context.Background())'   'TestAFailedNewLeavesNothingRunning$' .
+				_ = groups.Close(context.Background())'   '				_ = groups.Close(context.Background())'   'TestAFailedNewLeavesNothingRunning$' ./tests
 
 # A snapshot page that copies every candidate instead of its page.
 mutate "a snapshot page copies the whole store"   internal/store/store.go   '	if more {

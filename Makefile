@@ -69,9 +69,9 @@ test-race:
 ## which reports the machine's load, not the cache's latency. Measured idle it
 ## is 478ns; measured alongside everything else, 1.87us.
 latency:
-	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1 -timeout $(TIMEOUT)
+	PEERCACHE_LATENCY_GATE=1 $(GO) test ./tests -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1 -timeout $(TIMEOUT)
 	@echo '--- async replication loss window (separate process: its cluster perturbs the budgets above) ---'
-	PEERCACHE_LATENCY_GATE=1 $(GO) test . -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1 -timeout $(TIMEOUT)
+	PEERCACHE_LATENCY_GATE=1 $(GO) test ./tests -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1 -timeout $(TIMEOUT)
 
 vet:
 	$(GO) vet $(PKGS)
@@ -120,7 +120,7 @@ bench-save:
 	$(GO) test $(PKGS) -run '^$$' -bench . -benchmem -benchtime $(BENCHTIME) -count $(BENCHCOUNT) | tee bench.txt
 
 cover:
-	$(GO) test $(PKGS) -covermode atomic -coverprofile coverage.out -timeout $(TIMEOUT)
+	$(GO) test $(PKGS) -coverpkg ./... -covermode atomic -coverprofile coverage.out -timeout $(TIMEOUT)
 	$(GO) tool cover -func coverage.out | tail -n 1
 
 fmt:

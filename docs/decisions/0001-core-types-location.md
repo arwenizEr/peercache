@@ -61,7 +61,7 @@ alternative is a cycle.
 
 > No package under `internal/` may import the root `peercache` package.
 
-Enforced by `TestInternalPackagesDoNotImportRoot` in `discipline_test.go`.
+Enforced by `TestInternalPackagesDoNotImportRoot` in `tests/repo/discipline_test.go`.
 
 `internal/testkit` follows the same rule, which has a useful side effect: the
 harness is written against the same interfaces the real implementations satisfy,

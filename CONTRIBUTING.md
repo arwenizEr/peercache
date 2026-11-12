@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for looking. PeerCache is small on purpose and strict on purpose; this page
-is the strict part. Most of it is enforced by tests in `discipline_test.go`, so a
+is the strict part. Most of it is enforced by tests in `tests/repo/discipline_test.go`, so a
 change that breaks a rule usually fails CI with a message saying which one.
 
 ## Before you start

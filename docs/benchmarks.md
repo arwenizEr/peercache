@@ -752,7 +752,7 @@ Measured on Machine A.
 docs/design.md §4 asks for "24h at target throughput, memory flat".
 
 **This was run for 2 minutes, not 24 hours.** The harness takes any duration —
-`PEERCACHE_SOAK=24h go test . -run TestSoak -timeout 25h` — and CI runs it for
+`PEERCACHE_SOAK=24h go test ./tests -run TestSoak -timeout 25h` — and CI runs it for
 seconds as a regression gate. What is recorded here is what was actually
 executed, because a 24-hour claim from a 2-minute run would make every other
 number in this file suspect.

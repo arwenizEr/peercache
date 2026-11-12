@@ -64,7 +64,7 @@ jobs:
         # is not the reference machine the criterion was measured on.
         env:
           PEERCACHE_LATENCY_GATE: shared
-        run: go test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1
+        run: go test ./tests -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1
 
       # A separate invocation, not another name in the -run above. This test
       # stands up its own gRPC cluster, and sharing a process with the latency
@@ -76,7 +76,7 @@ jobs:
       - name: async replication loss window
         env:
           PEERCACHE_LATENCY_GATE: shared
-        run: go test . -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1
+        run: go test ./tests -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1
 
       - name: examples run
         run: |
@@ -198,7 +198,7 @@ jobs:
 
       - name: cover
         run: |
-          go test ./... -covermode atomic -coverprofile coverage.out -timeout 300s
+          go test ./... -coverpkg ./... -covermode atomic -coverprofile coverage.out -timeout 300s
           go tool cover -func coverage.out | tail -n 1
 
       - uses: actions/upload-artifact@v4
