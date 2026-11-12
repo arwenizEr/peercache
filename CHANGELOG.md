@@ -7,6 +7,21 @@ change the public API.
 
 ## [Unreleased]
 
+### Removed
+
+- `WithBindAddr`. It set a field nothing dialled. `Stats().Self` now comes from
+  the membership authority, which carries the address peers actually use.
+- `ErrStateEscaped`, which nothing returned. A `GroupState` used outside its
+  turn is still caught and counted in `Stats().StateEscapes`.
+- `EventEvict`, which nothing emitted.
+- `PressureCheckInterval` from the public API; the interval is unchanged.
+
+### Fixed
+
+- Tests that passed only on a warm module cache or a fast machine: the
+  external-module build, three idle-deactivation tests, and the remote latency
+  gate on shared CI runners (`PEERCACHE_LATENCY_GATE=shared`).
+
 ## [0.1.0] - 2026-11-12
 
 The first release. Everything below is new.
