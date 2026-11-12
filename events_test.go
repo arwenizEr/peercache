@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // TestEventHandlerSeesEveryLifecycleEvent covers WithEventHandler, which no

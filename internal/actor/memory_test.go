@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/actor"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/actor"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // M2 memory acceptance parameters, from SPEC.md section 4.

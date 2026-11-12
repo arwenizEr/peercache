@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // The real clock is thin, and the tests for it are correspondingly thin. What

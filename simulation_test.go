@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // Deterministic simulation: one seed drives an entire fault schedule, and the

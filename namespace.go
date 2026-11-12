@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/codec"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/l1"
-	"github.com/peercache/peercache/internal/singleflight"
-	"github.com/peercache/peercache/internal/store"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/l1"
+	"github.com/arwenizEr/peercache/internal/singleflight"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // Namespace is a handle to a named keyspace (SPEC.md section 3.1).

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // TestALostDeleteDoesNotResurrectAnOlderValue is open question 42.

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/metrics"
+	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
 // The tests in this file enforce the engineering rules from CLAUDE.md that no
@@ -203,7 +203,7 @@ func TestNoLogPackage(t *testing.T) {
 // internal/core worth having. The day this fails is the day the import cycle
 // comes back.
 func TestInternalPackagesDoNotImportRoot(t *testing.T) {
-	const rootImport = `"github.com/peercache/peercache"`
+	const rootImport = `"github.com/arwenizEr/peercache"`
 	walkGoFiles(t, func(path, content string) {
 		if !strings.HasPrefix(path, "internal/") || strings.HasSuffix(path, "_test.go") {
 			return

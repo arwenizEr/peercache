@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // These tests are in package wire rather than wire_test because validate is the

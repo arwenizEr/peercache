@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // TestNilContextDoesNotPanic covers every exported method that takes a context.

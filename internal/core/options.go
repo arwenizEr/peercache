@@ -5,7 +5,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // Options is the resolved configuration of a Cache.

@@ -1,6 +1,6 @@
 package peercache
 
-import "github.com/peercache/peercache/internal/core"
+import "github.com/arwenizEr/peercache/internal/core"
 
 // Sentinel errors. Test with errors.Is, never by comparing strings.
 //

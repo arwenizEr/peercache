@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // record is the addressable half of a group: identity, state and timer

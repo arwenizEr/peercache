@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // TestFreeLoopbackPortReturnsABindablePort is the regression test for the bug

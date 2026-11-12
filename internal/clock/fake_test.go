@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // newFake returns a fake clock whose misuse reports fail the test, which is how

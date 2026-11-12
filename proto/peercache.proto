@@ -18,7 +18,7 @@ syntax = "proto3";
 
 package peercache.v1;
 
-option go_package = "github.com/peercache/peercache/proto;peercachev1";
+option go_package = "github.com/arwenizEr/peercache/proto;peercachev1";
 
 // Peer is the single service every pod both serves and dials.
 //

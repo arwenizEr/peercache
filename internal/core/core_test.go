@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // TestNodeCloneIsDeep is small and load-bearing. Nodes are handed out of

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/testkit"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // These tests exist because the M7 mutation audit found that they did not.

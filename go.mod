@@ -1,4 +1,4 @@
-module github.com/peercache/peercache
+module github.com/arwenizEr/peercache
 
 go 1.25.0
 

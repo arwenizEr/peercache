@@ -6,10 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/replication"
-	"github.com/peercache/peercache/internal/wire"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // handoffQueue bounds pending replica hand-offs.

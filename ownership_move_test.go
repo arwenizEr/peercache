@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // The retry a data path makes when ownership moves under it — ask, be told

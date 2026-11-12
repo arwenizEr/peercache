@@ -7,7 +7,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // scoredNode pairs a member with the precomputed hash of its identity, so that

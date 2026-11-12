@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/wire"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // router resolves ownership and issues peer requests.

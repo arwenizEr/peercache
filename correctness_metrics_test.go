@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // SPEC.md's M7 bullet names five correctness metrics by name: split-brain

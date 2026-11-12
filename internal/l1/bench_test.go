@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/l1"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/l1"
 )
 
 func benchCache(b *testing.B, capacity int) *l1.Cache {

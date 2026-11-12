@@ -18,9 +18,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/membership"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/membership"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 func main() {
@@ -83,8 +83,8 @@ func TestAnExternalModuleCanBuildACluster(t *testing.T) {
 
 	dir := t.TempDir()
 	goMod := "module example.com/app\n\ngo 1.25\n\n" +
-		"require github.com/peercache/peercache v0.0.0\n\n" +
-		"replace github.com/peercache/peercache => " + filepath.ToSlash(repo) + "\n"
+		"require github.com/arwenizEr/peercache v0.0.0\n\n" +
+		"replace github.com/arwenizEr/peercache => " + filepath.ToSlash(repo) + "\n"
 	for name, body := range map[string]string{
 		"go.mod":  goMod,
 		"go.sum":  string(sum),

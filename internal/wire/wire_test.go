@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/wire"
 )
 
 // TestEveryMessageRoundTrips is the codec contract applied to each message.

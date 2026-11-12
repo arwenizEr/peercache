@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // DefaultActivationDelay is how long a node waits, after a membership change,

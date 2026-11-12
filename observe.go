@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/peercache/peercache/internal/metrics"
+	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
 // MetricKind classifies an exported series.

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/peercache/peercache/internal/wire"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // Router routes typed messages to the owner of the group each belongs to

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // ttlFabric is a three-node cluster at RF=2 with one key written under a TTL,

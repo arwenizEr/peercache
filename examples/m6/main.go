@@ -32,12 +32,12 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/rebalance"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/rebalance"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // Detection must beat the rate at which nodes come and go, or a cluster never

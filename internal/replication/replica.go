@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Store holds copies of keys this node does not own.

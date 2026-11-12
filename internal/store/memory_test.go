@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/store"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // entrySize is what the store is documented to charge for one entry.

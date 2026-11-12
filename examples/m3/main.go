@@ -31,10 +31,10 @@ import (
 
 	"github.com/hashicorp/memberlist"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/membership"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/membership"
 )
 
 // activationDelay is how long a node defers a group it has just acquired. The

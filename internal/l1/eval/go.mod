@@ -1,4 +1,4 @@
-module github.com/peercache/peercache/internal/l1/eval
+module github.com/arwenizEr/peercache/internal/l1/eval
 
 go 1.26.5
 

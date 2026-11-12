@@ -5,7 +5,7 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // MaxSliceElements caps how many elements a decoded message may contain.

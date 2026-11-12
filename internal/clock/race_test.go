@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // The tests in this file exist to make specific interleavings happen. The race

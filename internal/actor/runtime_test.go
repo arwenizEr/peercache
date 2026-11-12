@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/actor"
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/actor"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 func newRuntime(t *testing.T, opts ...func(*actor.Options)) (*actor.Runtime, *clock.Fake) {

@@ -1,8 +1,8 @@
 package peercache
 
 import (
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // The types below are aliases, not wrappers. peercache.Node and the internal
@@ -110,7 +110,7 @@ type Stats = core.Stats
 // Clock is the injected time source (SPEC.md section 3.6).
 //
 // Nothing in the library reads the wall clock directly. Supply
-// [github.com/peercache/peercache/internal/clock.Real] in production; the test
+// [github.com/arwenizEr/peercache/internal/clock.Real] in production; the test
 // harness supplies a fake whose time only moves when a test moves it.
 type Clock = clock.Clock
 

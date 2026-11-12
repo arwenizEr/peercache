@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Kind classifies a metric for an exporter that cares about the distinction.

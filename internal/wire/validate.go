@@ -3,7 +3,7 @@ package wire
 import (
 	"fmt"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // MaxNestingDepth caps how deeply a message may nest.

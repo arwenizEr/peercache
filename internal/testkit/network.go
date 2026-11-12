@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Wildcard matches any node in a fault rule, so that a rule can be set for one

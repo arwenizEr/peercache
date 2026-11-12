@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/peercache/peercache/internal/codec"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // compressible returns a payload LZ4 can shrink.

@@ -6,8 +6,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
 )
 
 // M3 acceptance parameters, from SPEC.md section 4.

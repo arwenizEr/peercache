@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // benchCache builds a cache on the real clock, since a benchmark measures real

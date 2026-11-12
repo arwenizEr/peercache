@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/testkit"
-	"github.com/peercache/peercache/membership"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/membership"
 )
 
 // These are the only tests in the repository that run two real cache instances

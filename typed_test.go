@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // user is a value with every shape a codec has to get right: strings, numbers,

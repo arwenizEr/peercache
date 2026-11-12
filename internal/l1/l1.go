@@ -10,8 +10,8 @@ import (
 	"github.com/cespare/xxhash/v2"
 	otter "github.com/maypok86/otter"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // writeStripes is the number of locks guarding read-modify-write sequences.

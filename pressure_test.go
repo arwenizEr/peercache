@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // pressureSlack is how far past its budget a cache may be observed between two

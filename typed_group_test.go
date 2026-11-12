@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 type cartItem struct {

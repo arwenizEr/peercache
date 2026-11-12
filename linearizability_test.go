@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/anishathalye/porcupine"
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // Per-group serializability was, until M8, asserted by construction: there is

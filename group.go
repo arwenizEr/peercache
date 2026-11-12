@@ -3,7 +3,7 @@ package peercache
 import (
 	"context"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Group is a handle to a named collection of keys guaranteed to share an owner

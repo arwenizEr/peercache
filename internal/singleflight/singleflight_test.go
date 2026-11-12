@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/singleflight"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/singleflight"
 )
 
 func TestDoReturnsTheLoadersResult(t *testing.T) {

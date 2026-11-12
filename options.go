@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Option configures a [Cache] at construction. Options apply in order, so a

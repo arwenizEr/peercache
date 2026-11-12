@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // Drain paths a coverage report showed no test had run.

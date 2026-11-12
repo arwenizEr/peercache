@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // M1 acceptance parameters, from SPEC.md section 4.

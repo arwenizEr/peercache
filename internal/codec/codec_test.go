@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/peercache/peercache/internal/codec"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // TestBuiltinsAreRegistered guards the init functions. They install codecs by

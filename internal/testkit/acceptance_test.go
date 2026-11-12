@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // acceptanceBudget is the wall-clock ceiling from SPEC.md section 4, M0.

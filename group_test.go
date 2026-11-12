@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 func TestGroupSetGetDelete(t *testing.T) {

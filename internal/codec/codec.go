@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Codec converts values to and from bytes.

@@ -3,7 +3,7 @@ package metrics_test
 import (
 	"testing"
 
-	"github.com/peercache/peercache/internal/metrics"
+	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
 // The cost of an observation decides whether instrumentation can be on by

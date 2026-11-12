@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/peercache/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/codec"
 )
 
 // typedSignature is what a typed group function takes and returns, recorded at

@@ -3,7 +3,7 @@ package wire_test
 import (
 	"testing"
 
-	"github.com/peercache/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/internal/wire"
 )
 
 // FuzzDecodeEveryMessage is the exhaustive companion to FuzzDecode.

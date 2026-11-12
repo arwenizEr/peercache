@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // M7 asks for a "load and soak test: 24h at target throughput, memory flat".

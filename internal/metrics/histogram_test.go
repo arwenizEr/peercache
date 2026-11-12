@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/peercache/peercache/internal/metrics"
+	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
 // TestQuantilesBoundTheTruth is the property that makes a bucketed histogram

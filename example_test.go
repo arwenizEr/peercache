@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // Example shows the whole M0 surface: construct, configure a namespace,

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy is the M8 simulation's

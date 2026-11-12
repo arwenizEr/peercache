@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // Ticker.Reset had no test at all until this file, which is worse than it

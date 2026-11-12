@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/replication"
 )
 
 func entry(from string, epoch, version uint64, val string) replication.Entry {

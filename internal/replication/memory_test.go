@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/peercache/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/replication"
 )
 
 func charge(key string, e replication.Entry) int64 {

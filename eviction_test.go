@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // TestEvictionDoesNotDropTheLastCopy guards an ordering hazard that the code

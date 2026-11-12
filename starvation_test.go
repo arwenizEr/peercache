@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // TestAStarvedNodeSlowsOnlyItsOwnKeys is M9's CPU starvation criterion: a node

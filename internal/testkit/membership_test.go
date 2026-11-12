@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // wantMembers asserts one node's view, by ID, in sorted order.

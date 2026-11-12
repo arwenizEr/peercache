@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // FuzzPartitionByPrefix asserts the four properties routing depends on.

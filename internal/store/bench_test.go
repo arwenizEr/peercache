@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/store"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // benchStore builds a store on the real clock with the sweeper disabled, so a

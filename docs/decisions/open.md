@@ -75,13 +75,17 @@ rejections, transfer failures). Those are additive.
 
 ---
 
-## 4. Module path — M0, placeholder
+## 4. Module path — M0, placeholder; resolved before the first tag
 
 **Picked:** `github.com/peercache/peercache`.
 
 **What would force a change:** the repository actually being published
 somewhere. This is a single `go mod edit -module` plus a find-and-replace, and
 it should happen before the first tag, not after.
+
+**Resolved.** The module is `github.com/arwenizEr/peercache`, changed before any
+tag. Earlier records that quote compiler output keep the old path, because they
+are quotations.
 
 ---
 

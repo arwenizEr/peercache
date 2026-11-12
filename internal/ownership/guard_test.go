@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 func newGuard(t *testing.T, self core.Node, delay time.Duration) (*ownership.Guard, *ownership.Table, *clock.Fake) {

@@ -37,11 +37,11 @@ import (
 
 	"github.com/hashicorp/memberlist"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/membership"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/membership"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // budget bounds every wait, so a broken example reports rather than hangs.

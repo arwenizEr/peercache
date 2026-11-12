@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // TLSConfig configures mutual TLS between peers.

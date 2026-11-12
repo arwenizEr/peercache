@@ -5,7 +5,7 @@ import (
 
 	"github.com/pierrec/lz4/v4"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // NameLZ4 is the registry key for the LZ4 compressor.

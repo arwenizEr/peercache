@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/rebalance"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/rebalance"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // M6 acceptance, from SPEC.md §4:

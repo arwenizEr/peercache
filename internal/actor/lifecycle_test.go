@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/actor"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/actor"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // waitFor spins until cond holds, bounded so a regression fails with a message

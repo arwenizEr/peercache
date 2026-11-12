@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/singleflight"
+	"github.com/arwenizEr/peercache/internal/singleflight"
 )
 
 // BenchmarkUncontended measures the cost of collapsing when there is nothing to

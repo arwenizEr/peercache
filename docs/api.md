@@ -914,9 +914,9 @@ ownership from it: rendezvous hashing over the current view, stamped with the
 view's epoch. Without one, the node is a cluster of one and owns everything,
 which is the correct answer rather than a special case.
 
-`github.com/peercache/peercache/membership` provides a gossip-backed
+`github.com/arwenizEr/peercache/membership` provides a gossip-backed
 implementation over hashicorp/memberlist, and
-`github.com/peercache/peercache/transport` the gRPC transport. Both are public
+`github.com/arwenizEr/peercache/transport` the gRPC transport. Both are public
 packages, so an application imports them directly. They were under `internal/`
 until after M9, where Go refuses to let another module import them — so the
 documented way to build a cluster compiled only inside this repository.

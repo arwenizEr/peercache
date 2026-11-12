@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/peercache/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/codec"
 )
 
 type benchValue struct {

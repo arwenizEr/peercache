@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/peercache/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/internal/wire"
 )
 
 // The message codec sits on every remote operation, twice — once to encode the

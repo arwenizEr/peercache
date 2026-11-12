@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/store"
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/store"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // This file tests the store against a reference implementation under randomised

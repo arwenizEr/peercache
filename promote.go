@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peercache/peercache/internal/ownership"
-	"github.com/peercache/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/replication"
 )
 
 // promoter reacts to membership changes by reconciling what this node holds

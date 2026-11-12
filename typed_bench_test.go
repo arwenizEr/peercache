@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/codec"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/codec"
 )
 
 // session is a typical small cached value: a few fields, under 100 bytes encoded.

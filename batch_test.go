@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache"
+	"github.com/arwenizEr/peercache"
 )
 
 // countingContext reports success for the first n calls to Err and failure

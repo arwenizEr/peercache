@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // These tests bind real loopback sockets and speak real gRPC.

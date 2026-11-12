@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/testkit"
+	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
 // BenchmarkClusterPartitionHeal measures the M0 acceptance scenario end to end.

@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/peercache/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/internal/wire"
 )
 
 // everyMessage returns a fresh zero value of each message type the protocol can

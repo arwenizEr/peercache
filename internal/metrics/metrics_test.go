@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/metrics"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
 // TestEveryStatsFieldIsExported is the test this package exists for.

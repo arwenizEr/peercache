@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/peercache/peercache/internal/rebalance"
+	"github.com/arwenizEr/peercache/internal/rebalance"
 )
 
 // Planning runs once per membership change, over the keys a node holds. It is

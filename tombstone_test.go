@@ -6,10 +6,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/peercache/peercache"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/wire"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/wire"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // TestAStaleTombstoneDoesNotDeleteANewerReplica: found by code review. A

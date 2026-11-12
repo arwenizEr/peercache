@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/peercache/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/codec"
 )
 
 // The frame parser is the only place in this library that interprets bytes it

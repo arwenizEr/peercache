@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
 )
 
 // Move is one key's change of home.

@@ -3,8 +3,8 @@ package wire
 import (
 	"fmt"
 
-	"github.com/peercache/peercache/internal/codec"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/codec"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // Encoding is the codec used for message envelopes.

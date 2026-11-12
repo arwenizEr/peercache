@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/transport"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // These measure the transport alone: an echo handler, no store, no ownership,

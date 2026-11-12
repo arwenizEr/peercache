@@ -13,8 +13,8 @@ import (
 
 	"github.com/hashicorp/memberlist"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // watchBuffer is the depth of each Watch channel. A watcher slower than this

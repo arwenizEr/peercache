@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/store"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // newStore builds a store with the background sweeper disabled, so that expiry

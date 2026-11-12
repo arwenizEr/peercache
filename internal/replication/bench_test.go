@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/replication"
 )
 
 // The replica store sits on the write path of every replicated namespace: an

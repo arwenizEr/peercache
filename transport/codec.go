@@ -6,7 +6,7 @@ import (
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/mem"
 
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // codecName is the content subtype this transport negotiates.

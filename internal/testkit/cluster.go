@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/peercache/peercache/internal/clock"
-	"github.com/peercache/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/core"
 )
 
 // ClusterConfig configures [NewCluster].

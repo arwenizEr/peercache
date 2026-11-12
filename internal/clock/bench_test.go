@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/internal/clock"
 )
 
 // BenchmarkFakeAdvanceIdleHour is the claim the whole harness rests on: with no

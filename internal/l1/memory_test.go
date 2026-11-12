@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/l1"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/l1"
 )
 
 func l1Charge(key string, val []byte) int64 {
