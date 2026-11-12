@@ -3,7 +3,7 @@
 // This file is normative documentation, not the source of generated Go. There
 // is no protoc step in this build and no .pb.go in the tree. See
 // docs/decisions/0014-grpc-without-protobuf.md for the argument; the short
-// version is that CLAUDE.md fixes every pod to the same binary, which removes
+// version is that docs/design.md fixes every pod to the same binary, which removes
 // the cross-language and mixed-schema benefits protobuf exists to provide,
 // while internal/codec already supplies a fuzzed, framed, registered codec for
 // exactly these bodies.
@@ -73,7 +73,7 @@ service Peer {
 
   // Invalidate tells a peer that a key it may be caching is stale. It is a
   // latency optimisation and nothing more — correctness never depends on
-  // one of these arriving. See CLAUDE.md non-negotiable 6.
+  // one of these arriving. See design principle 6 (docs/design.md).
   rpc Invalidate(InvalidateRequest) returns (InvalidateResponse);
 }
 
@@ -162,7 +162,7 @@ message BatchEntry {
 message CallRequest {
   string group = 1;
   // func_name selects a function registered at startup. Closures never
-  // cross the network; see CLAUDE.md non-negotiable 3.
+  // cross the network; see design principle 3 (docs/design.md).
   string func_name = 2;
   bytes args = 3;
   uint64 epoch = 4;
@@ -190,7 +190,7 @@ message GroupBatch {
 message SubmitResponse {
   // failures is sparse: a group that applied cleanly has no entry. Partial
   // failure is real here — there is no cross-group atomicity, ever
-  // (CLAUDE.md), so the response says which groups did not take.
+  // (docs/design.md), so the response says which groups did not take.
   repeated GroupFailure failures = 1;
 }
 

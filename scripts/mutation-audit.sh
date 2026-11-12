@@ -3,7 +3,7 @@
 # Mutation audit: break each core invariant on purpose and check that the test
 # claiming to guard it actually fails.
 #
-# CLAUDE.md requires every acceptance criterion to be "covered by a named test
+# docs/design.md requires every acceptance criterion to be "covered by a named test
 # that would fail if the behavior regressed". A test that exists is not evidence
 # of that — it can pass because the behaviour is right, or because it never
 # really looked. This tells the two apart.

@@ -1,11 +1,11 @@
 # 0013 — The Go floor moves from 1.23 to 1.25
 
-**Status:** accepted, M3 — **deviates from CLAUDE.md**
+**Status:** accepted, M3 — **deviates from docs/design.md**
 **Affects:** `go.mod`, and every consumer of this library
 
 ## The deviation
 
-CLAUDE.md's engineering rules open with "Go 1.23+". This milestone raises the
+docs/design.md's engineering rules open with "Go 1.23+". This milestone raises the
 floor to **1.25**. That is a real change to the contract with anyone embedding
 the library, so it is recorded rather than absorbed silently.
 

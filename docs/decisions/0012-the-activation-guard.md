@@ -126,7 +126,7 @@ the one it prevents.
 
 **Blocking inside `CanActivate` until the window closes.** Superficially nicer:
 the caller just waits. Rejected because it consumes the caller's deadline budget
-invisibly and turns a fast retryable error into a slow one. CLAUDE.md's rule
+invisibly and turns a fast retryable error into a slow one. docs/design.md's rule
 that nothing blocks past its context deadline is easier to keep when the library
 does not block at all.
 

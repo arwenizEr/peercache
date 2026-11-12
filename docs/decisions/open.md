@@ -109,7 +109,7 @@ not to make the channel lossless.
 
 ## 6. Real-clock tests wait on real timers — M0, accepted
 
-CLAUDE.md forbids `time.Sleep` in tests. `internal/clock/real_test.go` blocks on
+docs/design.md forbids `time.Sleep` in tests. `internal/clock/real_test.go` blocks on
 a real 1 ms timer, which is a wait by another name.
 
 **Picked:** allow it, only in the tests for the real clock itself, only on
@@ -272,7 +272,7 @@ approximation.
 ## 15. otter v1 is a maintenance branch — M1, accepted
 
 `internal/l1` uses `maypok86/otter` v1 rather than v2 because v2 requires Go
-1.24 and CLAUDE.md fixes the floor at 1.23. v1 measured marginally faster on the
+1.24 and docs/design.md fixes the floor at 1.23. v1 measured marginally faster on the
 read path, so nothing was given up on performance.
 
 **What would force a change:** the project's Go floor moving to 1.24, at which
@@ -851,7 +851,7 @@ Not open questions. Listed so that nobody reopens them by accident:
 
 Every context-taking method in the public API began by calling `ctx.Err()`.
 `context.Context` is an interface, so `Close(nil)` was a nil-pointer dereference
-inside the actor runtime — a panic crossing an API boundary, which CLAUDE.md
+inside the actor runtime — a panic crossing an API boundary, which docs/design.md
 forbids without carving out an exception for caller error.
 
 It was found by accident: a throwaway program written to count exported metric
@@ -985,7 +985,7 @@ sync replication fails the write.
 refused. The difference is entirely whether the failure detector has already
 removed the peers from the view.
 
-This is not simply the split-brain caveat. CLAUDE.md non-negotiable 5 already
+This is not simply the split-brain caveat. design principle 5 (docs/design.md) already
 says a partition can produce two activations. What is new is the
 *acknowledgement*: README and `docs/api.md` both say synchronous replication
 closes the async data-loss window, and a caller who asked for RF=3 sync
@@ -1030,7 +1030,7 @@ case this question is about, and nothing else.
 
 **Options 2 and 3 are still open, deliberately.** Both change what a caller sees,
 and the choice between them is an AP/CP decision: option 3 converts an available
-system into an unavailable one during a partition. CLAUDE.md's rule is to pick
+system into an unavailable one during a partition. docs/design.md's rule is to pick
 the simplest reversible option and not to guess silently on anything touching
 correctness under failure — counting is reversible, refusing is not, and the
 counter now makes the window visible enough to decide on evidence rather than on
@@ -1080,7 +1080,7 @@ and zero losses. The hazard is real; it was not this.
 
 The remaining explanation, and the one the schedule supports, is the documented
 AP window. Writes acknowledged while the cluster was split are not promised to
-survive the heal on either side — CLAUDE.md non-negotiable 5 says conflicting
+survive the heal on either side — design principle 5 (docs/design.md) says conflicting
 writes are detected, not merged, so the losing side's acknowledged write is
 discarded by design. Filtering only on the writer's *view size* was not enough,
 because a writer on the larger side of a split sees enough members to satisfy RF
@@ -1377,7 +1377,7 @@ place.
 
 It needs three things at once — a full queue, a rewrite of the deleted key, and
 a failover before the key is written again — so it is rare. It is also exactly
-what CLAUDE.md decision 6 rules out: correctness depending on a message arriving.
+what design principle 6 (docs/design.md) rules out: correctness depending on a message arriving.
 
 **The fix is the mechanism M9 already built.** `store.Shed` raises a per-shard
 version floor so a rewrite outranks any copy a replica may hold. Raising the same
@@ -1425,7 +1425,7 @@ data, which would be a new event source rather than this constant.
 ## 44. External persistence — post-M10, designed, not built
 
 Asked whether PeerCache should write through to an external resilient store.
-CLAUDE.md decision 4 rules out writing to disk in v1 and allows persistence
+design principle 4 (docs/design.md) rules out writing to disk in v1 and allows persistence
 hooks to be designed for; docs/design.md section 5 defers WAL, snapshots and backup.
 
 **Picked:** a design, `docs/decisions/0026-external-persistence-design.md`, and

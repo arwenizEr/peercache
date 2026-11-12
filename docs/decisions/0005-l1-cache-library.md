@@ -76,7 +76,7 @@ about six times faster than an exact LRU behind a single mutex. Under
 parallelism that gap widens, because golang-lru's single mutex serialises reads
 that otter handles without one.
 
-**otter v2 requires Go 1.24; CLAUDE.md fixes the floor at 1.23.** v1 is the same
+**otter v2 requires Go 1.24; docs/design.md fixes the floor at 1.23.** v1 is the same
 S3-FIFO-derived design from before the module raised its floor, needs Go 1.19,
 and is marginally *faster* on the read path. Adopting v2 would mean raising the
 floor for every consumer of this library to satisfy an internal implementation

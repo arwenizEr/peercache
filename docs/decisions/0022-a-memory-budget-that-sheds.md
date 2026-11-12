@@ -23,7 +23,7 @@ down to nine tenths of it, in this order:
    exactly, a partial one only once the library's goroutine catches up — late
    enough that the next tier would be shed for pressure already relieved.
 2. **Replicas.** Lowers that key's replication factor; the owner still has it.
-3. **Owned data.** Loses the key. CLAUDE.md decision 4 makes state lossy by
+3. **Owned data.** Loses the key. design principle 4 (docs/design.md) makes state lossy by
    design, and every namespace is already required to tolerate loss or rebuild
    from a loader.
 
@@ -58,7 +58,7 @@ replicas the tombstone a `Delete` sends — asynchronously, since a node relievi
 pressure must not wait on the network — which frees their memory too. And each
 store shard remembers the highest version it ever shed, so a first write to an
 absent key in that shard starts above it. The second is what correctness rests
-on; the first is memory relief. CLAUDE.md decision 6 says correctness must not
+on; the first is memory relief. design principle 6 (docs/design.md) says correctness must not
 depend on a message arriving, and here it does not.
 
 ## Catch-up stops rather than thrashes

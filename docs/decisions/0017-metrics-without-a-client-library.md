@@ -18,7 +18,7 @@ that drags in a metrics client imposes that choice on every importer — includi
 the ones already using the other one, or a third, or none. The cost is paid by
 people who get no benefit from it.
 
-**The dependency budget is deliberately small.** CLAUDE.md permits memberlist,
+**The dependency budget is deliberately small.** docs/design.md permits memberlist,
 gRPC, a cache library, a codec, and test dependencies, and requires a note in
 `docs/decisions/` before anything else. `client_golang` and the OTel SDK are
 both substantial transitive graphs — larger, between them, than everything the

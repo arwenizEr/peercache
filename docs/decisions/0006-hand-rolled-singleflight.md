@@ -17,7 +17,7 @@ three reasons, in order of weight.
 When the shared call panics, that package re-panics in each waiting goroutine.
 A loader is application code that talks to a database. A nil-pointer bug in it
 would become a panic in a thousand unrelated goroutines that merely asked for a
-value, and CLAUDE.md forbids panics in library paths.
+value, and docs/design.md forbids panics in library paths.
 
 Here a panicking loader is recovered and converted to `ErrLoaderPanic` for
 everyone who was waiting — a result they can handle. `runtime.Goexit` (what
@@ -43,7 +43,7 @@ address what context the shared call runs under.
 
 ## 3. Its current releases require Go 1.25
 
-CLAUDE.md fixes the floor at Go 1.23. Pinning an old release to dodge that is a
+docs/design.md fixes the floor at Go 1.23. Pinning an old release to dodge that is a
 maintenance trap that expires the first time anything else in the graph wants a
 newer x/sync.
 

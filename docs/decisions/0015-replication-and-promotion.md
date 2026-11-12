@@ -7,7 +7,7 @@
 ## Context
 
 M4 left a cluster where every key had exactly one home. Losing a pod lost its
-data, which CLAUDE.md's durability section permits — state is lossy by design —
+data, which docs/design.md's durability section permits — state is lossy by design —
 but "permitted" and "acceptable to run" are different bars. docs/design.md §4 asks for
 replication factors 1 to 3, promotion on owner failure, catch-up for a returning
 node, and a measured data-loss window for the asynchronous default.
@@ -68,7 +68,7 @@ One group has one owner, so two *different* nodes writing the same key under the
 only party positioned to notice — neither owner can see the other.
 
 It is counted in `Stats().SplitBrainDetections` and the write still applies.
-Silently dropping one would be a merge policy chosen by accident, and CLAUDE.md
+Silently dropping one would be a merge policy chosen by accident, and docs/design.md
 is explicit that conflicting writes are not automatically merged.
 
 ### Promotion runs on the ownership table's update, not on a membership watcher
@@ -145,5 +145,5 @@ the application to say "not yet".
 
 **Quorum writes.** Would close the window without the throughput cost of
 synchronous replication on the group. Rejected outright: it needs consensus,
-which docs/design.md §5 defers permanently, and CLAUDE.md forbids the words "strong"
+which docs/design.md §5 defers permanently, and docs/design.md forbids the words "strong"
 and "quorum" in this system's vocabulary for exactly this reason.

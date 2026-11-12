@@ -9,7 +9,7 @@
 //
 // Evaluating three libraries means depending on three libraries. Two of them
 // lose, and a losing candidate has no business in the shipping dependency
-// graph — CLAUDE.md's dependency budget exists precisely to stop that kind of
+// graph — docs/design.md's dependency budget exists precisely to stop that kind of
 // accumulation. This directory carries its own go.mod, so `go build ./...` and
 // `go test ./...` in the parent module never see any of them.
 //

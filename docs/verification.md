@@ -1,6 +1,6 @@
 # Verification record
 
-CLAUDE.md's Definition of Done requires that each milestone's acceptance
+docs/design.md's Definition of Done requires that each milestone's acceptance
 criteria be "covered by a named test that would fail if the behavior
 regressed."
 
@@ -134,7 +134,7 @@ iteration pushed the second iteration's p99 from 0.5µs to 1.475µs and broke th
 
 Two things are worth taking from that.
 
-**The `-count=2` gate earned its place.** CLAUDE.md requires it to catch state
+**The `-count=2` gate earned its place.** docs/design.md requires it to catch state
 leaking between runs, and this is exactly that: a defect visible only on the
 second pass, in a package that did not contain it.
 
@@ -197,7 +197,7 @@ simply never replied. A caller passing `context.Background()`, which is the
 ordinary thing to do, blocked in `Set` **forever**.
 
 A latency optimisation had become an unbounded dependency of every write:
-precisely the inversion CLAUDE.md non-negotiable 6 exists to prevent, on a path
+precisely the inversion design principle 6 (docs/design.md) exists to prevent, on a path
 that could block past any deadline because it had none.
 
 It is now a bounded queue. Enqueueing never blocks and never fails; a full queue
@@ -489,7 +489,7 @@ opens by calling `ctx.Err()`; `context.Context` is an interface, so a nil one
 makes that first call a nil-pointer dereference.
 
 Eighteen exported methods, seven milestones, no test had ever passed a nil
-context — because nobody writes that on purpose. CLAUDE.md forbids panics in
+context — because nobody writes that on purpose. docs/design.md forbids panics in
 library code paths and makes no exception for caller error, which is the right
 call for something embedded in someone else's process.
 
@@ -760,7 +760,7 @@ one exported symbol with no doc comment, a package missing from the repository
 map since it was created, twelve of the nineteen public-API files missing from
 the same map, and the discovery that the rules being broken were exactly the
 rules with no test. `discipline_test.go` grew to cover all of them: every
-mechanical rule in CLAUDE.md now has a test, and so do the build files, the
+mechanical rule in docs/design.md now has a test, and so do the build files, the
 repository map, the API documentation's derived figures and the acceptance map —
 the places verification is written down that no Go tool reads.
 
@@ -1057,7 +1057,7 @@ the alternative was a documented guarantee resting on nothing.
 
 ### The project's own gate could not pass
 
-CLAUDE.md's Definition of Done requires `go test ./... -race` to pass, and the
+docs/design.md's Definition of Done requires `go test ./... -race` to pass, and the
 Makefile and CI both run it as `-race -count=2 -timeout 300s`. Running that exact
 command produced:
 
@@ -1112,7 +1112,7 @@ and the *second* are a milestone apart and 88 seconds apart, which is the rate a
 future budget has to be set against.
 
 The gap is worth naming rather than estimating: nobody was watching the number,
-so the protection CLAUDE.md asks for degraded from real to nominal at some point
+so the protection docs/design.md asks for degraded from real to nominal at some point
 between M3 and M8 without a commit that did it.
 
 Raising the bound is not weakening the gate: a timeout here exists to turn a hang into a failure, and
@@ -1308,7 +1308,7 @@ Three defences emerged, in ascending order of reliability:
 
 ### One exported symbol in the repository had no doc comment
 
-CLAUDE.md: "Every exported symbol has a doc comment. Every package has a
+docs/design.md: "Every exported symbol has a doc comment. Every package has a
 `doc.go`." Both are mechanically checkable and neither had been checked.
 
 Scanning every top-level exported `func`, `type`, `const` and `var` outside test
@@ -1330,7 +1330,7 @@ without are the eight `examples/mN` programs, which are `package main` and carry
 package comments instead.
 
 **Why that rule and not another** is the part worth keeping. `discipline_test.go`
-already enforces CLAUDE.md's other mechanical rules as tests — no `time.Sleep`,
+already enforces docs/design.md's other mechanical rules as tests — no `time.Sleep`,
 no `time.Now` outside `internal/clock`, no `log` package, no TODO markers, no
 internal package importing the root, every package has a `doc.go`. All of them
 hold. The exported-symbol rule was the only one with no test, and it was the only
@@ -1344,7 +1344,7 @@ on unexported types, and a check that is wrong 44 times in 45 is a check somebod
 switches off.
 
 **Then the same question was asked of every remaining rule.** Comparing
-CLAUDE.md's mechanical rules against the tests in `discipline_test.go` left two
+docs/design.md's mechanical rules against the tests in `discipline_test.go` left two
 with no check at all:
 
 - **"No `panic` in library code paths."** A safety non-negotiable. It held —
@@ -1365,7 +1365,7 @@ list each fail with the message a reader needs. The budget test cannot check tha
 — it makes the diff demand one, by failing until the new module is recorded with
 the slot it fills, which is the same sentence the note has to make.
 
-Every mechanical rule in CLAUDE.md now has a test. Two of the nine did not an
+Every mechanical rule in docs/design.md now has a test. Two of the nine did not an
 hour ago, and one of those two was already broken.
 
 **One documentation claim got the same treatment before it broke.**
@@ -2311,7 +2311,7 @@ first only sent its replicas a removal. Under queue pressure that message can be
 dropped, and then the rewrite of the key — restarting its version at 1 (question
 18) — loses to the replica's copy and a failover promotes the shed value. The
 store now keeps a per-shard version floor at the highest version shed, so
-correctness does not depend on the message (CLAUDE.md decision 6). The same
+correctness does not depend on the message (design principle 6 (docs/design.md)). The same
 hazard exists for an ordinary asynchronous Delete; that is open question 42.
 
 **A flake.** `MembersOnProbation` was cached by the relay goroutine and read
@@ -2349,7 +2349,7 @@ returned, so no existing caller had been relying on the nil.
 
 ## The acceptance map
 
-CLAUDE.md's Definition of Done requires that "the milestone's acceptance criteria
+docs/design.md's Definition of Done requires that "the milestone's acceptance criteria
 in docs/design.md are each covered by a named test that would fail if the behavior
 regressed". Every section above records a check against *one* invariant. None of
 them answered the question the rule actually asks: is every criterion covered?

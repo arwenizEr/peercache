@@ -22,7 +22,7 @@ type Clock interface {
 - **No `Ticker`.** M3's failure detection, M2's idle sweep and M7's metrics
   export are all periodic.
 - **No context-aware wait.** Every wait in this codebase has to be
-  interruptible, because CLAUDE.md requires deadlines to propagate into group
+  interruptible, because docs/design.md requires deadlines to propagate into group
   execution. A bare sleep is how a shutdown path outlives its deadline.
 - **No `Since`.** Without it, callers reach for `time.Since`, which defeats the
   entire point.
@@ -69,7 +69,7 @@ named test:
 - **`Advance` is serialised** against other advances, so a sloppy test does not
   become a nondeterministic one.
 - **Ticks are dropped, not queued**, matching `time.Ticker`.
-- **Misuse is recorded, not panicked.** CLAUDE.md forbids panics in library
+- **Misuse is recorded, not panicked.** docs/design.md forbids panics in library
   paths. `time.NewTicker(0)` panics; ours records a misuse, returns a ticker
   that never fires, and the harness fails the test at teardown.
 - **`Advance` fires at most 2^20 timers** before recording misuse and stopping.

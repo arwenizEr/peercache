@@ -12,7 +12,7 @@ docs/design.md's M4 line reads "gRPC service per `proto/`", which ordinarily mea
 
 Two facts make that a worse trade here than it looks.
 
-**Every pod runs the same binary.** CLAUDE.md non-negotiable 3 states this as an
+**Every pod runs the same binary.** design principle 3 (docs/design.md) states this as an
 assumption the whole design rests on — it is why functions are registered by
 name rather than serialised. Protobuf's principal payoffs are cross-language
 clients and safe schema evolution between mixed versions. This system has no
@@ -74,7 +74,7 @@ service, the method names and every Go-level interface as they are.
 **One dependency avoided, one already present.** `google.golang.org/protobuf`
 arrives transitively with grpc-go regardless; this decision keeps it out of the
 *direct* dependency set and keeps protoc out of the build entirely. Per
-CLAUDE.md's dependency budget, grpc-go itself is the addition, and it is one the
+docs/design.md's dependency budget, grpc-go itself is the addition, and it is one the
 spec names.
 
 ## Alternatives rejected

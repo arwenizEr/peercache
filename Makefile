@@ -56,7 +56,7 @@ examples:
 test:
 	$(GO) test $(PKGS) -timeout $(TIMEOUT)
 
-## test-race is the gate. CLAUDE.md requires every concurrency-touching test to
+## test-race is the gate. docs/design.md requires every concurrency-touching test to
 ## run under -race, and -count=2 catches state that leaks between runs.
 test-race:
 	$(GO) test $(PKGS) -race -count=2 -timeout $(RACE_TIMEOUT)

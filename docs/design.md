@@ -2,10 +2,95 @@
 
 Embedded distributed L1 cache and stateful aggregation engine for Go.
 
-This is the design the library was built from. Section 4 lists the milestones in
+This is the design the library was built from. Section 0 states the principles
+it does not compromise on. Section 4 lists the milestones in
 the order they were built, each with the acceptance criteria its tests prove
 (`docs/verification.md` maps every criterion to a named test). Decisions taken
 along the way are recorded in [`decisions/`](decisions).
+
+---
+
+## 0. Principles
+
+These were argued out before any code was written, and the rest of this
+document, the code and the decision records assume them. Records in
+`decisions/` cite them as "principle N".
+
+### What this is not
+
+- Not a database. State is **lossy by design** (principle 4).
+- Not a general distributed transaction system. There are no cross-group
+  transactions.
+- Not a Redis replacement for pub/sub, streams, or Lua scripting.
+- Not multi-region. Single Kubernetes cluster, single failure domain.
+
+### Design principles
+
+1. **Ownership is rendezvous (HRW) hashing**, not a consistent hash ring. One
+   algorithm, one place, `internal/ownership`. The sorted node list is cached
+   and recomputed only on membership change.
+
+2. **Groups are virtual actors.** A group is addressable at all times but
+   *activated* lazily on its owner and *deactivated* after idle timeout. All
+   operations on an activated group run on a single goroutine, serialized
+   through a bounded mailbox. This is why there is no lock API.
+
+3. **Remote code is registered, never serialized.** Closures do not cross the
+   network. Functions and loaders are registered by name at startup; RPCs carry
+   `(name, []byte args)`. All pods run the same binary — this is assumed.
+
+4. **Durability: none.** The owned store is memory-only. Graceful shutdown
+   transfers ownership and streams state; ungraceful termination loses it. Every
+   namespace must therefore be reconstructible from a loader or tolerate loss.
+   Persistence hooks may be designed for, but nothing is written to disk.
+
+5. **Consistency ceiling is per-group serializability**, provided by the single
+   activation. Membership is gossip-based and therefore AP: a network partition
+   can produce two activations of one group. This window is *narrowed* by
+   activation delay and *detected* via epochs, not eliminated. The words
+   "strong" and "quorum" are not used in docs or API names.
+
+6. **Non-owned L1 entries are TTL-bounded and version-stamped.** Invalidation
+   broadcast is a latency optimization only. Correctness never depends on an
+   invalidation message arriving.
+
+7. **Replication is async by default**, configurable per namespace. The data
+   loss window is a documented, measured number — not an unknown.
+
+### Engineering rules
+
+- Go 1.25+ (it was 1.23 until memberlist's dependencies moved past it; see
+  `decisions/0013-go-floor-raised-to-1.25.md`). Generics where they remove
+  reflection, not for decoration.
+- Dependency budget: `memberlist`, `grpc`, a local cache library, a codec, and
+  test deps. Adding anything else requires a decision record first.
+- Every exported symbol has a doc comment. Every package has a `doc.go`.
+- **Every concurrency-touching test runs under `-race`.**
+- No `time.Now()` outside `internal/clock`. No `time.Sleep` in tests, ever —
+  use the fake clock. A sleeping test is a broken test.
+- No `panic` in library code paths. No `log` package; a `Logger` interface with
+  a no-op default.
+- Errors wrap with `%w` and are checked with `errors.Is/As`. Sentinel errors
+  live in the root package.
+- Context deadlines propagate across RPC boundaries and into group execution.
+- Benchmarks live next to the code they measure and are run in CI for
+  regression, not just written once.
+
+### Definition of done
+
+A milestone in section 4 is complete when:
+
+- `go test ./... -race` passes.
+- Its acceptance criteria are each covered by a named test that would fail if
+  the behavior regressed.
+- `go vet` and `staticcheck` are clean.
+- Its benchmarks exist and their numbers are recorded in `docs/benchmarks.md`
+  with the machine spec.
+- Public API additions are in `docs/api.md` with a runnable example.
+
+When a decision is genuinely ambiguous, the question goes in
+`decisions/open.md` and the simplest option that can be reversed later is
+picked. Nothing touching correctness under failure is guessed silently.
 
 ---
 
@@ -214,7 +299,7 @@ Both are injected at construction. The test harness supplies fakes.
 ## 4. Milestones
 
 Each milestone ends with working, tested, benchmarked code. Do not begin the
-next until the previous is done per `CLAUDE.md`.
+next until the previous is done per section 0.
 
 ### M0 — Test harness and skeleton
 
@@ -344,7 +429,7 @@ the cluster's unless the library contains it.
 - **Memory budget.** A per-cache byte budget covering the owned stores, the
   replica store and the L1 tier. Over budget, entries are shed in that order of
   preference: L1 first, then replicas, then owned data — sampled, not LRU, so
-  the read path pays nothing. State is lossy by design (CLAUDE.md decision 4), so
+  the read path pays nothing. State is lossy by design (principle 4), so
   shedding is legitimate; it is never silent, and every tier has a counter.
 - **No stale resurrection.** Shedding an owned key in a replicated namespace
   sheds its replicas too, as a replicated deletion. Dropping only the owner's

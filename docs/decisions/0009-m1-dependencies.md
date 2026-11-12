@@ -3,7 +3,7 @@
 **Status:** accepted, M1
 **Affects:** `go.mod`
 
-CLAUDE.md sets a dependency budget: "`memberlist`, `grpc`, a local cache
+docs/design.md sets a dependency budget: "`memberlist`, `grpc`, a local cache
 library, a codec, and test deps. Adding anything else requires a note in
 `docs/decisions/` first." This is that note.
 
@@ -39,7 +39,7 @@ for whoever forgets which is which.
 ## Rejected
 
 **`golang.org/x/sync/singleflight`.** Its current releases require Go 1.25 and
-CLAUDE.md fixes the floor at 1.23; it also re-panics in every waiter when the
+docs/design.md fixes the floor at 1.23; it also re-panics in every waiter when the
 shared call panics, which is unacceptable for user-supplied loader code. Hand
 rolled instead — see `0006-hand-rolled-singleflight.md`.
 
@@ -51,7 +51,7 @@ paid for forever — see `0005-l1-cache-library.md`.
 
 ## The Go floor
 
-Every selected dependency builds on Go 1.23, which is the floor CLAUDE.md
+Every selected dependency builds on Go 1.23, which is the floor docs/design.md
 states. Two candidates were rejected partly for requiring 1.24 and one for
 requiring 1.25. Raising the floor is a change that every consumer of this
 library pays for, and it should be a deliberate decision rather than a

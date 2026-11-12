@@ -40,7 +40,7 @@ itself, so it never acts as owner while its peers route elsewhere.
 
 The guard, catch-up, drain and readiness all read membership through
 `core.MembershipAuthority`. Wrapping it filters what all of them see at once and
-changes none of them, and CLAUDE.md decision 1's one ownership file is
+changes none of them, and design principle 1 (docs/design.md)'s one ownership file is
 untouched. A probation ending changes the ranked view with no event from the
 underlying authority, so the wrapper arms a timer and reports an epoch of the
 authority's plus the number of such changes: monotonic, as the guard needs.

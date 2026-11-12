@@ -52,7 +52,7 @@ var ErrNotFound = core.ErrNotFound
 ```
 
 Assignment copies the pointer, so `errors.Is` behaves identically through either
-name. CLAUDE.md says sentinels live in the root package; they are *declared* one
+name. docs/design.md says sentinels live in the root package; they are *declared* one
 package deeper and the public surface still reads as the root package owning
 them. This is the one place M0 bends a rule, and it is bent because the
 alternative is a cycle.

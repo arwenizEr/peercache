@@ -13,7 +13,7 @@ import (
 // actually use: bounded capacity, get, put, and a size estimate.
 //
 // TTL and versioning are deliberately absent. The L1 tier owns both, because
-// they are correctness rules (CLAUDE.md, decision 6) and every one of these
+// they are correctness rules (docs/design.md, principle 6) and every one of these
 // libraries implements expiry against the wall clock, which cannot be tested
 // under a fake clock and which no injected clock of ours would reach. What is
 // being evaluated is eviction and throughput, nothing else.
@@ -91,7 +91,7 @@ func (h *hashicorpLRU) Close() {}
 // otterV1Cache wraps github.com/maypok86/otter v1: the same S3-FIFO-derived
 // design as v2, from before the module raised its Go floor to 1.24.
 //
-// It is in the evaluation because v2 requires Go 1.24 and CLAUDE.md fixes this
+// It is in the evaluation because v2 requires Go 1.24 and docs/design.md fixes this
 // project's floor at 1.23. A candidate the project cannot actually adopt is not
 // a candidate; measuring the version that can be adopted is the whole point.
 type otterV1Cache struct {

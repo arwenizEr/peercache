@@ -50,7 +50,7 @@ and a pod that has started but not yet joined anyone, which is every pod for a
 moment during a rolling restart. From inside the node those are
 indistinguishable from isolation; that is the whole of question 37. Making a
 partition an outage is a choice a namespace's owner should make on purpose,
-which is what CLAUDE.md non-negotiable 7 already says about replication:
+which is what design principle 7 (docs/design.md) already says about replication:
 configurable per namespace.
 
 ## Why this is reversible

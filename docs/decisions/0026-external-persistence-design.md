@@ -3,7 +3,7 @@
 **Status:** proposed, and **not buildable as written** — an independent review
 found ten defects in it, listed at the end. Nothing here is built.
 **Milestone:** none yet; a candidate for the first one after v1.
-**Bound by:** CLAUDE.md decision 4 — "Durability: none… Persistence hooks may be
+**Bound by:** design principle 4 (docs/design.md) — "Durability: none… Persistence hooks may be
 designed for, but nothing is written to disk in v1" — and docs/design.md §5, which
 defers WAL, snapshots and object-storage backup.
 
@@ -51,7 +51,7 @@ Configured per namespace — `WithPersister(p, WithWriteBehind())` — because
 durability is per namespace, as replication is (decision 7). A namespace with a
 persister and no loader gets `Load` as its loader.
 
-**The library ships the interface and a fake, not drivers.** CLAUDE.md's
+**The library ships the interface and a fake, not drivers.** docs/design.md's
 dependency budget does not admit database clients, and should not. Adapters —
 Postgres, Redis, S3, DynamoDB — live in separate modules that import this one.
 
@@ -61,7 +61,7 @@ Postgres, Redis, S3, DynamoDB — live in separate modules that import this one.
 write as slow as the database, which removes most of the reason to have this
 cache. Worse, a persister failure after the value is stored in memory leaves the
 two disagreeing, and resolving that is a transaction by another name, which
-CLAUDE.md rules out. It may be offered later, with the same contract as
+docs/design.md rules out. It may be offered later, with the same contract as
 synchronous replication today: a failure is reported, not rolled back.
 
 **Write-behind** is the default. The owner enqueues the op after the write lands
@@ -131,7 +131,7 @@ measured loss window in `docs/benchmarks.md` like M5's.
 
 ## What it would not do
 
-- Cross-key or cross-group atomicity. Ever (CLAUDE.md).
+- Cross-key or cross-group atomicity. Ever (docs/design.md).
 - Persist group state. `GroupState` lives in activations, not namespaces; a group
   persistence hook is a separate design.
 - Replace the loader as the source of truth for data owned by a database. If the

@@ -6,7 +6,7 @@
 
 ## Context
 
-CLAUDE.md non-negotiable 2 says all operations on an activated group run on a
+design principle 2 (docs/design.md) says all operations on an activated group run on a
 single goroutine through a bounded mailbox, and non-negotiable 5 says the
 consistency ceiling is per-group serializability. Until now that was asserted by
 construction — there is one goroutine, therefore operations are serialized — and
@@ -19,7 +19,7 @@ gained a duplicate produces the same total. What those tests establish is that
 nothing is obviously broken, not that every observed history could have happened
 under some sequential order.
 
-CLAUDE.md's dependency budget permits test dependencies. This note exists
+docs/design.md's dependency budget permits test dependencies. This note exists
 because the budget also asks for one before anything is added.
 
 ## Decision
@@ -35,7 +35,7 @@ own reasoning being right.
 
 ### Linearizability, not serializability
 
-SPEC and CLAUDE.md say "serializability". This checks linearizability, which is
+SPEC and docs/design.md say "serializability". This checks linearizability, which is
 strictly stronger: it additionally requires that the sequential order respect
 real-time precedence, so an operation that returned before another began must be
 ordered before it.
@@ -48,7 +48,7 @@ proves more than was claimed.
 
 ### Timestamps come from a counter, not a clock
 
-CLAUDE.md forbids `time.Now` outside `internal/clock`. Porcupine only needs
+docs/design.md forbids `time.Now` outside `internal/clock`. Porcupine only needs
 totally ordered integers for call and return points, so the harness stamps them
 from an atomic counter. This is not a workaround: a counter is *more* correct
 here than a clock, because it cannot be perturbed by NTP or by the coarse ~500 µs
@@ -57,7 +57,7 @@ operations being ordered.
 
 ### Partition is excluded, and that is the interesting part
 
-CLAUDE.md non-negotiable 5 is explicit that membership is AP and a partition can
+design principle 5 (docs/design.md) is explicit that membership is AP and a partition can
 produce two activations of one group. Two activations mean two serialization
 points, and a history spanning them is *not* linearizable — correctly so.
 
@@ -84,7 +84,7 @@ expensive and finds nothing extra: linearizability is compositional per key
 under this model, and the interesting interleavings are per group, not per key.
 
 **This does not check across groups.** There is no cross-group guarantee to
-check — CLAUDE.md is explicit that no cross-group transaction exists — so a
+check — docs/design.md is explicit that no cross-group transaction exists — so a
 checker spanning groups would be testing a property the system deliberately does
 not have.
 

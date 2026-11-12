@@ -52,7 +52,7 @@ result are typed; `GroupState` stays byte-valued, because a group's keys are the
 function's own business and a typed state would need a type per key.
 
 The type check uses the local registration. Every pod runs the same binary
-(CLAUDE.md decision 3), so what this node registered under a name is what every
+(design principle 3 (docs/design.md)), so what this node registered under a name is what every
 node did, and a call naming other types is refused with `ErrInvalidOption`
 before anything is sent rather than decoded wrongly on the owner. `ErrCodec`
 gained a gRPC mapping — `codes.Internal` plus its text, as `ErrUnderReplicated`
