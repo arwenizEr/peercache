@@ -228,6 +228,7 @@ observe.go        Stats and the metric series they export       (M7)
 pressure.go       The memory budget and the order it sheds in   (M9)
 probation.go      Keeps young nodes out of the ranking          (M9)
 typed.go          NamespaceOf[T]: values as a Go type          (M10)
+typed_group.go    Typed group function arguments and results  (M10)
 
 membership/       Gossip membership over memberlist. Public: an
                   application builds its cluster with it      (M3)

@@ -2111,6 +2111,18 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### A latency test that passed for the wrong reason
+
+`TestLatencyHistogramsRecordRemoteOperations`, written in the coverage sweep,
+asserted that a remote read under a 2 ms delay per hop took at least 4 ms — a
+request and a response. It passed for weeks of runs and failed once, reading
+2 ms. The fake network delays a call's request and returns its response at
+once, so the true lower bound is 2 ms; the test had passed only because its
+waiting loop steps the fake clock and inflated every measurement it took. The
+bound is 2 ms now, ten clean repetitions, and its mutation entry is still
+caught. A test whose assertion is satisfied by its own scheduling noise is not
+testing the code.
+
 ### The full audit after M10: 154 of 154
 
 Every entry in `scripts/mutation-audit.sh`, run end to end on a clean tree after

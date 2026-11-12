@@ -185,9 +185,14 @@ func TestRemoteGetOrLoadWithoutALoaderOnTheOwner(t *testing.T) {
 }
 
 // TestLatencyHistogramsRecordRemoteOperations covers WithLatencyHistograms and
-// RemoteLatency, which had benchmarks and no test. Every message is delayed by
-// 2 ms of fake time, so a remote read is a round trip of at least 4 ms, and the
-// histogram has to say so — in RemoteLatency and in the scrape output.
+// RemoteLatency, which had benchmarks and no test. Every call is delayed by 2 ms
+// of fake time, so a remote read takes at least 2 ms, and the histogram has to
+// say so — in RemoteLatency and in the scrape output.
+//
+// At least 2 ms, not 4: the fake network delays a call's request and returns its
+// response at once. The first version of this test asserted 4 ms and passed for
+// the wrong reason — the loop below steps the clock while it waits, which
+// inflated every measurement — and failed the first time scheduling was quick.
 func TestLatencyHistogramsRecordRemoteOperations(t *testing.T) {
 	const delay = 2 * time.Millisecond
 	f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1,
@@ -248,8 +253,9 @@ func TestLatencyHistogramsRecordRemoteOperations(t *testing.T) {
 	// scheduling noise rather than with the network.
 	p50, p99, _ := f.caches[via].RemoteLatency()
 	t.Logf("remote latency with %v per hop: p50 %v, p99 %v", delay, time.Duration(p50), time.Duration(p99))
-	if time.Duration(p50) < 2*delay {
-		t.Fatalf("p50 = %v with %v per hop; a round trip is at least %v", time.Duration(p50), delay, 2*delay)
+	if time.Duration(p50) < delay {
+		t.Fatalf("p50 = %v with %v of delay on every call; a remote read takes at least that",
+			time.Duration(p50), delay)
 	}
 
 	var scrape bytes.Buffer

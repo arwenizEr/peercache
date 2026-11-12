@@ -697,3 +697,51 @@ func ExampleNamespaceOf() {
 	// missing: true
 	// wrong type: true
 }
+
+// ExampleRegisterTypedGroupFunc shows a group function with a typed argument and
+// result. The group's state stays []byte; only what crosses the call is typed.
+func ExampleRegisterTypedGroupFunc() {
+	type Deposit struct{ Amount int }
+	type Balance struct{ Total int }
+
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	err = peercache.RegisterTypedGroupFunc(cache, "deposit",
+		func(_ context.Context, s peercache.GroupState, d Deposit) (Balance, error) {
+			var total int
+			if raw, ok := s.Get("total"); ok {
+				total = int(binary.BigEndian.Uint64(raw))
+			}
+			total += d.Amount
+			buf := make([]byte, 8)
+			binary.BigEndian.PutUint64(buf, uint64(total))
+			s.Set("total", buf)
+			return Balance{Total: total}, nil
+		})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ctx := context.Background()
+	account := cache.Group("account:42")
+	for _, amount := range []int{100, 250} {
+		if _, err := peercache.CallTyped[Deposit, Balance](ctx, account, "deposit", Deposit{amount}); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+	b, _ := peercache.CallTyped[Deposit, Balance](ctx, account, "deposit", Deposit{50})
+	fmt.Println("balance:", b.Total)
+
+	_, err = peercache.CallTyped[string, Balance](ctx, account, "deposit", "fifty")
+	fmt.Println("wrong argument type:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// balance: 400
+	// wrong argument type: true
+}

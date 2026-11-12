@@ -44,8 +44,17 @@ criterion — the byte path plus one decode — and it means the codec, not the 
 is the cost. A hot path that cannot spend half a microsecond per read keeps the
 byte API, and `Raw()` reaches it from a typed handle.
 
-## Not in scope
+## Typed group functions, added after
 
-Typed group functions. `GroupState` stays byte-valued; a registered function
-already decodes whatever its arguments are. A typed wrapper there would be a
-separate addition, and nothing asked for it.
+Left out of M10 at first and added straight after it:
+`RegisterTypedGroupFunc[A, R]` and `CallTyped[A, R]`. Only the argument and
+result are typed; `GroupState` stays byte-valued, because a group's keys are the
+function's own business and a typed state would need a type per key.
+
+The type check uses the local registration. Every pod runs the same binary
+(CLAUDE.md decision 3), so what this node registered under a name is what every
+node did, and a call naming other types is refused with `ErrInvalidOption`
+before anything is sent rather than decoded wrongly on the owner. `ErrCodec`
+gained a gRPC mapping — `codes.Internal` plus its text, as `ErrUnderReplicated`
+has — so an argument that fails to decode on a remote owner is still `ErrCodec`
+at the caller.

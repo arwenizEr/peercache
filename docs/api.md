@@ -12,6 +12,7 @@ and output-checked by `go test`:
 | Example | Covers |
 |---|---|
 | `Example` | construction, `Set`, `Get`, `ErrNotFound` |
+| `ExampleRegisterTypedGroupFunc` | a group function with a typed argument and result; a call with the wrong type refused |
 | `ExampleNamespaceOf` | typed values, a typed loader, a missing key, a second type on one name refused |
 | `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
@@ -410,6 +411,29 @@ each state with a generation and turns a violation into `ErrStateEscaped` —
 detected, not panicked, and not silently corrupting.
 
 ---
+
+### Typed group functions
+
+```go
+err := peercache.RegisterTypedGroupFunc(cache, "addToCart",
+    func(ctx context.Context, s peercache.GroupState, item Item) (Cart, error) {
+        // s is the group's []byte state, as for any group function.
+        ...
+    })
+cart, err := peercache.CallTyped[Item, Cart](ctx, cache.Group("user:42"), "addToCart", item)
+```
+
+`RegisterGroupFunc` and `Group.Call` with the argument and result encoded by
+`DefaultTypedCodec`. The rules are the same — registered once, at startup,
+identically on every pod; one name, one function, typed or not — and the state
+stays byte-valued, because a group's keys are the function's own business.
+
+Every pod runs the same binary, so the local registration says what a function
+takes and returns: `CallTyped` with other types, or on a function registered
+untyped, is `ErrInvalidOption` before anything is sent. An argument that does not
+decode inside the function's turn, or a result that does not decode at the
+caller, is `ErrCodec` — which survives the gRPC hop like the other sentinels. An
+error the function returns comes back as it is.
 
 ## Partitioning
 
@@ -1044,7 +1068,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrDuplicateRegistration` | Name registered twice. | no |
 | `ErrInvalidOption` | Option outside its range. | no |
 | `ErrNodeUnreachable` | Transport could not deliver. | yes |
-| `ErrCodec` | A typed value would not encode, or stored bytes would not decode as the namespace's type. | no — the bytes will not change |
+| `ErrCodec` | A typed value would not encode, or stored bytes would not decode as the namespace's type — or a typed group function's argument or result would not. | no — the bytes will not change |
 | `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
 | `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |
 

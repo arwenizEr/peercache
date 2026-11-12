@@ -1539,6 +1539,34 @@ mutate "a deletion no longer raises the version floor" \
   '		// must start above it, as after a shed. Open question 42.' \
   'TestALostDeleteDoesNotResurrectAnOlderValue$' .
 
+# --- Typed group functions ---
+
+mutate "CallTyped does not check the registered types" \
+  typed_group.go \
+  '		if sig.arg != reflect.TypeFor[A]() || sig.result != reflect.TypeFor[R]() {' \
+  '		if false && sig.arg != nil {' \
+  'TestCallTypedWithTheWrongTypesIsInvalid$' .
+
+mutate "an undecodable typed argument is not ErrCodec" \
+  typed_group.go \
+  '			return nil, fmt.Errorf("peercache: group function %q: decoding its argument as %v: %v: %w",
+				name, reflect.TypeFor[A](), err, ErrCodec)' \
+  '			return nil, fmt.Errorf("peercache: group function %q: decoding its argument as %v: %w",
+				name, reflect.TypeFor[A](), err)' \
+  'TestATypedGroupFuncRejectsAnUndecodableArgument$' .
+
+mutate "ErrCodec stops surviving the gRPC hop" \
+  transport/client.go \
+  '		} else if containsSentinel(st.Message(), core.ErrCodec.Error()) {' \
+  '		} else if false {' \
+  'TestSentinelErrorsSurviveTheHop$' ./transport/
+
+mutate "typed signatures are never recorded" \
+  typed_group.go \
+  '		cc.typedFuncs.Store(name, typedSignature{arg: reflect.TypeFor[A](), result: reflect.TypeFor[R]()})' \
+  '		_ = cc' \
+  'TestATypedGroupFuncRunsOnTheOwnerAcrossNodes$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

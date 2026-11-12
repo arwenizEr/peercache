@@ -201,6 +201,10 @@ func toStatus(err error) error {
 		code = codes.InvalidArgument
 	case errors.Is(err, core.ErrClosed):
 		code = codes.Unavailable
+	case errors.Is(err, core.ErrCodec):
+		// Like ErrUnderReplicated: no gRPC code means it, so Internal plus
+		// the sentinel's text, recovered by fromStatus.
+		code = codes.Internal
 	case errors.Is(err, core.ErrUnderReplicated):
 		// No gRPC code means "written, but not to enough nodes", and
 		// borrowing one would mislead anything that reads codes alone.
@@ -265,6 +269,8 @@ func fromStatus(err error, node core.Node) error {
 		// unreachable unless the message names the sentinel.
 		if containsSentinel(st.Message(), core.ErrUnderReplicated.Error()) {
 			sentinel = core.ErrUnderReplicated
+		} else if containsSentinel(st.Message(), core.ErrCodec.Error()) {
+			sentinel = core.ErrCodec
 		} else {
 			sentinel = core.ErrNodeUnreachable
 		}

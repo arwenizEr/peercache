@@ -396,6 +396,10 @@ type cache struct {
 	// WithJoinProbation.
 	probation *probationAuthority
 
+	// typedFuncs maps a typed group function's name to its signature, for
+	// CallTyped to check against.
+	typedFuncs sync.Map
+
 	// serving tracks the goroutine running Transport.Serve, so that Close
 	// can wait for it rather than leaving it to notice on its own. M3 lost a
 	// milestone to a Close that only signalled; this one waits.
