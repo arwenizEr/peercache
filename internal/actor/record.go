@@ -37,6 +37,13 @@ type record struct {
 	state  map[string][]byte
 	timers map[string]*groupTimer
 
+	// removed is set, under mu, when the record is taken out of the
+	// runtime's directory. A caller that looked the record up just before
+	// that must not activate it — its state would diverge from the record
+	// that replaces it — so enqueue reports errRecordRemoved and the
+	// runtime looks again.
+	removed bool
+
 	// generation increments twice per turn: once when the turn's State is
 	// minted, once when the turn ends. A State comparing unequal is an
 	// escapee.
@@ -92,8 +99,21 @@ func (r *record) enqueue(ctx context.Context, run func(core.GroupState) (any, er
 		r.mu.Unlock()
 		return nil, core.ErrClosed
 	}
+	if r.removed {
+		r.mu.Unlock()
+		return nil, errRecordRemoved
+	}
 	if r.act == nil {
 		if err := r.activateLocked(); err != nil {
+			// A refused activation on a record that holds nothing leaves
+			// nothing worth keeping. Kept, it was one empty record per
+			// distinct group ever asked about on a node that does not own
+			// it — routing probes, stale callers — and records are never
+			// otherwise removed.
+			if len(r.state) == 0 && len(r.timers) == 0 {
+				r.removed = true
+				r.rt.forget(r)
+			}
 			r.mu.Unlock()
 			return nil, err
 		}

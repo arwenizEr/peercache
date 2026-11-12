@@ -3,6 +3,7 @@ package actor
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -173,6 +174,20 @@ func (rt *Runtime) lookup(name string) (core.GroupFunc, bool) {
 //
 // A record is the addressable half of a group: identity, state and timer
 // schedule. It costs no goroutine and survives deactivation.
+// errRecordRemoved means a record was taken out of the directory between a
+// caller looking it up and enqueuing on it. The caller looks it up again.
+var errRecordRemoved = errors.New("actor: record removed")
+
+// forget removes r from the directory. Callers hold r.mu; the runtime lock is a
+// leaf, so taking it here keeps the lock order.
+func (rt *Runtime) forget(r *record) {
+	rt.mu.Lock()
+	if rt.records[r.id] == r {
+		delete(rt.records, r.id)
+	}
+	rt.mu.Unlock()
+}
+
 func (rt *Runtime) record(id string) (*record, error) {
 	rt.mu.Lock()
 	if rt.closed {
@@ -203,6 +218,14 @@ func (rt *Runtime) Do(ctx context.Context, id string, fn func(core.GroupState) (
 		return nil, err
 	}
 	out, err := r.enqueue(ctx, fn, true)
+	if errors.Is(err, errRecordRemoved) {
+		// Removed after the lookup, by a refused activation on another
+		// goroutine. The fresh record is the one to use.
+		if r, err = rt.record(id); err != nil {
+			return nil, err
+		}
+		out, err = r.enqueue(ctx, fn, true)
+	}
 	// Enforce the cap outside every record lock; see the type comment.
 	rt.enforceCap()
 	return out, err

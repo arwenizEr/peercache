@@ -610,3 +610,63 @@ func TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup(t *testing.T) {
 		return rt.Stats().Active == 0
 	})
 }
+
+// TestARefusedActivationLeavesNoRecord: found by code review. Every request for
+// a group this node does not own created a record before the activation was
+// refused, and records are never removed — so routing probes, stale callers
+// and requests during ownership changes grew memory without bound, one empty
+// record per distinct group ever asked about.
+func TestARefusedActivationLeavesNoRecord(t *testing.T) {
+	rt, _ := newRuntime(t, func(o *actor.Options) {
+		o.CanActivate = func(string) error { return core.ErrNotOwner }
+	})
+	if err := rt.Register("noop", func(context.Context, core.GroupState, []byte) ([]byte, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1000; i++ {
+		if _, err := rt.Call(context.Background(), fmt.Sprintf("g%d", i), "noop", nil); !errors.Is(err, core.ErrNotOwner) {
+			t.Fatalf("Call on an unowned group returned %v, want ErrNotOwner", err)
+		}
+	}
+	if n := rt.Stats().Addressable; n != 0 {
+		t.Fatalf("1000 refused activations left %d records behind", n)
+	}
+}
+
+// TestRecordRemovalIsSafeUnderConcurrentCallers drives refusals and successful
+// activations of the same groups at once, under -race, so that a record removed
+// by one caller's refusal while another holds it is exercised.
+func TestRecordRemovalIsSafeUnderConcurrentCallers(t *testing.T) {
+	var allow atomic.Bool
+	rt, _ := newRuntime(t, func(o *actor.Options) {
+		o.CanActivate = func(string) error {
+			if allow.Load() {
+				return nil
+			}
+			return core.ErrNotOwner
+		}
+	})
+	if err := rt.Register("count", counterFunc); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 300; i++ {
+				if w == 0 && i%50 == 0 {
+					allow.Store(!allow.Load())
+				}
+				_, err := rt.Call(context.Background(), fmt.Sprintf("g%d", i%20), "count", nil)
+				if err != nil && !errors.Is(err, core.ErrNotOwner) {
+					t.Errorf("Call: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+}

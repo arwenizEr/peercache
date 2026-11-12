@@ -1634,6 +1634,11 @@ mutate "a snapshot page copies the whole store"   internal/store/store.go   '	if
 		candidates = candidates[:limit]
 	}'   ''   'TestASnapshotPageAllocatesOnlyItsPage$' ./internal/store/
 
+# A refused activation left an empty record behind for good.
+mutate "a refused activation keeps its empty record"   internal/actor/record.go   '			if len(r.state) == 0 && len(r.timers) == 0 {
+				r.removed = true'   '			if false {
+				r.removed = true'   'TestARefusedActivationLeavesNoRecord$' ./internal/actor/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
