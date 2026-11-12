@@ -416,3 +416,109 @@ func TestAReplicaOnlyNodeStaysWithinItsBudget(t *testing.T) {
 		t.Fatal("1 MB of replicas into a 128 KB budget and none were shed")
 	}
 }
+
+// TestAFailoverCascadeStaysWithinBudget is M9's first acceptance criterion.
+//
+// Five nodes at RF=2 hold a working set sized so that, at full strength, each
+// node's share fits comfortably. Nodes are then killed one at a time until two
+// remain. Every death hands the survivors a larger share — promotion turns
+// replicas into owned data, catch-up pulls new replicas — and without a budget
+// the survivors' memory would grow by a quarter, a third and then a half at each
+// step. With one, no survivor's accounted memory may go past its budget by more
+// than one shedding step, and every shed must be counted by tier.
+func TestAFailoverCascadeStaysWithinBudget(t *testing.T) {
+	const (
+		keys = 1500
+		size = 512
+	)
+	perEntry := int64(size + 160)
+	// At five nodes each holds about 2/5 of the data (owned plus one replica).
+	// The budget is half the data: fits at five, does not fit at two, where
+	// each survivor would hold all of it.
+	data := int64(keys) * perEntry
+	budget := data / 2
+
+	f := newFabricFull(t, 5, false, testkit.MembershipConfig{}, -1,
+		withCacheOptions(peercache.WithMemoryBudget(budget)))
+	ctx := context.Background()
+
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("cascade",
+			peercache.WithReplicationFactor(2), peercache.WithSyncReplication())
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.settle(t)
+
+	for i := 0; i < keys; i++ {
+		via := f.ids[i%len(f.ids)]
+		if err := openNS(via).Set(ctx, fmt.Sprintf("cascade/%04d", i), make([]byte, size), 0); err != nil {
+			t.Fatalf("Set %d: %v", i, err)
+		}
+	}
+	f.clk.Advance(time.Second)
+	f.settle(t)
+
+	// One shedding step: the inline check's interval, plus one catch-up page
+	// landing between the check before it and the check after.
+	allowance := pressureSlack(size) + int64(catchUpPageAllowance)*perEntry
+
+	check := func(stage string) {
+		t.Helper()
+		for _, id := range f.live() {
+			st := f.caches[id].Stats()
+			t.Logf("%s: %s used %d of %d (owned %d, replicas %d; shed L1 %d, replicas %d, owned %d)",
+				stage, id, st.MemoryUsed, budget, st.OwnedKeys, st.ReplicaKeys,
+				st.ShedL1, st.ShedReplicas, st.ShedOwned)
+			if st.MemoryUsed > budget+allowance {
+				t.Fatalf("%s: %s accounts %d bytes against a budget of %d, past it by more "+
+					"than one shedding step (%d)", stage, id, st.MemoryUsed, budget, allowance)
+			}
+		}
+	}
+	check("five nodes")
+
+	var shedOwned, shedReplicas int64
+	for _, victim := range []string{"n4", "n3", "n2"} {
+		f.hardKill(t, victim)
+		f.clk.Advance(2 * testkit.DefaultFailureTimeout)
+		f.convergeTo(t, len(f.live()))
+		f.settle(t)
+		check("promoted after " + victim)
+
+		for _, id := range f.live() {
+			// Catch-up may stop at the budget; that is the behaviour under
+			// test, not a failure.
+			if err := f.caches[id].CatchUp(ctx); err != nil && !errors.Is(err, peercache.ErrOverMemoryBudget) {
+				t.Fatalf("CatchUp(%s) after %s died: %v", id, victim, err)
+			}
+		}
+		f.clk.Advance(time.Second)
+		f.settle(t)
+		check("caught up after " + victim)
+	}
+
+	for _, id := range f.live() {
+		st := f.caches[id].Stats()
+		shedOwned += st.ShedOwned
+		shedReplicas += st.ShedReplicas
+	}
+	// What the cascade cost, stated rather than asserted. A shed replica
+	// lowers its key's replication factor to one, and a key whose last copy
+	// was on the next node to die is gone. That is the trade the budget makes
+	// — survivors that keep serving instead of survivors that are killed —
+	// and the number is logged so a regression in it is visible.
+	readable := 0
+	for i := 0; i < keys; i++ {
+		if _, err := openNS(f.ids[0]).Get(ctx, fmt.Sprintf("cascade/%04d", i)); err == nil {
+			readable++
+		}
+	}
+	t.Logf("two survivors: shed replicas %d, shed owned %d; %d of %d keys readable after "+
+		"three deaths at RF=2", shedReplicas, shedOwned, readable, keys)
+	if shedReplicas+shedOwned == 0 {
+		t.Fatal("the working set was twice what two survivors' budgets hold and nothing was " +
+			"shed; the cascade this test is about was not constructed")
+	}
+}

@@ -71,7 +71,10 @@ the feature list rather than after it.
   what stops a failover cascade, where survivors inherit a dead node's share,
   exceed their limits and die in turn. A shed key that is written again is never
   served at its older value after a failover; that holds whether or not the
-  removal sent to its replicas arrives. No budget is the default, and then
+  removal sent to its replicas arrives. The trade is data for liveness: in the
+  cascade test, three deaths of five at RF=2 left two survivors under budget
+  and 1152 of 1500 keys readable, where without a budget all 1500 survived on
+  nodes holding 1.9× the budget — which in a real pod is three OOM kills. No budget is the default, and then
   nothing is shed.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write

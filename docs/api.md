@@ -697,6 +697,23 @@ the survivors, and a survivor sized for its steady state goes over its container
 limit, is killed, and passes its share on. With a budget it sheds and keeps
 serving.
 
+**What that costs, measured.** `TestAFailoverCascadeStaysWithinBudget` kills
+three of five nodes, one at a time, at RF=2, with a working set twice what two
+survivors' budgets hold, and catches up after each death:
+
+| | no budget | budget of half the data |
+|---|---|---|
+| each survivor's accounted memory at the end | ~956 KB, 1.9× the budget | ~453 KB, under it |
+| keys readable at the end | 1500 of 1500 | 1152 of 1500 |
+
+Without a budget nothing is lost — in the harness, where nothing is killed for
+using memory. In a pod whose limit is near the budget, that column is three OOM
+kills. With one, every survivor stays up and about a quarter of the keys are
+gone: a shed replica leaves its key at one copy, and when the next node to die
+held that copy, the key goes with it. No owned key was shed. Size the budget for
+the failures you want to survive without loss; the budget decides what happens
+past that.
+
 ## Membership, transport, clock
 
 ```go
