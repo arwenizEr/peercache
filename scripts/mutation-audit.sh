@@ -1177,6 +1177,14 @@ mutate "ErrUnderReplicated stops surviving the gRPC hop"   internal/transport/cl
 # it through would be an option that silently does nothing.
 mutate "requiring the factor without sync replication is accepted"   internal/core/options.go   'if o.RequireReplicationFactor && !o.SyncReplication {'   'if false {'   'TestNamespaceOptionValidationSurfaces$' .
 
+# The nightly soak's step timeout, put back to the figure that fitted one test
+# when the pattern selects two.
+mutate "the nightly soak timeout fits one soak test, not two" \
+  .github/workflows/nightly.yml \
+  'run: go test . -run TestSoak -count=1 -timeout 135m' \
+  'run: go test . -run TestSoak -count=1 -timeout 85m' \
+  'TestNightlySoakFitsItsTimeouts$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

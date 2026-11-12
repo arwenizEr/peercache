@@ -131,7 +131,7 @@ jobs:
   soak:
     name: soak
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 145
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -142,10 +142,15 @@ jobs:
       # An hour, not the twenty-four SPEC.md names. The harness takes any
       # duration and reports the one it actually ran; docs/benchmarks.md records
       # the measured figure with its duration rather than the aspiration.
-      - name: soak for an hour
+      #
+      # PEERCACHE_SOAK is per test, and -run TestSoak selects two, run one after
+      # the other: two hours, not one. The timeouts were once sized for one and
+      # could never have passed. TestNightlySoakFitsItsTimeouts does the
+      # multiplication now.
+      - name: soak for an hour per test
         env:
           PEERCACHE_SOAK: "60m"
-        run: go test . -run TestSoak -count=1 -timeout 85m
+        run: go test . -run TestSoak -count=1 -timeout 135m
 
   mutation-audit:
     name: mutation audit

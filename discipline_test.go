@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peercache/peercache/internal/metrics"
 )
@@ -1278,5 +1279,96 @@ func TestMutationAuditCitesOnlyRealTests(t *testing.T) {
 	if cited < 50 {
 		t.Fatalf("found only %d cited test names in the audit; this check is not "+
 			"reading what it thinks it is", cited)
+	}
+}
+
+// TestNightlySoakFitsItsTimeouts checks the arithmetic of the nightly soak job.
+//
+// PEERCACHE_SOAK is a per-test duration, and the step's -run pattern selects
+// every soak test, which run one after another. The step's -timeout therefore
+// has to cover the duration times the number of tests it selects, and the job's
+// timeout-minutes has to cover the step. When this was written the step ran two
+// tests of 60m each under -timeout 85m: it could never have passed, and nobody
+// knew, because the repository has no remote and the workflow had never run.
+//
+// It is the same shape as the race gate's 300s bound in M8 — a number that was
+// right for the suite it was written against — so it is pinned the same way.
+func TestNightlySoakFitsItsTimeouts(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(".github", "workflows", "nightly.yml"))
+	if err != nil {
+		t.Fatalf("reading nightly.yml: %v", err)
+	}
+	text := string(body)
+
+	start := strings.Index(text, "\n  soak:\n")
+	if start < 0 {
+		t.Fatal("nightly.yml has no soak job; this check is not reading what it thinks it is")
+	}
+	job := text[start+1:]
+	if next := regexp.MustCompile(`\n  [a-z][a-z-]*:\n`).FindStringIndex(job); next != nil {
+		job = job[:next[0]]
+	}
+
+	find := func(what, pattern string) string {
+		t.Helper()
+		m := regexp.MustCompile(pattern).FindStringSubmatch(job)
+		if m == nil {
+			t.Fatalf("nightly.yml soak job: no %s matching %s", what, pattern)
+		}
+		return unquoteBuildToken(m[1])
+	}
+	minutes, err := strconv.Atoi(find("timeout-minutes", `timeout-minutes:\s*(\d+)`))
+	if err != nil {
+		t.Fatalf("timeout-minutes: %v", err)
+	}
+	perTest, err := time.ParseDuration(find("PEERCACHE_SOAK", `PEERCACHE_SOAK:\s*(\S+)`))
+	if err != nil {
+		t.Fatalf("PEERCACHE_SOAK: %v", err)
+	}
+	stepTimeout, err := time.ParseDuration(find("-timeout", `go test [^\n]*-timeout\s+(\S+)`))
+	if err != nil {
+		t.Fatalf("-timeout: %v", err)
+	}
+	selector, err := regexp.Compile(find("-run pattern", `go test [^\n]*-run\s+('[^']*'|"[^"]*"|\S+)`))
+	if err != nil {
+		t.Fatalf("-run pattern: %v", err)
+	}
+
+	// go test matches -run against top-level test names, unanchored.
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatalf("globbing tests: %v", err)
+	}
+	decl := regexp.MustCompile(`(?m)^func (Test\w+)\(t \*testing\.T\)`)
+	var selected []string
+	for _, path := range files {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		for _, m := range decl.FindAllStringSubmatch(string(src), -1) {
+			if selector.MatchString(m[1]) {
+				selected = append(selected, m[1])
+			}
+		}
+	}
+	if len(selected) == 0 {
+		t.Fatalf("the soak step's -run %q selects no test in the root package", selector)
+	}
+
+	// Setup, settling and the final collection are seconds; ten minutes is
+	// generous and keeps the check about the multiplication, not the margin.
+	const slack = 10 * time.Minute
+	need := time.Duration(len(selected))*perTest + slack
+	if stepTimeout < need {
+		t.Errorf("the soak step runs %d tests (%s) of PEERCACHE_SOAK=%v each, one after "+
+			"another, under -timeout %v. That needs at least %v; the step would be "+
+			"killed part-way through and report a timeout, not a result",
+			len(selected), strings.Join(selected, ", "), perTest, stepTimeout, need)
+	}
+	if job := time.Duration(minutes) * time.Minute; job < stepTimeout+5*time.Minute {
+		t.Errorf("the soak job's timeout-minutes: %d is not above the step's -timeout %v; "+
+			"GitHub would cancel the job before go test could report which test hung",
+			minutes, stepTimeout)
 	}
 }
