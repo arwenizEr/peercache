@@ -249,8 +249,14 @@ func (g *Guard) Update(nodes []core.Node, epoch core.Epoch) {
 	if now-g.changedAt.Load() >= int64(g.activationDelay) {
 		g.settled.Store(g.table.current.Load())
 	}
-	g.table.Update(nodes, epoch)
+	// The change time is recorded before the new table is published, not
+	// after. In the other order a reader could see the new table with the
+	// previous change's time, measure the delay from that, and activate a
+	// group this node had acquired an instant ago — skipping the delay that
+	// narrows the window for two activations. In this order the worst a
+	// reader sees is the old table with the new time, which only defers.
 	g.changedAt.Store(now)
+	g.table.Update(nodes, epoch)
 
 	g.mu.Lock()
 	fn := g.onUpdate
