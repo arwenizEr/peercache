@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arwenizEr/peercache/internal/actor"
+	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/core"
 )
 
@@ -51,6 +52,29 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+// advanceUntil moves the fake clock in steps of d until cond holds.
+//
+// A single Advance after a call is not enough to expire a group's idle timer.
+// The reply reaches the caller from inside the turn, and the turn goroutine
+// re-arms the idle timer only after the turn returns — so on a slow machine
+// the re-arm lands after the Advance and pushes the deadline a full timeout
+// past it, and nothing ever fires. The timer that BlockUntil counted was the
+// one armed at activation, which the re-arm replaces. Advancing until the
+// condition holds is correct whichever order those two land in.
+func advanceUntil(t *testing.T, fc *clock.Fake, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	const steps = 1000
+	for i := 0; !cond(); i++ {
+		if i > steps {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		fc.Advance(d)
+		for j := 0; j < 64 && !cond(); j++ {
+			runtime.Gosched()
+		}
+	}
+}
+
 func TestIdleDeactivationReleasesTheGoroutine(t *testing.T) {
 	rt, fc := newRuntime(t, func(o *actor.Options) { o.IdleTimeout = time.Minute })
 	if err := rt.Register("increment", counterFunc); err != nil {
@@ -66,9 +90,7 @@ func TestIdleDeactivationReleasesTheGoroutine(t *testing.T) {
 
 	// The turn goroutine is parked on its idle timer.
 	fc.BlockUntil(1)
-	fc.Advance(time.Minute)
-
-	waitFor(t, "the group to deactivate", func() bool { return rt.Stats().Active == 0 })
+	advanceUntil(t, fc, time.Minute, "the group to deactivate", func() bool { return rt.Stats().Active == 0 })
 
 	// It remains addressable, which is the point of separating records from
 	// activations.
@@ -92,8 +114,7 @@ func TestDeactivationPreservesState(t *testing.T) {
 	}
 
 	fc.BlockUntil(1)
-	fc.Advance(time.Minute)
-	waitFor(t, "deactivation", func() bool { return rt.Stats().Active == 0 })
+	advanceUntil(t, fc, time.Minute, "deactivation", func() bool { return rt.Stats().Active == 0 })
 
 	// Reactivate: the counter must continue rather than restart.
 	got, err := rt.Call(context.Background(), "g", "increment", nil)
@@ -482,7 +503,6 @@ func TestLifecycleEventsAreDelivered(t *testing.T) {
 		t.Fatalf("Call: %v", err)
 	}
 	fc.BlockUntil(1)
-	fc.Advance(time.Minute)
 
 	// Wait for the event itself, not for Stats().Active to reach zero.
 	//
@@ -501,7 +521,7 @@ func TestLifecycleEventsAreDelivered(t *testing.T) {
 		}
 		return counts
 	}
-	waitFor(t, "the deactivate event", func() bool { return countKinds()[core.EventDeactivate] > 0 })
+	advanceUntil(t, fc, time.Minute, "the deactivate event", func() bool { return countKinds()[core.EventDeactivate] > 0 })
 
 	counts := countKinds()
 	mu.Lock()
