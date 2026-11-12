@@ -327,8 +327,8 @@ mutate "singleflight bypassed" \
 
 mutate "store version stops incrementing" \
   internal/store/store.go \
-  'version := sh.entries[key].version + 1' \
-  'version := uint64(1)' \
+  '	version := old.version + 1' \
+  '	version := uint64(1)' \
   'TestVersionsIncrementPerKey' ./internal/store/
 
 mutate "L1 invalidation ignores the resident version" \
