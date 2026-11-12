@@ -368,7 +368,7 @@ func (r SubmitResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
 //
 // A peer sends this. So can anything that can reach the port.
 //
-// Found by FuzzDecodeEveryMessage, which decodes each input into all twenty-one
+// Found by FuzzDecodeEveryMessage, which decodes each input into every one of the
 // message types rather than a subset, precisely so that "no input from a peer
 // may panic a node" is checked against the word "no".
 func (r *SubmitResponse) DecodeMsgpack(dec *msgpack.Decoder) error {

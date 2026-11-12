@@ -46,6 +46,12 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 		return h.set(ctx, req)
 	case transport.MethodDelete:
 		return h.delete(ctx, req)
+	case transport.MethodCondSet:
+		return h.condSet(ctx, req)
+	case transport.MethodIncrement:
+		return h.increment(ctx, req)
+	case transport.MethodTouch:
+		return h.touch(ctx, req)
 	case transport.MethodBatchGet:
 		return h.batchGet(ctx, req)
 	case transport.MethodCall:
@@ -214,35 +220,10 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Unlike Get, a write creates the namespace: the owner is where the
-	// value lives, so refusing would mean a key could never be written from
-	// anywhere but the node that happened to read it first.
-	//
-	// But a namespace created here gets *default* options — replication
-	// factor 1 — and options are fixed at creation. So an
-	// owner whose application has not yet opened the namespace silently
-	// replicates nothing, and killing it loses its entire share. That
-	// presented as 53 of 300 keys destroyed by a node failure at RF=3, and
-	// it took a bisect to find because every counter said the write
-	// succeeded.
-	//
-	// The creation still happens, because refusing would break the routed
-	// write path. What is added is that it is counted and logged: a non-zero
-	// ImplicitNamespaces means some node is running with configuration its
-	// application never chose.
-	_, existed := h.cache.namespaceIfExists(in.Namespace)
-	ns := h.cache.Namespace(in.Namespace).(*namespace)
-	if ns.err != nil {
-		return nil, h.misconfigured(ns)
-	}
-	if !existed {
-		h.cache.implicitNamespaces.Add(1)
-		h.cache.opts.Logger.Warn(
-			"namespace created by an incoming write, with default options; "+
-				"replication is disabled for it until this node's application "+
-				"opens it with the options it wants",
-			"namespace", in.Namespace,
-			"replicationFactor", ns.opts.ReplicationFactor)
+	// Unlike Get, a write creates the namespace; see writableNamespace.
+	ns, err := h.writableNamespace(in.Namespace)
+	if err != nil {
+		return nil, err
 	}
 
 	// Through the namespace's own write path, not straight into the store.
@@ -258,6 +239,36 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	}
 	_, version, _ := ns.store.Get(in.Key)
 	return wire.Encode(&wire.SetResponse{Stamp: h.stamp(version)})
+}
+
+// writableNamespace returns the namespace an incoming write lands in,
+// creating it if this node's application has not opened it.
+//
+// The creation happens because refusing would mean a key could never be
+// written from anywhere but the node that happened to read it first. But a
+// namespace created here gets *default* options — replication factor 1 — and
+// options are fixed at creation, so an owner whose application has not yet
+// opened the namespace silently replicates nothing. That presented as 53 of
+// 300 keys destroyed by a node failure at RF=3, and took a bisect to find
+// because every counter said the write succeeded. So it is counted and logged:
+// a non-zero ImplicitNamespaces means some node is running with configuration
+// its application never chose.
+func (h *peerHandler) writableNamespace(name string) (*namespace, error) {
+	_, existed := h.cache.namespaceIfExists(name)
+	ns := h.cache.Namespace(name).(*namespace)
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
+	}
+	if !existed {
+		h.cache.implicitNamespaces.Add(1)
+		h.cache.opts.Logger.Warn(
+			"namespace created by an incoming write, with default options; "+
+				"replication is disabled for it until this node's application "+
+				"opens it with the options it wants",
+			"namespace", name,
+			"replicationFactor", ns.opts.ReplicationFactor)
+	}
+	return ns, nil
 }
 
 func (h *peerHandler) delete(ctx context.Context, req []byte) ([]byte, error) {

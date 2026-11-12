@@ -7,6 +7,17 @@ change the public API.
 
 ## [Unreleased]
 
+### Added
+
+- Conditional writes on one key, run on its owner under the store's lock:
+  `Namespace.SetIfAbsent`, `CompareAndSwap`, `Increment` and `Touch`, and
+  `SetIfAbsent` and `Touch` on `TypedNamespace[T]`. Decision 0027.
+- `ErrNotAnInteger`, from `Increment`.
+
+### Changed
+
+- Tests live in `tests/` and `tests/repo/` instead of the root directory.
+
 ### Removed
 
 - `WithBindAddr`. It set a field nothing dialled. `Stats().Self` now comes from

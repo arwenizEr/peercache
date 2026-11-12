@@ -169,6 +169,46 @@ func BenchmarkNamespaceSetParallel(b *testing.B) {
 	})
 }
 
+// BenchmarkNamespaceIncrement is decision 0027's cost criterion: a local
+// Increment within twice a local Set. It does a parse and a format on top of a
+// Set's work, inside the store lock rather than outside it.
+func BenchmarkNamespaceIncrement(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench")
+	ctx := context.Background()
+	ks := benchKeys(1 << 16)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ns.Increment(ctx, ks[i%len(ks)], 1, time.Minute); err != nil {
+			b.Fatalf("Increment: %v", err)
+		}
+	}
+}
+
+// BenchmarkNamespaceCompareAndSwap measures a successful swap: the comparison
+// and the write, both under the lock.
+func BenchmarkNamespaceCompareAndSwap(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench")
+	ctx := context.Background()
+	a, z := make([]byte, 64), make([]byte, 64)
+	z[0] = 1
+	if err := ns.Set(ctx, "k", a, 0); err != nil {
+		b.Fatal(err)
+	}
+	vals := [2][]byte{a, z}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if ok, err := ns.CompareAndSwap(ctx, "k", vals[i%2], vals[(i+1)%2], 0); err != nil || !ok {
+			b.Fatalf("CompareAndSwap = %v, %v", ok, err)
+		}
+	}
+}
+
 // BenchmarkGetOrLoadHit measures the resident path through singleflight, which
 // is the common case: the loader is only reached on a miss.
 func BenchmarkGetOrLoadHit(b *testing.B) {

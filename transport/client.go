@@ -205,6 +205,10 @@ func toStatus(err error) error {
 		// Like ErrUnderReplicated: no gRPC code means it, so Internal plus
 		// the sentinel's text, recovered by fromStatus.
 		code = codes.Internal
+	case errors.Is(err, core.ErrNotAnInteger):
+		// The peer answered and refused; no gRPC code says why. Internal
+		// plus the sentinel's text, recovered by fromStatus.
+		code = codes.Internal
 	case errors.Is(err, core.ErrUnderReplicated):
 		// No gRPC code means "written, but not to enough nodes", and
 		// borrowing one would mislead anything that reads codes alone.
@@ -271,6 +275,8 @@ func fromStatus(err error, node core.Node) error {
 			sentinel = core.ErrUnderReplicated
 		} else if containsSentinel(st.Message(), core.ErrCodec.Error()) {
 			sentinel = core.ErrCodec
+		} else if containsSentinel(st.Message(), core.ErrNotAnInteger.Error()) {
+			sentinel = core.ErrNotAnInteger
 		} else {
 			sentinel = core.ErrNodeUnreachable
 		}

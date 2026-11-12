@@ -100,6 +100,13 @@ users := peercache.NamespaceOf[User](cache, "users",
 u, err := users.GetOrLoad(ctx, "user:42")
 ```
 
+For one key that must change atomically, `SetIfAbsent`, `CompareAndSwap`,
+`Increment` and `Touch` run on the key's owner as a single step:
+
+```go
+hits, err := ns.Increment(ctx, "rl:user:7", 1, time.Minute) // a rate-limit window
+```
+
 `cache.Namespace(name)` is the same API over `[]byte` values, for callers that
 bring their own encoding. Missing keys are `peercache.ErrNotFound`; every error
 the library returns is matched with `errors.Is`.
@@ -370,6 +377,8 @@ options.go        Functional options and partitioners
 context.go        Nil-context guard at every API boundary
 typed.go          NamespaceOf[T]: values as a Go type
 typed_group.go    Typed group function arguments and results
+atomic.go         SetIfAbsent, CompareAndSwap, Increment and Touch, from the
+                  method to the owner's store
 
 router.go         Queue-message routing with owner batching
 remote.go         Owner lookup and the remote read/write path

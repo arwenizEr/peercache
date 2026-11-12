@@ -392,6 +392,7 @@ func TestSentinelErrorsSurviveTheHop(t *testing.T) {
 		{"invalid option", core.ErrInvalidOption},
 		{"under replicated", core.ErrUnderReplicated},
 		{"codec", core.ErrCodec},
+		{"not an integer", core.ErrNotAnInteger},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

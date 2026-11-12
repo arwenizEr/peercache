@@ -479,6 +479,43 @@ codec; opening one name with two types is ErrInvalidOption, and a value that
 fails to decode is ErrCodec; the typed path adds no more than one encode or
 decode to the cost of the byte path, measured.
 
+### M11 — Linux and the pre-v1 API review
+
+The suite had only ever run on one Windows machine. The first run on a Linux CI
+runner failed four ways, none of them in the library: a test that needed a warm
+module cache, a latency budget held to on a shared runner, a race pass that did
+not fit a hosted runner's timeout twice, and three tests whose idle timer could
+be re-armed after the clock had moved. Each is fixed for the reason it failed.
+
+Before an API freezes, what it promises and cannot keep comes out: `WithBindAddr`,
+which configured nothing that was dialled; `ErrStateEscaped` and `EventEvict`,
+which nothing returned or emitted; and `PressureCheckInterval`, a tuning detail.
+The tests moved out of the root directory into `tests/` and `tests/repo/`.
+
+### M12 — Atomic operations on namespace keys
+
+Conditional writes on one key, executed on its owner under the store's lock and
+replicated like `Set`. See `decisions/0027-atomic-key-operations.md`.
+
+- `SetIfAbsent`, `CompareAndSwap`, `Increment` and `Touch` on `Namespace`;
+  `SetIfAbsent` and `Touch` on `TypedNamespace[T]`.
+- `Increment` stores a base-10 integer, keeps an existing key's deadline, and
+  reports `ErrNotAnInteger` for a value that does not parse or a sum that
+  overflows.
+- Only refusals that guarantee nothing was applied are retried. Nothing else is,
+  because none of these but `Touch` is idempotent.
+
+**Acceptance:** a thousand concurrent increments of one key from every node of a
+three-node cluster return a thousand distinct results and leave it at a
+thousand; of a hundred concurrent SetIfAbsent calls exactly one stores, and
+every node reads its value; CompareAndSwap with a stale old value changes
+nothing, and on a compressed namespace a matching one succeeds; Increment of a
+non-integer or an overflowing sum is ErrNotAnInteger and leaves the value; a
+touched key outlives its original deadline on its owner and on the replica
+promoted after the owner dies; an increment the owner applied before its reply
+was lost is not applied again; a local Increment costs no more than twice a
+local Set, measured.
+
 ---
 
 ## 5. Deliberately deferred

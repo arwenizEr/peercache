@@ -100,6 +100,10 @@ var (
 	// namespace was configured to refuse rather than acknowledge it.
 	ErrUnderReplicated = errors.New("peercache: write held by fewer nodes than its replication factor")
 
+	// ErrNotAnInteger means Increment found a value that is not a base-10
+	// int64, or a sum that would overflow one. See the root package.
+	ErrNotAnInteger = errors.New("peercache: value is not an integer, or the sum overflows")
+
 	// ErrOverMemoryBudget means an operation that would add bulk data was
 	// stopped because this node is over its memory budget.
 	ErrOverMemoryBudget = errors.New("peercache: over memory budget")

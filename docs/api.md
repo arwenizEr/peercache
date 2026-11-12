@@ -17,6 +17,7 @@ and output-checked by `go test`:
 | `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
 | `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
+| `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
@@ -153,6 +154,11 @@ type Namespace interface {
     BatchGet(ctx context.Context, keys []string) (map[string][]byte, error)
     BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error
     GetOrLoad(ctx context.Context, key string) ([]byte, error)
+
+    SetIfAbsent(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error)
+    CompareAndSwap(ctx context.Context, key string, old, new []byte, ttl time.Duration) (bool, error)
+    Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
+    Touch(ctx context.Context, key string, ttl time.Duration) (bool, error)
 }
 ```
 
@@ -164,6 +170,47 @@ scales with the number of distinct owners rather than the number of keys.
 `BatchSet` routes each pair to its owner as `Set` would, one request per key; it
 is not yet coalesced per owner. Neither is atomic across owners, and no
 cross-group transaction exists to make them so.
+
+### Conditional writes and counters
+
+`SetIfAbsent`, `CompareAndSwap`, `Increment` and `Touch` each run on the key's
+owner as one step under the store's lock, so no other write to the key can land
+between the check and the write, and then replicate exactly as `Set` does. For
+logic over several keys, use a group; these are for one key.
+
+```go
+// A lock, a lease, an idempotency key: exactly one caller creates it.
+created, err := ns.SetIfAbsent(ctx, "job:42/claim", []byte(podName), 30*time.Second)
+
+// Optimistic update: write only if nobody changed it since it was read.
+cur, _ := ns.Get(ctx, "config")
+swapped, err := ns.CompareAndSwap(ctx, "config", cur, next, 0)
+
+// A rate-limit window: the TTL starts with the first hit and is not extended.
+hits, err := ns.Increment(ctx, "rl:user:7:"+minute, 1, time.Minute)
+
+// A session kept alive by activity.
+alive, err := ns.Touch(ctx, "session:abc", 30*time.Minute)
+```
+
+`Increment` stores the value as base-10 text, so `Get` reads it and `Set` can
+initialise it. A missing key counts as zero. A value that is not an integer, or
+a sum that would overflow `int64`, is `ErrNotAnInteger` and changes nothing.
+
+**Only `Touch` is safe to retry.** The cache itself re-resolves the owner once
+after `ErrNotOwner`, `ErrStaleEpoch` or `ErrActivationPending`, because those are
+answered before anything is applied. After any other error — `ErrNodeUnreachable`,
+a deadline — the owner may already have applied the operation, and the cache
+does not retry it: an `Increment` retried after a lost reply counts twice. A
+caller that must retry should make the operation idempotent itself, for instance
+by `SetIfAbsent` on a request ID.
+
+The guarantees are `Set`'s. An asynchronously replicated counter can lose
+increments acknowledged inside the replication window when its owner dies, and
+a partition with two activations can accept increments on both sides — the
+replica counts that as a split-brain detection and does not add them together.
+`TypedNamespace[T]` has `SetIfAbsent` and `Touch`; it has no `CompareAndSwap`,
+because equal values of `T` need not encode to equal bytes.
 
 ### Namespace options
 
@@ -1072,7 +1119,8 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrFuncNotRegistered` | Unknown function name. | during a rolling upgrade, yes |
 | `ErrDuplicateRegistration` | Name registered twice. | no |
 | `ErrInvalidOption` | Option outside its range. | no |
-| `ErrNodeUnreachable` | Transport could not deliver. | yes |
+| `ErrNodeUnreachable` | Transport could not deliver. | yes, except after `SetIfAbsent`, `CompareAndSwap` or `Increment`: the owner may have applied it |
+| `ErrNotAnInteger` | `Increment` of a value that is not a base-10 `int64`, or a sum that overflows. The value is unchanged. | no |
 | `ErrCodec` | A typed value would not encode, or stored bytes would not decode as the namespace's type — or a typed group function's argument or result would not. | no — the bytes will not change |
 | `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
 | `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |

@@ -45,6 +45,19 @@ service Peer {
   // Delete removes one key. Removing an absent key is not an error.
   rpc Delete(DeleteRequest) returns (DeleteResponse);
 
+  // CondSet writes one key only if a condition holds on the owner: the key is
+  // absent (SetIfAbsent), or it holds exactly the given old value
+  // (CompareAndSwap). The check and the write are one step under the owner's
+  // store lock. Not idempotent: a caller that loses the reply must not retry.
+  rpc CondSet(CondSetRequest) returns (CondSetResponse);
+
+  // Increment adds a delta to the base-10 integer stored under one key and
+  // returns the result. Not idempotent, for the same reason as CondSet.
+  rpc Increment(IncrementRequest) returns (IncrementResponse);
+
+  // Touch gives one key a new lifetime without changing its value.
+  rpc Touch(TouchRequest) returns (TouchResponse);
+
   // BatchGet reads many keys from one namespace in one round trip. The
   // caller has already grouped keys by owner, so every key here belongs to
   // the node being asked.
@@ -139,6 +152,46 @@ message DeleteRequest {
 }
 
 message DeleteResponse {}
+
+message CondSetRequest {
+  string namespace = 1;
+  string key = 2;
+  bytes value = 3;
+  // compare selects CompareAndSwap: write only if the key holds exactly old.
+  // Otherwise SetIfAbsent: write only if the key is absent.
+  bool compare = 4;
+  bytes old = 5;
+  int64 ttl_ns = 6;
+  uint64 epoch = 7;
+}
+
+message CondSetResponse {
+  bool stored = 1;
+}
+
+message IncrementRequest {
+  string namespace = 1;
+  string key = 2;
+  int64 delta = 3;
+  // ttl_ns applies only when the increment creates the key.
+  int64 ttl_ns = 4;
+  uint64 epoch = 5;
+}
+
+message IncrementResponse {
+  int64 value = 1;
+}
+
+message TouchRequest {
+  string namespace = 1;
+  string key = 2;
+  int64 ttl_ns = 3;
+  uint64 epoch = 4;
+}
+
+message TouchResponse {
+  bool existed = 1;
+}
 
 message BatchGetRequest {
   string namespace = 1;

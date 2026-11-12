@@ -2359,9 +2359,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-docs/design.md §4 carries nine `**Acceptance:**` blocks, M0 through M6, M9 and M10;
+docs/design.md §4 carries ten `**Acceptance:**` blocks, M0 through M6, M9, M10 and M12;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to thirty. Each one, and the named test that would fail if it regressed:
+testable claims they come to thirty-seven. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2395,8 +2395,15 @@ testable claims they come to thirty. Each one, and the named test that would fai
 | M10 | invalid UTF-8 in a string round-trips intact under the default codec | `TestInvalidUTF8SurvivesTheDefaultCodec` |
 | M10 | one name opened with two types is ErrInvalidOption; an undecodable value is ErrCodec | `TestOneNameTwoTypesIsInvalid`, `TestAnUndecodableValueIsErrCodec` |
 | M10 | the typed path costs the byte path plus one encode or decode, measured | `BenchmarkTypedGet` and its comparisons, recorded in docs/benchmarks.md |
+| M12 | a thousand concurrent increments from every node return distinct results and total a thousand | `TestConcurrentIncrementsFromEveryNodeLoseNothing` |
+| M12 | of a hundred concurrent SetIfAbsent calls exactly one stores, and every node reads it | `TestExactlyOneConcurrentSetIfAbsentWins` |
+| M12 | a stale CompareAndSwap changes nothing; on a compressed namespace a matching one succeeds | `TestCompareAndSwapChangesOnlyWhatItWasShown`, `TestCompareAndSwapComparesWhatGetReturns` |
+| M12 | Increment of a non-integer or an overflow is ErrNotAnInteger and leaves the value | `TestIncrementRefusesWhatIsNotAnInteger` |
+| M12 | a touched key outlives its original deadline, on its owner and after failover | `TestTouchOutlivesTheOriginalDeadlineAcrossFailover` |
+| M12 | an increment applied before its reply was lost is not applied again | `TestAnIncrementWhoseOwnerFailedAfterApplyingIsNotRetried` |
+| M12 | a local Increment within twice a local Set, measured | `BenchmarkNamespaceIncrement`, recorded in docs/benchmarks.md |
 
-All thirty-four names in the table were verified to exist before it was
+All forty-one names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

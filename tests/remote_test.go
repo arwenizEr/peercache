@@ -845,6 +845,18 @@ type countingTransport struct {
 	core.Transport
 	mu     sync.Mutex
 	counts map[string]int
+	// replyFault, if set, sees every reply after the peer answered and may
+	// replace its error. It is how a test loses a reply the peer already
+	// acted on while the caller's context is still alive — the case a
+	// dropped message cannot produce, since a drop only ends in a deadline.
+	replyFault func(method string, err error) error
+}
+
+// setReplyFault installs or, with nil, removes the reply fault.
+func (t *countingTransport) setReplyFault(fn func(method string, err error) error) {
+	t.mu.Lock()
+	t.replyFault = fn
+	t.mu.Unlock()
 }
 
 func (t *countingTransport) Dial(node core.Node) (core.PeerClient, error) {
@@ -889,7 +901,16 @@ type countingClient struct {
 
 func (c *countingClient) Invoke(ctx context.Context, method string, req []byte) ([]byte, error) {
 	c.parent.count(method)
-	return c.PeerClient.Invoke(ctx, method, req)
+	resp, err := c.PeerClient.Invoke(ctx, method, req)
+	c.parent.mu.Lock()
+	fault := c.parent.replyFault
+	c.parent.mu.Unlock()
+	if fault != nil {
+		if ferr := fault(method, err); ferr != err {
+			return nil, ferr
+		}
+	}
+	return resp, err
 }
 
 // TestRouterIssuesOneRequestPerOwner is the router acceptance criterion from

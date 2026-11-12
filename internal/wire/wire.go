@@ -86,6 +86,52 @@ type DeleteRequest struct {
 	Epoch     uint64 `msgpack:"epoch"`
 }
 
+// CondSetRequest writes one key on its owner only if a condition holds there:
+// the key is absent, or, with Compare, it holds exactly Old. It carries both
+// SetIfAbsent and CompareAndSwap.
+type CondSetRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	Value     []byte `msgpack:"value"`
+	Compare   bool   `msgpack:"compare"`
+	Old       []byte `msgpack:"old"`
+	TTLNanos  int64  `msgpack:"ttl_ns"`
+	Epoch     uint64 `msgpack:"epoch"`
+}
+
+// CondSetResponse reports whether the owner stored the value.
+type CondSetResponse struct {
+	Stored bool `msgpack:"stored"`
+}
+
+// IncrementRequest adds Delta to the integer under one key on its owner.
+// TTLNanos applies only if the increment creates the key.
+type IncrementRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	Delta     int64  `msgpack:"delta"`
+	TTLNanos  int64  `msgpack:"ttl_ns"`
+	Epoch     uint64 `msgpack:"epoch"`
+}
+
+// IncrementResponse returns the integer after the increment.
+type IncrementResponse struct {
+	Value int64 `msgpack:"value"`
+}
+
+// TouchRequest gives one key a new lifetime on its owner.
+type TouchRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	TTLNanos  int64  `msgpack:"ttl_ns"`
+	Epoch     uint64 `msgpack:"epoch"`
+}
+
+// TouchResponse reports whether the key existed.
+type TouchResponse struct {
+	Existed bool `msgpack:"existed"`
+}
+
 // DeleteResponse is empty. It exists so that the method has a response type
 // like every other, rather than a special case in the dispatcher.
 type DeleteResponse struct{}

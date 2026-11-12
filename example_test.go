@@ -56,6 +56,43 @@ func Example() {
 	// Self: pod-0
 }
 
+// ExampleNamespace_Increment shows the conditional writes: a counter whose
+// window starts with its first hit, a claim only one caller wins, and a swap
+// refused because the value moved.
+func ExampleNamespace_Increment() {
+	fc := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fc))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	ns := cache.Namespace("limits")
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		n, _ := ns.Increment(ctx, "rl:user:7", 1, time.Minute)
+		fmt.Println("hit", n)
+	}
+	fc.Advance(time.Minute)
+	n, _ := ns.Increment(ctx, "rl:user:7", 1, time.Minute)
+	fmt.Println("next window starts at", n)
+
+	first, _ := ns.SetIfAbsent(ctx, "job:42", []byte("pod-0"), 0)
+	second, _ := ns.SetIfAbsent(ctx, "job:42", []byte("pod-1"), 0)
+	fmt.Println("claimed:", first, second)
+
+	swapped, _ := ns.CompareAndSwap(ctx, "job:42", []byte("pod-1"), []byte("pod-2"), 0)
+	fmt.Println("stale swap:", swapped)
+	// Output:
+	// hit 1
+	// hit 2
+	// hit 3
+	// next window starts at 1
+	// claimed: true false
+	// stale swap: false
+}
+
 // ExampleWithLoader shows why GetOrLoad has no loader argument. The loader is
 // registered on the namespace, so it exists by name on every pod and the key's
 // owner can run it locally instead of shipping the miss back to the caller.

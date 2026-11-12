@@ -257,6 +257,8 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 		"LoadRequest", "LoadResponse", "ReplicateRequest", "ReplicateResponse",
 		"CatchUpRequest", "CatchUpResponse", "CatchUpEntry",
 		"DeleteRequest", "DeleteResponse", "BatchGetRequest", "BatchGetResponse",
+		"CondSetRequest", "CondSetResponse", "IncrementRequest", "IncrementResponse",
+		"TouchRequest", "TouchResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
 		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
 		"GroupFailure",
@@ -293,6 +295,8 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
 		&wire.LoadRequest{}, &wire.LoadResponse{}, &wire.ReplicateRequest{},
 		&wire.CatchUpRequest{}, &wire.CatchUpEntry{},
+		&wire.CondSetRequest{}, &wire.CondSetResponse{}, &wire.IncrementRequest{},
+		&wire.IncrementResponse{}, &wire.TouchRequest{}, &wire.TouchResponse{},
 	}
 	for _, msg := range types {
 		typ := reflect.TypeOf(msg).Elem()

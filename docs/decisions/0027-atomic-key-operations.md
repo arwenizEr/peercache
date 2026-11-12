@@ -1,6 +1,6 @@
 # 0027 — Atomic operations on namespace keys
 
-**Status:** accepted, not yet built.
+**Status:** accepted, built.
 **Milestone:** M12.
 **Bound by:** design principle 3 (docs/design.md) — closures never cross the
 network — and principle 6: correctness never depends on a message arriving.

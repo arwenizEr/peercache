@@ -110,6 +110,11 @@ var (
 	// docs/decisions/open.md question 37.
 	ErrUnderReplicated = core.ErrUnderReplicated
 
+	// ErrNotAnInteger means [Namespace.Increment] found a value under the key
+	// that does not parse as a base-10 int64, or that adding the delta would
+	// overflow one. The value is left as it was.
+	ErrNotAnInteger = core.ErrNotAnInteger
+
 	// ErrOverMemoryBudget means [Cache.CatchUp] stopped pulling because this
 	// node is over the budget set by [WithMemoryBudget].
 	//

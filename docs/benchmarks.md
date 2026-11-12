@@ -886,6 +886,25 @@ the byte read it wraps. That is MessagePack's price for reflection-driven
 decoding of a struct, not the view's; a hot path that cannot afford it keeps the
 byte API.
 
+## M12 — atomic key operations
+
+Machine A, `go test -run '^$' -bench 'BenchmarkNamespace(Set|Increment|CompareAndSwap)$' -benchmem -count 5 .`,
+median of five, a 64-byte value or a small counter, 65,536 keys.
+
+| Benchmark | ns/op | B/op | allocs/op | What it measures |
+|---|---:|---:|---:|---|
+| `BenchmarkNamespaceSet` | 411.2 | 85 | 2 | the baseline: one local `Set` |
+| `BenchmarkNamespaceIncrement` | 491.8 | 38 | 3 | parse, add, format, store — one locked update |
+| `BenchmarkNamespaceCompareAndSwap` | 303.7 | 80 | 2 | a successful swap of one key |
+
+Decision 0027's criterion is a local `Increment` within twice a local `Set`. It
+is 1.20×. The extra allocation is the formatted integer; the bytes per op are
+lower because a counter's value is a few digits rather than 64 bytes.
+
+`CompareAndSwap` being cheaper than `Set` is a single-key effect, not a property
+of the path: the benchmark swaps one key back and forth, so its shard and map
+slot stay hot, where `Set` walks 65,536 keys.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

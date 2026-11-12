@@ -341,6 +341,7 @@ func TestSentinelErrorsAreDistinct(t *testing.T) {
 		"ErrStaleEpoch":            peercache.ErrStaleEpoch,
 		"ErrNotOwner":              peercache.ErrNotOwner,
 		"ErrNoLoader":              peercache.ErrNoLoader,
+		"ErrNotAnInteger":          peercache.ErrNotAnInteger,
 		"ErrLoaderPanic":           peercache.ErrLoaderPanic,
 		"ErrLoaderFailed":          peercache.ErrLoaderFailed,
 		"ErrFuncNotRegistered":     peercache.ErrFuncNotRegistered,

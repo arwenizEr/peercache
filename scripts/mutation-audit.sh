@@ -1579,11 +1579,11 @@ mutate "BatchSet writes locally instead of routing"   namespace.go   '		if err :
 
 # A peer write to a namespace misconfigured on its owner reached a nil store
 # and panicked on the handler goroutine.
-mutate "a misconfigured namespace's nil store is reachable from a peer"   handler.go   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
+mutate "a misconfigured namespace's nil store is reachable from a peer"   handler.go   '	ns := h.cache.Namespace(name).(*namespace)
 	if ns.err != nil {
 		return nil, h.misconfigured(ns)
 	}
-	if !existed {'   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if !existed {'   '	ns := h.cache.Namespace(name).(*namespace)
 	if !existed {'   'TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash$' ./tests
 
 # Compression across nodes: the wire and L1 carry plain values, the stores
@@ -1643,6 +1643,71 @@ mutate "a refused activation keeps its empty record"   internal/actor/record.go 
 # which could deadlock memberlist. That deadlock cannot be staged without over
 # sixty real nodes; what is held here is that republishing still happens.
 mutate "this node's metadata is never republished"   membership/gossip.go   '			case g.republish <- struct{}{}:'   '			case <-make(chan struct{}):'   'TestGossipAdvertisesTheRPCAddress$' ./membership/
+
+# --- atomic key operations (decision 0027) ---
+
+mutate "an update reads and writes under separate locks" \
+  internal/store/update.go \
+  '	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	old, had := sh.entries[key]' \
+  '	sh.mu.RLock()
+	old, had := sh.entries[key]
+	sh.mu.RUnlock()
+	sh.mu.Lock()
+	defer sh.mu.Unlock()' \
+  'TestUpdateIsAtomicUnderContention$' ./internal/store
+
+mutate "compare-and-swap compares framed bytes" \
+  atomic.go \
+  '			cur = plain' \
+  '			cur, _ = stored, plain' \
+  'TestCompareAndSwapComparesWhatGetReturns$' ./tests
+
+mutate "an increment extends its counters deadline" \
+  atomic.go \
+  '		if ok {
+			m.KeepDeadline = true
+		} else {
+			m.TTL = ttl
+		}' \
+  '		m.TTL = ttl' \
+  'TestIncrementKeepsTheCountersDeadline$' ./tests
+
+mutate "atomic writes are not replicated" \
+  atomic.go \
+  '	if err := n.fanOut(ctx, key, encoded, ttl, stamp, false); err != nil {' \
+  '	if err := error(nil); err != nil {' \
+  'TestTouchOutlivesTheOriginalDeadlineAcrossFailover$' ./tests
+
+mutate "a kept deadline reaches replicas as none" \
+  atomic.go \
+  '		ttl = time.Duration(res.ExpiresAt - n.cache.opts.Clock.Now().UnixNano())' \
+  '		ttl = 0 * time.Duration(res.ExpiresAt-n.cache.opts.Clock.Now().UnixNano())' \
+  'TestTouchOutlivesTheOriginalDeadlineAcrossFailover$|TestIncrementKeepsTheCountersDeadline$' ./tests
+
+mutate "an atomic write retries after any error" \
+  atomic.go \
+  '	if err != nil && retryable(err) {' \
+  '	if err != nil {' \
+  'TestAnIncrementWhoseOwnerFailedAfterApplyingIsNotRetried$' ./tests
+
+mutate "set-if-absent overwrites a live value" \
+  atomic.go \
+  '		} else if ok {
+			return store.Mutation{}, false, nil
+		}' \
+  '		} else if false {
+			return store.Mutation{}, false, nil
+		}' \
+  'TestExactlyOneConcurrentSetIfAbsentWins$' ./tests
+
+mutate "an overflowing increment wraps" \
+  atomic.go \
+  '		if (delta > 0 && sum < current) || (delta < 0 && sum > current) {' \
+  '		if false {' \
+  'TestIncrementRefusesWhatIsNotAnInteger$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

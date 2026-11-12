@@ -37,6 +37,17 @@ type TypedNamespace[T any] interface {
 	Delete(ctx context.Context, key string) error
 	// Exists reports whether key is present.
 	Exists(ctx context.Context, key string) (bool, error)
+	// SetIfAbsent stores val under key for ttl unless a live value is
+	// there, and reports whether it stored. See [Namespace.SetIfAbsent].
+	//
+	// There is no typed CompareAndSwap: equal values of T need not encode to
+	// equal bytes — msgpack writes a map in iteration order — so a typed
+	// comparison would be a byte comparison wearing a type. Use Raw and
+	// compare bytes explicitly if that is what is wanted.
+	SetIfAbsent(ctx context.Context, key string, val T, ttl time.Duration) (bool, error)
+	// Touch gives key a new lifetime without changing its value. See
+	// [Namespace.Touch].
+	Touch(ctx context.Context, key string, ttl time.Duration) (bool, error)
 	// BatchGet returns the values present among keys; absent keys are
 	// omitted.
 	BatchGet(ctx context.Context, keys []string) (map[string]T, error)
@@ -175,6 +186,24 @@ func (t *typedNamespace[T]) Delete(ctx context.Context, key string) error {
 		return t.err
 	}
 	return t.raw.Delete(ctx, key)
+}
+
+func (t *typedNamespace[T]) SetIfAbsent(ctx context.Context, key string, val T, ttl time.Duration) (bool, error) {
+	if t.err != nil {
+		return false, t.err
+	}
+	b, err := t.encode(key, val)
+	if err != nil {
+		return false, err
+	}
+	return t.raw.SetIfAbsent(ctx, key, b, ttl)
+}
+
+func (t *typedNamespace[T]) Touch(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if t.err != nil {
+		return false, t.err
+	}
+	return t.raw.Touch(ctx, key, ttl)
 }
 
 func (t *typedNamespace[T]) Exists(ctx context.Context, key string) (bool, error) {

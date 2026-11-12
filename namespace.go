@@ -55,6 +55,45 @@ type Namespace interface {
 	// to use it as one.
 	Exists(ctx context.Context, key string) (bool, error)
 
+	// SetIfAbsent stores val under key for ttl unless a live value is
+	// already there, and reports whether it stored. The check and the write
+	// happen together on the key's owner, so of many concurrent callers
+	// exactly one stores.
+	//
+	// Like CompareAndSwap and Increment it is not idempotent. An error other
+	// than a refusal — ErrNodeUnreachable, an expired deadline — may come
+	// after the owner applied it, and retrying could then report false for
+	// a value this caller stored. ErrNotOwner, ErrStaleEpoch and
+	// ErrActivationPending are refusals; the cache retries those once itself.
+	SetIfAbsent(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error)
+
+	// CompareAndSwap stores new under key for ttl only if key currently holds
+	// exactly old, and reports whether it did. A missing or expired key never
+	// matches; use SetIfAbsent to create one. Values are compared as the
+	// bytes Get would return, whatever the namespace's compression.
+	//
+	// Not idempotent; see SetIfAbsent for what that means for errors.
+	CompareAndSwap(ctx context.Context, key string, old, new []byte, ttl time.Duration) (bool, error)
+
+	// Increment adds delta to the integer stored under key and returns the
+	// result. The value is a base-10 integer, so Get reads it as text and
+	// Set can initialise it. A missing key counts as zero and is created
+	// with ttl; an existing key keeps its deadline. A value that is not an
+	// integer, or a sum that overflows int64, is ErrNotAnInteger and changes
+	// nothing.
+	//
+	// Not idempotent: an error other than a refusal may come after the owner
+	// applied the increment, and retrying would apply it twice. See
+	// SetIfAbsent. Like every write it is as durable as the namespace's
+	// replication makes it — an asynchronously replicated counter can lose
+	// increments acknowledged inside the replication window.
+	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
+
+	// Touch gives key a new lifetime of ttl from now without changing its
+	// value, and reports whether the key existed. A non-positive ttl removes
+	// its deadline. It is safe to retry.
+	Touch(ctx context.Context, key string, ttl time.Duration) (bool, error)
+
 	// BatchGet returns the values for keys, omitting keys that are absent.
 	// Keys are grouped by owner and issued as one request per owner, so
 	// cost scales with the number of distinct owners rather than the number

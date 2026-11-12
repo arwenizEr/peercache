@@ -9,14 +9,14 @@ import (
 // FuzzDecodeEveryMessage is the exhaustive companion to FuzzDecode.
 //
 // FuzzDecode covers five message types. That was a reasonable sample when it
-// was written and it is now a liability: the wire package has twenty-one, a peer can
+// was written and it is now a liability: the wire package has twenty-seven, a peer can
 // send any of them, and the length-prefix defect — six bytes that wedged the
 // process for two minutes by pre-allocating from a declared length — lived in a
 // decoder that nothing was fuzzing at the time.
 //
 // docs/design.md asks that no input from a peer may panic a node. "No input" means
 // every message, not a representative subset, so this decodes each arbitrary
-// byte string into all twenty-one and requires none of them to panic, hang, or
+// byte string into all twenty-seven and requires none of them to panic, hang, or
 // allocate from a length it has not read.
 //
 // A decoder that errors is behaving correctly. The only acceptable outcomes are
@@ -35,6 +35,12 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		&wire.SetResponse{},
 		&wire.DeleteRequest{Namespace: "n", Key: "k"},
 		&wire.DeleteResponse{},
+		&wire.CondSetRequest{Namespace: "n", Key: "k", Value: []byte("v"), Compare: true, Old: []byte("o")},
+		&wire.CondSetResponse{Stored: true},
+		&wire.IncrementRequest{Namespace: "n", Key: "k", Delta: 1},
+		&wire.IncrementResponse{Value: 1},
+		&wire.TouchRequest{Namespace: "n", Key: "k", TTLNanos: 1},
+		&wire.TouchResponse{Existed: true},
 		&wire.BatchGetRequest{Namespace: "n", Keys: []string{"a", "b"}},
 		&wire.BatchGetResponse{Entries: []wire.BatchEntry{{Key: "a", Value: []byte("v")}}},
 		&wire.CallRequest{Group: "g", FuncName: "f", Args: []byte{1}},
@@ -98,6 +104,12 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 			setResp  wire.SetResponse
 			delReq   wire.DeleteRequest
 			delResp  wire.DeleteResponse
+			csReq    wire.CondSetRequest
+			csResp   wire.CondSetResponse
+			incReq   wire.IncrementRequest
+			incResp  wire.IncrementResponse
+			touReq   wire.TouchRequest
+			touResp  wire.TouchResponse
 			bgReq    wire.BatchGetRequest
 			bgResp   wire.BatchGetResponse
 			callReq  wire.CallRequest
@@ -125,6 +137,12 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		_ = wire.Decode(data, &setResp)
 		_ = wire.Decode(data, &delReq)
 		_ = wire.Decode(data, &delResp)
+		_ = wire.Decode(data, &csReq)
+		_ = wire.Decode(data, &csResp)
+		_ = wire.Decode(data, &incReq)
+		_ = wire.Decode(data, &incResp)
+		_ = wire.Decode(data, &touReq)
+		_ = wire.Decode(data, &touResp)
 		_ = wire.Decode(data, &bgReq)
 		_ = wire.Decode(data, &bgResp)
 		_ = wire.Decode(data, &callReq)
