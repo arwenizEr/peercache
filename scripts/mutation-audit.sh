@@ -939,7 +939,7 @@ mutate "drain does not announce its departure" \
 # fixed on the counter side.
 mutate "handed-off keys are not adopted by their new owner" \
   handler.go \
-  'if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
+  'if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {
 			h.cache.keysAdopted.Add(1)
 		}
 		h.cache.pressure.noteWrite(len(in.Value))' \
