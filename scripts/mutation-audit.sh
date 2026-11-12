@@ -756,19 +756,20 @@ mutate "Drain leaves a stranded copy behind" \
 mutate "promotion restarts the version sequence" \
   internal/store/store.go \
   '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
-	sh.sets.Add(1)
-	return true' \
+	delta := size(key, stored)
+	if ok {' \
   '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: 1}
-	sh.sets.Add(1)
-	return true' \
+	delta := size(key, stored)
+	if ok {' \
   'TestRestoreContinuesTheVersionSequence' ./internal/store/
 
 mutate "Restore overwrites a newer value" \
   internal/store/store.go \
-  'if existing, ok := sh.entries[key]; ok && existing.version >= version {
+  '	if ok && existing.version >= version {
 		return false
-	}' \
-  '' \
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}' \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}' \
   'TestRestoreRefusesAnOlderVersion' ./internal/store/
 
 mutate "snapshot ignores its page limit" \
@@ -941,8 +942,8 @@ mutate "handed-off keys are not adopted by their new owner" \
   'if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
 			h.cache.keysAdopted.Add(1)
 		}
-		return wire.Encode(&wire.ReplicateResponse{})' \
-  'return wire.Encode(&wire.ReplicateResponse{})' \
+		h.cache.pressure.noteWrite(len(in.Value))' \
+  'h.cache.pressure.noteWrite(len(in.Value))' \
   'TestDrainSavesDataWithoutReplication' .
 
 mutate "an implicitly created namespace is not counted" \
@@ -1463,8 +1464,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '38 series come out of it' \
-  '37 series come out of it' \
+  '46 series come out of it' \
+  '45 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' .
 
 # A public-API file dropping out of the repository map, which is how twelve of
