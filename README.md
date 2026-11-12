@@ -103,6 +103,11 @@ the feature list rather than after it.
   node that covered for it. In the chaos test that presented as 558 of 600 keys
   lost, none of them actually gone. Call `CatchUp` after readiness and before
   serving.
+- **A key's TTL holds across failover, drain and catch-up.** Replicas hold the
+  owner's deadline, not a duration, so a promoted, drained or caught-up key
+  expires when it was written to, and a key that expired on its owner does not
+  come back on the node that replaces it. Expired replicas are reclaimed on the
+  cache's tick.
 - **Reads of non-owned keys may be stale** by up to the configured L1 TTL.
   Invalidation broadcasts are a latency optimisation and may be lost;
   correctness never depends on one arriving.

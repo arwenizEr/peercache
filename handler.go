@@ -375,6 +375,14 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		return nil, err
 	}
 
+	if in.TTLNanos < 0 {
+		// Expired before it was sent. Zero means "does not expire", so a
+		// negative remainder must not be read as zero: stored, it would
+		// never expire anywhere. The senders already skip expired keys;
+		// this is the receiver not trusting them to.
+		return wire.Encode(&wire.ReplicateResponse{})
+	}
+
 	if in.Deleted {
 		// A tombstone. Removing outright rather than storing a marker
 		// is safe because the stamp check above it has already refused
@@ -405,10 +413,10 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	}
 
 	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
-		Value:    in.Value,
-		Stamp:    in.Stamp,
-		TTLNanos: in.TTLNanos,
-		From:     in.From,
+		Value:     in.Value,
+		Stamp:     in.Stamp,
+		ExpiresAt: replication.DeadlineFrom(h.cache.opts.Clock.Now().UnixNano(), in.TTLNanos),
+		From:      in.From,
 	})
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {

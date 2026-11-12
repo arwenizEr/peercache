@@ -2111,6 +2111,40 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### After M9: a coverage sweep, and a key that came back from the dead
+
+Asked to test what was untested, the first step was to measure rather than
+guess: `go test -coverpkg=./...` across the module, then every block with a zero
+count, merged across packages by maximum. Two branches stood out because they
+were the *only* code handling a TTL on a path between nodes: the drain's
+remaining-TTL computation and catch-up's. Neither had ever run.
+
+Writing tests for them found that the replica store held a TTL as a **duration**
+and promotion restored it from the moment of promotion. A key that had expired
+on its owner came back, with a fresh lifetime, on the node promoted in its
+place; a key drained or promoted mid-life lived longer than it was written for.
+The struct's own doc comment said the opposite — "so that a promoted replica
+expires the key on the owner's schedule" — and nothing tested it. An expiry is
+never replicated; it holds only if every holder agrees on the instant. Replicas
+now hold a deadline. Nothing swept expired replicas either, so under a TTL
+workload every replica ever sent stayed resident; `SweepExpired` runs on the
+cache's tick.
+
+`TestAnExpiredKeyStaysExpiredAfterFailover` failed with "the promoted replica
+serves "v". An expired key came back", and `TestADrainedKeyKeepsItsRemainingTTL`
+with the key still served past its TTL. `TestACaughtUpKeyKeepsItsRemainingTTL`
+passed against the bug in its first form — it checked long after both the right
+and the wrong deadline — and was rewritten to check between them.
+
+**Two checks this harness cannot exercise.** Promotion and hand-off each skip a
+replica whose deadline has passed, because between the last sweep and the next
+there is up to a second in which an expired copy is still held, and restoring it
+with a negative remainder would make the owned store keep it forever. In the
+harness the sweep always gets there first: the fake ticker hands its tick to a
+goroutine that reads the clock after the advance has finished. Removing either
+check changes nothing a test sees, so neither is in the audit; both are reasoned.
+The receiver also refuses a negative TTL on the wire, for the same reason.
+
 ### M9 — resilience under resource pressure, and what checking it found
 
 Eleven mutation entries, every one applied by hand and caught before it was

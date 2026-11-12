@@ -134,8 +134,16 @@ func (p *promoter) reconcile() {
 			owner, _, err := c.guard.Table().Owner(ns.groupKeyFor(key))
 			return err == nil && owner.ID == self
 		})
+		now := c.opts.Clock.Now().UnixNano()
 		for key, e := range taken {
-			if ns.store.Restore(key, e.Value, time.Duration(e.TTLNanos), e.Stamp.Version) {
+			left, live := e.Remaining(now)
+			if !live {
+				// Expired on the owner's schedule while held here.
+				// Restoring it would bring back a key every other holder
+				// has already let go of.
+				continue
+			}
+			if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {
 				p.promoted.Add(1)
 			}
 			// A refused Restore means a newer value was written here

@@ -203,11 +203,17 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 	if from == "" {
 		from = c.self().ID
 	}
+	left, live := w.entry.Remaining(c.opts.Clock.Now().UnixNano())
+	if !live {
+		// Expired here, so expired on every other holder too: there is
+		// nothing to hand on, and handing it on would revive it.
+		return
+	}
 	req := &wire.ReplicateRequest{
 		Namespace: w.namespace,
 		Key:       w.key,
 		Value:     w.entry.Value,
-		TTLNanos:  w.entry.TTLNanos,
+		TTLNanos:  left,
 		Stamp:     w.entry.Stamp,
 		From:      from,
 	}

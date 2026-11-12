@@ -19,10 +19,11 @@ import (
 // flag on every membership change — touching every key to record something that
 // is derivable from the ownership table in nanoseconds.
 //
-// The two have different lifetimes. Owned entries expire on their own TTL;
-// replica entries live until the owner says otherwise or this node stops being
-// a replica for them. Sweeping them together would need two policies in one
-// loop.
+// The two have different lifecycles. Both expire at the owner's deadline, but
+// a replica also leaves when the owner deletes it or this node stops being a
+// replica for it, and promotion moves it into the owned store. Sweeping them
+// together would need two policies in one loop; [Store.SweepExpired] is the
+// replica half.
 //
 // And [Stats.ReplicaKeys] has to mean something. An operator asking "how much
 // of this pod's memory is data it does not own" gets an answer from a separate
@@ -89,10 +90,15 @@ type namespaceReplicas struct {
 type Entry struct {
 	Value []byte
 	Stamp core.Stamp
-	// TTLNanos is the TTL the owner applied, carried so that a promoted
-	// replica expires the key on the owner's schedule rather than starting
-	// the clock again from the moment it was promoted.
-	TTLNanos int64
+	// ExpiresAt is the owner's deadline for this key in Unix nanoseconds, or
+	// zero for no expiry.
+	//
+	// A deadline, not a duration. It was a duration until a test showed what
+	// that cost: a promoted replica restarted the key's lifetime at promotion,
+	// and a key that had already expired on its owner came back with a fresh
+	// one. An expiry is never replicated — it happens on every holder at the
+	// same instant — so every holder has to agree on the instant.
+	ExpiresAt int64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
 	// epoch means two of them believe they own it.
@@ -314,6 +320,58 @@ func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 		dropped++
 	}
 	return dropped
+}
+
+// Live reports whether e is unexpired at now (Unix nanoseconds).
+func (e Entry) Live(now int64) bool { return e.ExpiresAt == 0 || now < e.ExpiresAt }
+
+// Remaining returns the time e has left at now, and whether it has any. A key
+// with no deadline has all the time in the world, reported as zero and true:
+// zero is the owned store's "does not expire".
+func (e Entry) Remaining(now int64) (int64, bool) {
+	if e.ExpiresAt == 0 {
+		return 0, true
+	}
+	left := e.ExpiresAt - now
+	return left, left > 0
+}
+
+// DeadlineFrom converts a TTL received over the wire into a deadline at the
+// moment of arrival. Zero or negative means no expiry, as on the owner.
+func DeadlineFrom(now, ttlNanos int64) int64 {
+	if ttlNanos <= 0 {
+		return 0
+	}
+	return now + ttlNanos
+}
+
+// SweepExpired removes every replica whose deadline has passed and returns how
+// many it removed.
+//
+// The owned store sweeps its own expired entries; until this existed nothing
+// swept replicas, so under a TTL workload every replica a node had ever held
+// stayed resident after its key expired everywhere else.
+func (s *Store) SweepExpired(now int64) int {
+	s.mu.RLock()
+	namespaces := make([]*namespaceReplicas, 0, len(s.ns))
+	for _, nr := range s.ns {
+		namespaces = append(namespaces, nr)
+	}
+	s.mu.RUnlock()
+
+	removed := 0
+	for _, nr := range namespaces {
+		nr.mu.Lock()
+		for key, e := range nr.entries {
+			if !e.Live(now) {
+				delete(nr.entries, key)
+				s.bytes.Add(-size(key, e))
+				removed++
+			}
+		}
+		nr.mu.Unlock()
+	}
+	return removed
 }
 
 // Bytes returns the accounted size of every replica held, across namespaces.

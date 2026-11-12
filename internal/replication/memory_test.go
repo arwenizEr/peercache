@@ -152,3 +152,33 @@ func TestReplicaBytesUnderConcurrency(t *testing.T) {
 		t.Fatalf("Bytes = %d, contents add up to %d", got, want)
 	}
 }
+
+// TestRemainingAndDeadline pins the arithmetic every holder of a replica uses
+// to agree on when it expires.
+func TestRemainingAndDeadline(t *testing.T) {
+	if got := replication.DeadlineFrom(100, 0); got != 0 {
+		t.Fatalf("DeadlineFrom(100, 0) = %d, want 0: no TTL means no expiry", got)
+	}
+	if got := replication.DeadlineFrom(100, -5); got != 0 {
+		t.Fatalf("DeadlineFrom(100, -5) = %d, want 0", got)
+	}
+	if got := replication.DeadlineFrom(100, 50); got != 150 {
+		t.Fatalf("DeadlineFrom(100, 50) = %d, want 150", got)
+	}
+
+	never := replication.Entry{}
+	if left, live := never.Remaining(1 << 60); left != 0 || !live {
+		t.Fatalf("an entry with no deadline: Remaining = %d, %v; want 0, true", left, live)
+	}
+	e := replication.Entry{ExpiresAt: 150}
+	if left, live := e.Remaining(100); left != 50 || !live {
+		t.Fatalf("Remaining(100) = %d, %v; want 50, true", left, live)
+	}
+	// At and past the deadline it is gone, never "zero left", which the
+	// owned store would read as "does not expire".
+	for _, now := range []int64{150, 151} {
+		if _, live := e.Remaining(now); live || e.Live(now) {
+			t.Fatalf("at %d, an entry expiring at 150 reports itself live", now)
+		}
+	}
+}

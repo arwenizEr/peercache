@@ -1309,6 +1309,22 @@ mutate "a cold start ranks nobody" \
 # whose replica is a throttled node as slow as that node.
 mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{'   '	if err := n.cache.replicator.replicate(ctx, true, replicaWork{'   'TestAStarvedNodeSlowsOnlyItsOwnKeys$' .
 
+# --- TTL across failover: replicas hold the owner's deadline ---
+#
+# Found by writing tests for code coverage reported as never run. The
+# promotion-time and hand-off-time expiry checks are not entered here: the
+# replica sweep always removes an expired copy first in this harness, so
+# removing either check changes nothing a test can see. See
+# docs/verification.md.
+
+mutate "promotion restarts a key's lifetime"   promote.go   'if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {'   'if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version) {'   'TestAPromotedKeyKeepsItsRemainingTTL$' .
+
+mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano(), e.TTLNanos),'   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano()+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' .
+
+mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' .
+
+mutate "a replica at its deadline still counts as live"   internal/replication/replica.go   '	return left, left > 0'   '	return left, left >= 0'   'TestRemainingAndDeadline$' ./internal/replication/
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,
