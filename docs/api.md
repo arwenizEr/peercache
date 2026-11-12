@@ -12,6 +12,7 @@ and output-checked by `go test`:
 | Example | Covers |
 |---|---|
 | `Example` | construction, `Set`, `Get`, `ErrNotFound` |
+| `ExampleNamespaceOf` | typed values, a typed loader, a missing key, a second type on one name refused |
 | `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
 | `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
@@ -169,7 +170,8 @@ atomic across owners, and no cross-group transaction exists to make them so.
 | `WithLoader(Loader)` | none | Reconstructs a missing value. Without it, `GetOrLoad` returns `ErrNoLoader`. |
 | `WithPartitioner(Partitioner)` | `PartitionByKey()` | Maps keys to groups. Must be pure and identical on every pod. |
 | `WithReplicationFactor(int)` | 1 | 1 to 3. Outside that range is `ErrInvalidOption`. |
-| `WithCodec(string)` | none | Names a registered codec: `json` or `msgpack`. Unknown names fail at construction. |
+| `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
+| `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
@@ -241,6 +243,54 @@ bounded one. Longer means faster and staler, and the staleness is what a caller
 has to reason about.
 
 ---
+
+### Typed namespaces — `NamespaceOf[T]`
+
+```go
+type User struct {
+    Name  string
+    Admin bool
+}
+
+users := peercache.NamespaceOf[User](cache, "users",
+    peercache.WithReplicationFactor(2),
+    peercache.WithTypedLoader(func(ctx context.Context, id string) (User, time.Duration, error) {
+        return db.LoadUser(ctx, id)
+    }),
+)
+u, err := users.Get(ctx, "42")             // User
+err = users.Set(ctx, "42", u, time.Hour)
+all, err := users.BatchGet(ctx, ids)       // map[string]User
+raw := users.Raw()                         // the []byte Namespace underneath
+```
+
+A function, not a method, because Go interfaces cannot have type parameters.
+`TypedNamespace[T]` has the operations of `Namespace`, in `T`, and the same
+guarantees: the view encodes to bytes, so routing, replication, the L1 tier,
+TTLs and the memory budget see exactly what they always did.
+
+**The codec** is `WithCodec`'s, or MessagePack when none is named
+(`DefaultTypedCodec`). Not JSON by default, because the JSON codec replaces
+invalid UTF-8 in a string with U+FFFD and reports success (open question 41) — a
+string field carrying arbitrary bytes would come back different with nothing to
+say so. Name `json` if values must be readable in a dump. Options, the codec
+included, must be the same on every pod; a node encoding with one codec and
+another decoding with a different one is a type mismatch by another name.
+
+**Mismatches are errors, not decodes.** One name holds one type's encoding, so
+opening it again with a different `T` makes every operation on the later handle
+return `ErrInvalidOption`; the first handle is unaffected. A `WithTypedLoader`
+whose `T` is not the namespace's is `ErrInvalidOption` too — options are untyped,
+so the compiler cannot catch it. A value that will not encode, or bytes under a
+key that will not decode as `T`, is `ErrCodec`. A missing key is the zero `T` and
+`ErrNotFound`.
+
+**The cost is the codec.** On Machine A a typed `Get` of a four-field struct
+takes 487 ns where the byte path takes 37 ns: the difference is one MessagePack
+decode, 554 ns measured alone. A typed `Set` is 841 ns against 351 ns plus a
+456 ns encode. For a read-heavy hot path where nanoseconds matter, keep a
+`[]byte` value and decode once; `Raw()` gives the byte view of the same data.
+See `docs/benchmarks.md`.
 
 ## Group
 
@@ -994,6 +1044,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrDuplicateRegistration` | Name registered twice. | no |
 | `ErrInvalidOption` | Option outside its range. | no |
 | `ErrNodeUnreachable` | Transport could not deliver. | yes |
+| `ErrCodec` | A typed value would not encode, or stored bytes would not decode as the namespace's type. | no — the bytes will not change |
 | `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
 | `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |
 

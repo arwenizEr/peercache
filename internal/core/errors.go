@@ -110,4 +110,8 @@ var (
 	// ErrOverMemoryBudget means an operation that would add bulk data was
 	// stopped because this node is over its memory budget.
 	ErrOverMemoryBudget = errors.New("peercache: over memory budget")
+
+	// ErrCodec means a typed value could not be encoded, or stored bytes
+	// could not be decoded, with the namespace's codec.
+	ErrCodec = errors.New("peercache: value does not encode or decode with the namespace's codec")
 )

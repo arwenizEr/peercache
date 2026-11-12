@@ -468,14 +468,24 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		ns.err = err
 		return ns
 	}
-	if opts.Codec != "" {
-		// Validated here rather than in core, which cannot import codec
-		// without a cycle. Catching an unregistered codec at startup is
-		// the whole point of naming it in configuration.
-		if _, err := codec.Get(opts.Codec); err != nil {
-			ns.err = err
-			return ns
-		}
+	// Validated here rather than in core, which cannot import codec without a
+	// cycle. Catching an unregistered codec at startup is the whole point of
+	// naming it in configuration.
+	codecName := opts.Codec
+	if codecName == "" {
+		codecName = DefaultTypedCodec
+	}
+	valueCodec, err := codec.Get(codecName)
+	if err != nil {
+		ns.err = err
+		return ns
+	}
+	ns.valueCodec = valueCodec
+	if opts.TypedLoader != nil {
+		// Built here, once every option is applied, because only now is the
+		// codec known. Every pod builds the same one, since namespace options
+		// are identical everywhere.
+		ns.opts.Loader = opts.TypedLoader.Loader(valueCodec.Marshal)
 	}
 	if opts.Compressor != "" {
 		framer, err := codec.NewFramer(opts.Compressor, opts.CompressionThreshold)

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -60,6 +61,19 @@ type GroupFunc func(ctx context.Context, s GroupState, arg []byte) ([]byte, erro
 // The returned ttl is applied exactly as Set would apply it: a non-positive
 // value means the loaded value does not expire on its own.
 type Loader func(ctx context.Context, key string) (val []byte, ttl time.Duration, err error)
+
+// TypedLoaderSpec is a loader that returns a typed value, held in namespace
+// options until the namespace's codec is known.
+//
+// It exists because core does not know about codecs, and an option cannot know
+// which codec it will end up encoding with: WithCodec may come after it. The
+// namespace builds the byte-valued Loader from it once all options are applied.
+type TypedLoaderSpec interface {
+	// ValueType is the type the loader returns.
+	ValueType() reflect.Type
+	// Loader returns the byte-valued loader, encoding with encode.
+	Loader(encode func(any) ([]byte, error)) Loader
+}
 
 // Partitioner maps a cache key to the group key that decides its owner
 // (SPEC.md §3.4).

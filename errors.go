@@ -136,4 +136,12 @@ var (
 	// memory is available; a budget that is always exceeded is a budget
 	// smaller than this node's share of the working set.
 	ErrOverMemoryBudget = core.ErrOverMemoryBudget
+
+	// ErrCodec means a [TypedNamespace] could not encode a value with its
+	// namespace's codec, or the bytes stored under a key did not decode as
+	// the namespace's type. The latter usually means the bytes were written
+	// some other way — through Raw, or by a pod running a build with a
+	// different type for this namespace. Not retryable: the bytes will not
+	// change by asking again.
+	ErrCodec = core.ErrCodec
 )

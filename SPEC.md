@@ -360,6 +360,33 @@ key held by the healthy nodes to be reported missing; a node whose every message
 is delayed by 200 ms produces no split-brain detections and no change in p99 for
 keys owned elsewhere.
 
+### M10 — Typed namespaces
+
+SPEC.md section 2 described the namespace as "typed Get/Set/GetOrLoad" and
+section 3.1 defined it in `[]byte`; open question 12 has carried the gap since
+M1, and `WithCodec` has validated a name and encoded nothing.
+
+- `NamespaceOf[T](cache, name, opts...)` returns a `TypedNamespace[T]`: the same
+  operations as `Namespace`, in `T`, plus `Raw()` for the byte view underneath.
+  A function, because Go interfaces cannot have type parameters.
+- Values are encoded with the namespace's codec: `WithCodec`, or msgpack when
+  none is named — msgpack because the JSON codec silently rewrites invalid UTF-8
+  (open question 41), and a default must not corrupt data.
+- `WithTypedLoader[T]` supplies a loader that returns `T`. It is a namespace
+  option like `WithLoader`, and conflicts with it.
+- Mismatches fail loudly, not as corrupt decodes: a name opened with two
+  different `T`, or a typed loader whose `T` is not the namespace's, is
+  `ErrInvalidOption`. A value that will not encode or decode is `ErrCodec`.
+- Everything below the value — routing, replication, L1, TTL, the memory
+  budget — is unchanged, because the typed view encodes to the same bytes.
+
+**Acceptance:** a typed value set on one node is read back equal on every other
+node of a three-node cluster, through Get, BatchGet and GetOrLoad with a typed
+loader; a string holding invalid UTF-8 round-trips intact under the default
+codec; opening one name with two types is ErrInvalidOption, and a value that
+fails to decode is ErrCodec; the typed path adds no more than one encode or
+decode to the cost of the byte path, measured.
+
 ---
 
 ## 5. Deliberately deferred

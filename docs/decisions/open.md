@@ -204,7 +204,7 @@ after, someone adds `t.Parallel` and starts seeing phantom leaks.
 
 ---
 
-## 12. There is no typed namespace API — M1, needs a decision
+## 12. There is no typed namespace API — M1, resolved in M10
 
 SPEC.md section 2 describes the namespace as "typed Get/Set/GetOrLoad". Section
 3.1 defines it entirely in terms of `[]byte`, and no typed API appears anywhere
@@ -220,6 +220,11 @@ is used by nothing on the data path.
 **What would force a change:** a decision to add `Namespace[T]`, which would be
 a genuine API addition rather than an implementation detail, or M4, where the
 codec is needed for RPC payloads regardless.
+
+**Resolved in M10.** `NamespaceOf[T]` returns a `TypedNamespace[T]` over the
+byte namespace, `WithTypedLoader[T]` supplies a typed loader, and `WithCodec` now
+chooses the encoding, with MessagePack as the default. See
+`docs/decisions/0025-typed-namespaces.md`.
 
 ---
 
@@ -301,7 +306,8 @@ it on every routed operation, so keys grouped under one group key share an owner
 and travel together in a batch. `WithReplicationFactor` remains inert until M5.
 `WithCodec` still only validates — the protocol's own encoding is fixed
 (`internal/wire`), and choosing a codec for application *values* is question 12,
-which is still open.
+which is still open. **Updated in M10:** `WithCodec` now acts — it is the
+encoding of a `NamespaceOf` view. All three options in this table do something.
 
 **Picked:** accept and validate them now. An unregistered codec or an
 out-of-range replication factor fails at startup, which is the point of naming
@@ -1286,7 +1292,7 @@ weaker than the per-node fact, and not obviously worth a protocol change.
 
 ---
 
-## 41. The default codec silently corrupts invalid UTF-8 — M8, documented
+## 41. The JSON codec silently corrupts invalid UTF-8 — M8, documented; no longer the default since M10
 
 `internal/codec`'s `Codec` interface has said since M1 that "for any v that the
 codec accepts, `Unmarshal(Marshal(v))` reproduces v", with the sentence beneath
@@ -1337,6 +1343,12 @@ sharp edge to the codec somebody names deliberately.
 — a key derived from a byte slice, a field carrying a protocol identifier, an
 encrypted or compressed blob stored as a `string` rather than a `[]byte`. For
 those, name `msgpack` today; it is one option and it has no such rule.
+
+**Updated in M10.** Question 12 was answered the way this predicted: the typed
+view's default codec is MessagePack, and JSON is the opt-in. The hole is unchanged
+and now sits behind a name somebody has to choose.
+`TestInvalidUTF8SurvivesTheDefaultCodec` pins both halves — the default
+round-trips invalid UTF-8 intact, and JSON named explicitly still does not.
 
 ---
 

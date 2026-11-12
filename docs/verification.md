@@ -2268,9 +2268,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-SPEC.md §4 carries eight `**Acceptance:**` blocks, M0 through M6 and M9; M7
-states its requirements as bullets instead. Broken into individually testable
-claims they come to twenty-five. Each one, and the named test that would fail if it regressed:
+SPEC.md §4 carries nine `**Acceptance:**` blocks, M0 through M6, M9 and M10;
+M7 states its requirements as bullets instead. Broken into individually
+testable claims they come to thirty. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2299,8 +2299,13 @@ claims they come to twenty-five. Each one, and the named test that would fail if
 | M9 | a key shed and rewritten is never served at an older value, before or after a failover | `TestAShedKeyIsNeverServedAtAnOlderValue`, `TestARewriteAfterShedIsVersionedAboveWhatWasShed` |
 | M9 | a node restarted every 2 s for 60 s causes no key held by the healthy nodes to be reported missing | `TestACrashloopingNodeIsNeverRanked` |
 | M9 | every message to one node delayed 200 ms: no split brain, no latency change for keys owned elsewhere | `TestAStarvedNodeSlowsOnlyItsOwnKeys` |
+| M10 | a typed value set on one node reads back equal on every node through Get and BatchGet | `TestTypedValuesRoundTripAcrossNodes` |
+| M10 | the same through GetOrLoad with a typed loader | `TestTypedGetOrLoadAcrossNodes` |
+| M10 | invalid UTF-8 in a string round-trips intact under the default codec | `TestInvalidUTF8SurvivesTheDefaultCodec` |
+| M10 | one name opened with two types is ErrInvalidOption; an undecodable value is ErrCodec | `TestOneNameTwoTypesIsInvalid`, `TestAnUndecodableValueIsErrCodec` |
+| M10 | the typed path costs the byte path plus one encode or decode, measured | `BenchmarkTypedGet` and its comparisons, recorded in docs/benchmarks.md |
 
-All twenty-nine names in the table were verified to exist before it was
+All thirty-four names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

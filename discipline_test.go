@@ -735,7 +735,10 @@ var numberWords = map[int]string{
 	17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
 	21: "twenty-one", 22: "twenty-two", 23: "twenty-three",
 	24: "twenty-four", 25: "twenty-five", 26: "twenty-six", 27: "twenty-seven",
-	28: "twenty-eight", 29: "twenty-nine", 30: "thirty",
+	28: "twenty-eight", 29: "twenty-nine", 30: "thirty", 31: "thirty-one",
+	32: "thirty-two", 33: "thirty-three", 34: "thirty-four", 35: "thirty-five",
+	36: "thirty-six", 37: "thirty-seven", 38: "thirty-eight", 39: "thirty-nine",
+	40: "forty",
 }
 
 // numberFromWord is the reverse lookup, for prose that states a count as a word
@@ -779,7 +782,7 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 		section = section[:end+1]
 	}
 
-	rowPattern := regexp.MustCompile(`(?m)^\| M[0-9] \|`)
+	rowPattern := regexp.MustCompile(`(?m)^\| M[0-9]+ \|`)
 	rows := len(rowPattern.FindAllString(section, -1))
 
 	// Names are counted from the table rows only, not the whole section. The
@@ -825,13 +828,31 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading SPEC.md: %v", err)
 	}
-	blocks := strings.Count(string(spec), "**Acceptance:**")
-	for i := 0; i < blocks; i++ {
-		milestone := "| M" + string(rune('0'+i)) + " |"
-		if !strings.Contains(section, milestone) {
-			t.Errorf("SPEC.md states an acceptance block for M%d and the map has no row "+
-				"for it", i)
+	// Which milestones state one is read from the headings, not inferred
+	// from a count. The first version assumed the blocks were M0, M1, ... in
+	// order; M7 and M8 have none, so once M9 added one this checked M7 in its
+	// place and never looked for M9 — found when M10 made it misfire outright.
+	heading := regexp.MustCompile(`(?m)^### (M[0-9]+) `)
+	locs := heading.FindAllStringSubmatchIndex(string(spec), -1)
+	checked := 0
+	for i, loc := range locs {
+		end := len(spec)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
 		}
+		if !strings.Contains(string(spec[loc[0]:end]), "**Acceptance:**") {
+			continue
+		}
+		checked++
+		milestone := string(spec[loc[2]:loc[3]])
+		if !strings.Contains(section, "| "+milestone+" |") {
+			t.Errorf("SPEC.md states an acceptance block for %s and the map has no row "+
+				"for it", milestone)
+		}
+	}
+	if total := strings.Count(string(spec), "**Acceptance:**"); checked != total {
+		t.Errorf("found %d acceptance blocks under milestone headings and %d in SPEC.md; "+
+			"one is outside any heading this check can attribute", checked, total)
 	}
 }
 

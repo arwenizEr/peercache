@@ -651,3 +651,49 @@ func ExampleWithJoinProbation() {
 	// ready: true
 	// negative rejected: true
 }
+
+// ExampleNamespaceOf shows the typed view: values in and out as a Go type, a
+// loader that returns one, and the errors that keep a type mismatch from
+// passing for data.
+func ExampleNamespaceOf() {
+	type Profile struct {
+		Name  string
+		Admin bool
+	}
+
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	ctx := context.Background()
+
+	profiles := peercache.NamespaceOf[Profile](cache, "profiles",
+		peercache.WithTypedLoader(func(_ context.Context, id string) (Profile, time.Duration, error) {
+			// Stands in for a database read on the key's owner.
+			return Profile{Name: "loaded:" + id}, time.Minute, nil
+		}))
+
+	if err := profiles.Set(ctx, "alice", Profile{Name: "Alice", Admin: true}, time.Hour); err != nil {
+		fmt.Println(err)
+		return
+	}
+	alice, _ := profiles.Get(ctx, "alice")
+	fmt.Printf("set and got: %+v\n", alice)
+
+	bob, _ := profiles.GetOrLoad(ctx, "bob")
+	fmt.Printf("loaded: %+v\n", bob)
+
+	_, err = profiles.Get(ctx, "carol")
+	fmt.Println("missing:", errors.Is(err, peercache.ErrNotFound))
+
+	// The same name opened as another type is refused rather than decoded.
+	_, err = peercache.NamespaceOf[int](cache, "profiles").Get(ctx, "alice")
+	fmt.Println("wrong type:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// set and got: {Name:Alice Admin:true}
+	// loaded: {Name:loaded:bob Admin:false}
+	// missing: true
+	// wrong type: true
+}

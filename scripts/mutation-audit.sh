@@ -1476,6 +1476,58 @@ mutate "a root file disappears from the repository map" \
   'handoff_go        Moves replicas on a membership change rather' \
   'TestReadmeListsEveryRootFile' .
 
+# --- M10: typed namespaces (decision 0025) ---
+
+mutate "one name may hold two types" \
+  namespace.go \
+  '	if n.valueType != t {' \
+  '	if false {' \
+  'TestOneNameTwoTypesIsInvalid$' .
+
+mutate "a typed loader of the wrong type is accepted" \
+  typed.go \
+  'if spec := ns.opts.TypedLoader; spec != nil && spec.ValueType() != want {' \
+  'if spec := ns.opts.TypedLoader; false && spec != nil {' \
+  'TestATypedLoaderOfTheWrongTypeIsInvalid$' .
+
+mutate "WithLoader and WithTypedLoader together are accepted" \
+  internal/core/options.go \
+  '	if o.TypedLoader != nil && o.Loader != nil {' \
+  '	if false {' \
+  'TestTypedLoaderAndLoaderConflict$' .
+
+mutate "the default typed codec is JSON" \
+  typed.go \
+  'const DefaultTypedCodec = codec.NameMsgPack' \
+  'const DefaultTypedCodec = codec.NameJSON' \
+  'TestInvalidUTF8SurvivesTheDefaultCodec$' .
+
+mutate "a decode failure is not ErrCodec" \
+  typed.go \
+  'return zero, fmt.Errorf("peercache: decoding %q with %s: %v: %w", key, t.codec.Name(), err, ErrCodec)' \
+  'return zero, fmt.Errorf("peercache: decoding %q with %s: %w", key, t.codec.Name(), err)' \
+  'TestAnUndecodableValueIsErrCodec$' .
+
+mutate "the typed loader is never installed" \
+  peercache.go \
+  '		ns.opts.Loader = opts.TypedLoader.Loader(valueCodec.Marshal)' \
+  '		_ = opts.TypedLoader' \
+  'TestTypedGetOrLoadAcrossNodes$' .
+
+mutate "a typed BatchGet drops what it decoded" \
+  typed.go \
+  '		out[key] = v' \
+  '		_ = v' \
+  'TestTypedValuesRoundTripAcrossNodes$' .
+
+# A two-digit milestone's row. The map's row pattern was M[0-9], so M10 rows
+# were not counted at all until it became M[0-9]+; renaming one must be noticed.
+mutate "a two-digit milestone row stops being counted" \
+  docs/verification.md \
+  '| M10 | a typed value set on one node reads back equal on every node through Get and BatchGet |' \
+  '| X10 | a typed value set on one node reads back equal on every node through Get and BatchGet |' \
+  'TestAcceptanceMapCountsAreCorrect$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

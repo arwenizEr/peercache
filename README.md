@@ -176,6 +176,7 @@ the next begins.
 | M7 | Observability and hardening | **complete** |
 | M8 | Adversarial verification | **complete** |
 | M9 | Resilience under resource pressure | **complete** |
+| M10 | Typed namespaces | **complete** |
 
 All seven SPEC milestones are done, and M8 — linearizability checking, a
 deterministic fault simulation and exhaustive protocol fuzzing — went looking for
@@ -226,6 +227,7 @@ ready.go          Readiness, its three conditions, and whether
 observe.go        Stats and the metric series they export       (M7)
 pressure.go       The memory budget and the order it sheds in   (M9)
 probation.go      Keeps young nodes out of the ranking          (M9)
+typed.go          NamespaceOf[T]: values as a Go type          (M10)
 
 membership/       Gossip membership over memberlist. Public: an
                   application builds its cluster with it      (M3)

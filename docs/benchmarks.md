@@ -857,6 +857,31 @@ and is not comparable, which is why "before" was re-measured rather than quoted.
 The read path is unchanged by design: shedding is sampled rather than LRU so
 that Get records nothing.
 
+## M10 — typed namespaces
+
+Machine A, `-count 5`, medians. The value is a four-field struct (two strings, a
+string slice, two integers), about 50 bytes in MessagePack.
+
+| Benchmark | ns/op | B/op | allocs/op | What it is |
+|---|---:|---:|---:|---|
+| `BenchmarkTypedGet` | 486.8 | 376 | 8 | typed `Get` |
+| `BenchmarkTypedGetBytePath` | 36.6 | 0 | 0 | `Raw().Get` of the same stored bytes |
+| `BenchmarkTypedDecodeOnly` | 553.5 | 376 | 8 | one MessagePack decode, alone |
+| `BenchmarkTypedSet` | 841.4 | 381 | 7 | typed `Set` |
+| `BenchmarkTypedSetBytePath` | 351.0 | 85 | 2 | `Raw().Set` of pre-encoded bytes |
+| `BenchmarkTypedEncodeOnly` | 456.3 | 288 | 5 | one MessagePack encode, alone |
+
+SPEC.md's criterion is that the typed path costs the byte path plus one encode
+or decode. For `Get`, 486.8 against 36.6 + 553.5 = 590.1: inside it. For `Set`,
+841.4 against 351.0 + 456.3 = 807.3: 4% over, within the run-to-run spread of
+either term (the decode-only runs ranged 469–1015 ns). Allocations agree
+exactly: the typed `Get` allocates what the decode does and nothing more.
+
+**The codec is the cost, by an order of magnitude.** A typed read is about 13×
+the byte read it wraps. That is MessagePack's price for reflection-driven
+decoding of a struct, not the view's; a hot path that cannot afford it keeps the
+byte API.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

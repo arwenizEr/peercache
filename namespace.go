@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"sync"
 	"time"
 
 	"github.com/peercache/peercache/internal/clock"
@@ -89,6 +91,13 @@ type namespace struct {
 	opts  core.NamespaceOptions
 	err   error
 
+	// valueCodec encodes typed values: WithCodec's, or DefaultTypedCodec.
+	valueCodec codec.Codec
+	// valueType is the T of the first NamespaceOf that opened this
+	// namespace, guarded by typeMu. One name holds one type's encoding.
+	typeMu    sync.Mutex
+	valueType reflect.Type
+
 	store  *store.Store
 	framer *codec.Framer
 	flight singleflight.Group
@@ -132,6 +141,22 @@ func (n *namespace) groupKeyFor(key string) string {
 }
 
 // encode prepares a value for storage.
+// bindValueType records the type a typed view holds, or reports that this
+// namespace already holds another.
+func (n *namespace) bindValueType(t reflect.Type) error {
+	n.typeMu.Lock()
+	defer n.typeMu.Unlock()
+	if n.valueType == nil {
+		n.valueType = t
+		return nil
+	}
+	if n.valueType != t {
+		return fmt.Errorf("peercache: namespace %q holds %v and was opened as %v: %w",
+			n.name, n.valueType, t, ErrInvalidOption)
+	}
+	return nil
+}
+
 func (n *namespace) encode(val []byte) []byte {
 	if n.framer == nil {
 		return val

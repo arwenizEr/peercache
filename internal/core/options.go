@@ -144,8 +144,12 @@ type NamespaceOptions struct {
 	// ReplicationFactor is the number of copies, between 1 and 3. 1 means
 	// the owner only.
 	ReplicationFactor int
-	// Codec names the registered codec used for typed values.
+	// Codec names the registered codec used for typed values. Empty means
+	// the typed view's default, MessagePack.
 	Codec string
+	// TypedLoader is a loader that returns a typed value; see
+	// [TypedLoaderSpec]. It conflicts with Loader.
+	TypedLoader TypedLoaderSpec
 	// L1TTL bounds how long a non-owned copy may be served. Negative
 	// disables the non-owned tier entirely, so every read of a key owned
 	// elsewhere is a round trip and nothing is ever served stale. It is a
@@ -212,6 +216,10 @@ func DefaultNamespaceOptions() NamespaceOptions {
 func (o *NamespaceOptions) Validate() error {
 	if o.Partitioner == nil {
 		return fmt.Errorf("peercache: Partitioner must not be nil: %w", ErrInvalidOption)
+	}
+	if o.TypedLoader != nil && o.Loader != nil {
+		return fmt.Errorf("peercache: a namespace has one loader; WithLoader and WithTypedLoader were both given: %w",
+			ErrInvalidOption)
 	}
 	if o.ReplicationFactor < 1 || o.ReplicationFactor > MaxReplicationFactor {
 		return fmt.Errorf("peercache: replication factor %d out of range 1..%d: %w",
