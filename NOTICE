@@ -1,0 +1,16 @@
+PeerCache
+Copyright 2026 arwenizEr
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It depends on, but does not include, the following, each under its own license:
+  hashicorp/memberlist        Mozilla Public License 2.0
+  google.golang.org/grpc      Apache License 2.0
+  maypok86/otter              Apache License 2.0
+  vmihailenco/msgpack         BSD 2-Clause
+  pierrec/lz4                 BSD 3-Clause
+  cespare/xxhash              MIT
+
+and, in its tests only:
+  anishathalye/porcupine      MIT
+  go.uber.org/goleak          MIT
