@@ -307,6 +307,44 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	return version
 }
 
+// SetIfAbsent stores val under key for ttl unless a live entry is already
+// there, and reports whether it stored. When it does not, it returns the
+// resident value — the same stored slice [Store.Get] would.
+//
+// It is what a load stores with. A load reads its source, then stores what it
+// read; a Set that lands in between is newer than the load's value, and an
+// unconditional store would put the older value back over it. An expired entry
+// counts as absent, as it does to every reader.
+func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, bool) {
+	var expiresAt int64
+	now := s.clk.Now()
+	if ttl > 0 {
+		expiresAt = deadlineNanos(now, ttl)
+	}
+	stored := make([]byte, len(val))
+	copy(stored, val)
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	old, had := sh.entries[key]
+	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
+		return old.val, false
+	}
+	version := old.version + 1
+	if !had && version <= sh.floor {
+		version = sh.floor + 1
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	delta := size(key, stored)
+	if had {
+		delta -= size(key, old.val)
+	}
+	sh.bytes.Add(delta)
+	sh.sets.Add(1)
+	return stored, true
+}
+
 // Snapshot returns up to limit unexpired entries whose keys sort after the
 // given key, in key order, and reports whether more remain.
 //

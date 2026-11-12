@@ -725,8 +725,17 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 			return nil, 0, err
 		}
 		// Store inside the flight so that every collapsed caller sees a
-		// populated namespace, not just the leader.
-		n.store.Set(key, n.encode(val), ttl)
+		// populated namespace, not just the leader — but only if the key is
+		// still absent. A Set that landed while the loader ran is newer than
+		// what the loader read, and storing over it unconditionally, as an
+		// earlier version did, lost that write until the key's TTL. In that
+		// case the newer value is the answer.
+		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)
+		if !stored {
+			current, err := n.decode(resident)
+			return current, 0, err
+		}
+		n.cache.pressure.noteWrite(len(val))
 		return val, ttl, nil
 	})
 	if result.Err != nil {

@@ -1604,6 +1604,11 @@ mutate "a remote Get unframes a value the owner already unframed"   namespace.go
 
 mutate "an adopted hand-off is framed a second time"   handler.go   '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {'   '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {'   'TestACompressedHandOffIsNotFramedTwice$' .
 
+# A load that raced a Set stored its older value over the newer one.
+mutate "a load overwrites a write that raced it"   internal/store/store.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
+		return old.val, false
+	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

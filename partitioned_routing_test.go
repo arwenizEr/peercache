@@ -252,3 +252,39 @@ func TestACompressedHandOffIsNotFramedTwice(t *testing.T) {
 		}
 	}
 }
+
+// TestALoadDoesNotOverwriteAWriteThatRacedIt: found by code review. A load
+// that started before a Set and finished after it stored its older value over
+// the newer one, unconditionally, and the newer write was gone until the key's
+// TTL — forever with none.
+func TestALoadDoesNotOverwriteAWriteThatRacedIt(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c, _ := newCache(t)
+	ns := c.Namespace("race", peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+		close(entered)
+		<-release // the database answered with what it had before the write
+		return []byte("v1-from-the-database"), 0, nil
+	}))
+	ctx := context.Background()
+
+	done := make(chan []byte, 1)
+	go func() {
+		v, _ := ns.GetOrLoad(ctx, "k")
+		done <- v
+	}()
+	<-entered
+	if err := ns.Set(ctx, "k", []byte("v2-written-after"), 0); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	loaded := <-done
+
+	got, err := ns.Get(ctx, "k")
+	if err != nil || string(got) != "v2-written-after" {
+		t.Fatalf("after a load raced a Set, the key holds %q (%v); the newer write was overwritten", got, err)
+	}
+	if string(loaded) != "v2-written-after" {
+		t.Fatalf("GetOrLoad returned %q while the key held the newer value", loaded)
+	}
+}

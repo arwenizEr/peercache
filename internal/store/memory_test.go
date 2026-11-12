@@ -273,3 +273,33 @@ func TestARewriteAfterShedIsVersionedAboveWhatWasShed(t *testing.T) {
 			"deleting raise the floor", got)
 	}
 }
+
+// TestSetIfAbsentDoesNotReplaceALiveEntry is what a load stores with: a value
+// read from a database before a newer write arrived must not replace it.
+func TestSetIfAbsentDoesNotReplaceALiveEntry(t *testing.T) {
+	s, fc := newStore(t)
+
+	if _, stored := s.SetIfAbsent("k", []byte("first"), 0); !stored {
+		t.Fatal("SetIfAbsent on an absent key did not store")
+	}
+	if cur, stored := s.SetIfAbsent("k", []byte("second"), 0); stored || string(cur) != "first" {
+		t.Fatalf("SetIfAbsent over a live entry: stored=%v, resident %q; want false, first", stored, cur)
+	}
+	if v, _, _ := s.Get("k"); string(v) != "first" {
+		t.Fatalf("the live entry became %q", v)
+	}
+
+	// An expired entry is absent as far as any reader is concerned.
+	s.Set("e", []byte("old"), time.Second)
+	fc.Advance(2 * time.Second)
+	if _, stored := s.SetIfAbsent("e", []byte("new"), 0); !stored {
+		t.Fatal("SetIfAbsent over an expired entry did not store")
+	}
+	if v, _, _ := s.Get("e"); string(v) != "new" {
+		t.Fatalf("expired entry replaced with %q", v)
+	}
+	want := entrySize("k", []byte("first")) + entrySize("e", []byte("new"))
+	if got := s.Bytes(); got != want {
+		t.Fatalf("Bytes = %d, want %d", got, want)
+	}
+}
