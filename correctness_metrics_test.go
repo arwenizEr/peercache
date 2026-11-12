@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache"
 )
 
-// SPEC.md names five correctness metrics: split-brain
+// docs/design.md names five correctness metrics: split-brain
 // detections, stale-epoch activation rejections, version conflicts, mailbox
 // rejections, and transfer failures. Three had counters already. The two
 // checked here did not — they were reachable conditions that nothing counted,

@@ -57,7 +57,7 @@ service Peer {
 
   // Submit applies many messages to many groups on this owner in one round
   // trip. Each group's messages are applied inside a single actor turn, which
-  // is the batch-affinity requirement of SPEC.md §3.4: ten thousand messages
+  // is the batch-affinity requirement of docs/design.md §3.4: ten thousand messages
   // spread over three owners cost three requests, not ten thousand.
   rpc Submit(SubmitRequest) returns (SubmitResponse);
 
@@ -209,7 +209,7 @@ message ReplicateRequest {
   Stamp stamp = 5;
   // from is the sending node's ID. Two different senders writing one key under
   // one epoch is a split brain, and the replica is the only party that can see
-  // both. See SPEC.md section 4 (M5).
+  // both. See docs/design.md section 4 (M5).
   string from = 6;
   // deleted marks a removal rather than a write. A deletion has to replicate:
   // a replica that missed it would resurrect the key on promotion.

@@ -1,7 +1,11 @@
-# PeerCache — Build Specification
+# PeerCache — Design
 
 Embedded distributed L1 cache and stateful aggregation engine for Go.
-Companion to `CLAUDE.md`, which holds the non-negotiable constraints.
+
+This is the design the library was built from. Section 4 lists the milestones in
+the order they were built, each with the acceptance criteria its tests prove
+(`docs/verification.md` maps every criterion to a named test). Decisions taken
+along the way are recorded in [`decisions/`](decisions).
 
 ---
 
@@ -365,7 +369,7 @@ keys owned elsewhere.
 
 ### M10 — Typed namespaces
 
-SPEC.md section 2 described the namespace as "typed Get/Set/GetOrLoad" and
+Section 2 described the namespace as "typed Get/Set/GetOrLoad" and
 section 3.1 defined it in `[]byte`; open question 12 has carried the gap since
 M1, and `WithCodec` has validated a name and encoded nothing.
 

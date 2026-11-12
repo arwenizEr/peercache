@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// Replication acceptance, from SPEC.md §4:
+// Replication acceptance, from docs/design.md §4:
 //
 //	a chaos test that kills a random node every 2 seconds for 60 seconds
 //	loses no key that was written with sync replication

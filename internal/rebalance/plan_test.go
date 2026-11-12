@@ -44,7 +44,7 @@ func keysN(n int) []string {
 	return out
 }
 
-// TestRemovingANodeMovesOnlyItsShare is the SPEC.md §4 requirement that
+// TestRemovingANodeMovesOnlyItsShare is the docs/design.md §4 requirement that
 // planning "compute only the affected partitions, never a full reshuffle".
 //
 // The bound is derived rather than guessed. Removing one node of nine should

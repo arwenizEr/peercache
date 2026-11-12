@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Milestone:** M7
-**Deviates from:** SPEC.md §4, which says "Prometheus and OTel: the metrics from
+**Deviates from:** docs/design.md §4, which says "Prometheus and OTel: the metrics from
 the original spec, plus correctness metrics"
 
 ## Context

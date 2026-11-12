@@ -4,7 +4,7 @@
 found ten defects in it, listed at the end. Nothing here is built.
 **Milestone:** none yet; a candidate for the first one after v1.
 **Bound by:** CLAUDE.md decision 4 — "Durability: none… Persistence hooks may be
-designed for, but nothing is written to disk in v1" — and SPEC.md §5, which
+designed for, but nothing is written to disk in v1" — and docs/design.md §5, which
 defers WAL, snapshots and object-storage backup.
 
 This note is what decision 4 allows: the shape of a hook, its guarantees, and the

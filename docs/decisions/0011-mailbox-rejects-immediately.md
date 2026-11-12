@@ -5,7 +5,7 @@
 
 ## The two sentences that had to be reconciled
 
-SPEC.md section 4 (M2) says backpressure means:
+docs/design.md section 4 (M2) says backpressure means:
 
 > full mailbox returns `ErrGroupOverloaded` rather than blocking indefinitely;
 > caller deadline is respected.
@@ -55,7 +55,7 @@ are added.
 
 That is a real ceiling and it is already in the README's honest-guarantees
 section: *throughput degrades to single-pod capacity for a single hot group*.
-SPEC.md section 5 defers group sharding for hot-key mitigation to after v1, so
+docs/design.md section 5 defers group sharding for hot-key mitigation to after v1, so
 the answer for now is to choose a partitioner that does not funnel a workload
 into one group.
 

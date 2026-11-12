@@ -12,7 +12,7 @@ from the new membership, but it holds nothing until `CatchUp` runs. In between
 it answers `ErrNotFound` — confidently, and indistinguishably from a genuine
 miss — for data sitting safely on the node that covered for it.
 
-SPEC.md §4 asks M6 for move planning that touches only affected partitions,
+docs/design.md §4 asks M6 for move planning that touches only affected partitions,
 streaming transfer with backpressure and resumability, a PreStop hook, a
 readiness gate, and manifests.
 

@@ -336,7 +336,7 @@ func contains(haystack, needle string) bool {
 	return false
 }
 
-// TestStaleEpochIsRefused covers the half of SPEC.md §4 that the
+// TestStaleEpochIsRefused covers the half of docs/design.md §4 that the
 // activation delay does not: "a node refuses to activate a group whose epoch is
 // stale".
 //

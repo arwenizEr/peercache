@@ -901,7 +901,7 @@ type Clock interface {
 }
 ```
 
-`Clock` is wider than SPEC.md section 3.6 specifies; see
+`Clock` is wider than docs/design.md section 3.6 specifies; see
 `docs/decisions/0002-clock-interface.md`. `PeerClient` and `Handler` are defined
 by this project, not by the spec; see `docs/decisions/open.md`.
 
@@ -1013,7 +1013,7 @@ deliberate and tested: `TestCorrectnessMetricsAreCounters` fails if one is
 reclassified as a gauge, because "did this happen in the last hour" is a rate
 question and a gauge cannot answer it.
 
-These are the five SPEC.md names as correctness metrics, plus the five this
+These are the five docs/design.md names as correctness metrics, plus the five this
 implementation found it needed — the last two added in M8, when a partition heal
 turned out to move replicas that the reconciler had been discarding.
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestKillingAnOwnerPromotesAReplica is the replication acceptance criterion from
-// SPEC.md §4: "killing an owner ungracefully causes promotion and resumed
+// docs/design.md §4: "killing an owner ungracefully causes promotion and resumed
 // service within a stated bound".
 //
 // The bound is stated in the test rather than left implicit: service resumes

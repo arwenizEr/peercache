@@ -21,7 +21,7 @@ import (
 	"github.com/arwenizEr/peercache/transport"
 )
 
-// Remote-read acceptance, from SPEC.md §4:
+// Remote-read acceptance, from docs/design.md §4:
 //
 //	remote Get p99 under 2ms and p999 under 10ms at 50k rps in a 3-node
 //	real-network test

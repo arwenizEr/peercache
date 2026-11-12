@@ -22,7 +22,7 @@ pull in anything beyond the standard library.
 
 ## The two outside the budget
 
-Both are named by SPEC.md section 4 (M1) directly: "xxhash key hashing" and
+Both are named by docs/design.md section 4 (M1) directly: "xxhash key hashing" and
 "Compression: LZ4". The build plan is more specific than the budget list, and
 where they disagree the plan wins — but not silently, which is why this file
 exists.

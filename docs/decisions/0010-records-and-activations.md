@@ -5,7 +5,7 @@
 
 ## The forcing constraint
 
-SPEC.md section 4 (M2) requires two things that pull in opposite directions:
+docs/design.md section 4 (M2) requires two things that pull in opposite directions:
 
 - a group that deactivates and reactivates **preserves state and pending
   timers**;
@@ -50,7 +50,7 @@ reply nobody would send.
 
 ## Consequences that had to be chosen deliberately
 
-**A group with pending timers is exempt from idle deactivation.** SPEC.md says
+**A group with pending timers is exempt from idle deactivation.** docs/design.md says
 timers are cancelled on deactivation and re-registered on activation — but
 nothing would ever reactivate an idle group, so its timer would silently never
 fire. Exempting it is the smaller surprise. The LRU cap can still evict such a

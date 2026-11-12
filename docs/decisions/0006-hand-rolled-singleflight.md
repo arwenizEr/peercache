@@ -5,7 +5,7 @@
 
 ## The requirement
 
-SPEC.md section 3.1: concurrent misses on the owner collapse via singleflight.
+docs/design.md section 3.1: concurrent misses on the owner collapse via singleflight.
 The M1 acceptance criterion makes it measurable — a loader counting invocations
 under a thousand concurrent misses must report exactly one.
 

@@ -14,7 +14,7 @@ import (
 // process for two minutes by pre-allocating from a declared length — lived in a
 // decoder that nothing was fuzzing at the time.
 //
-// SPEC.md asks that no input from a peer may panic a node. "No input" means
+// docs/design.md asks that no input from a peer may panic a node. "No input" means
 // every message, not a representative subset, so this decodes each arbitrary
 // byte string into all twenty-one and requires none of them to panic, hang, or
 // allocate from a length it has not read.

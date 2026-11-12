@@ -56,7 +56,7 @@ var realTimePackages = []string{
 // memberlist's own timers where no injected clock reaches.
 //
 // They are listed by name rather than by directory so that the exemption cannot
-// spread. acceptance_m4_test.go measures latency over real gRPC, which no
+// spread. acceptance_remote_test.go measures latency over real gRPC, which no
 // injected clock can time. cluster_test.go is the only test in the repository
 // that runs two real caches against real gossip — it exists because every other ownership test
 // verifies a seam in isolation and none of them proves the seams are connected. examples/ownership
@@ -68,7 +68,7 @@ var realTimePackages = []string{
 // at all.
 var realTimeFiles = []string{
 	"cluster_test.go",
-	"acceptance_m4_test.go",
+	"acceptance_remote_test.go",
 	"lossfabric_test.go",
 	"soak_test.go",
 	"examples/ownership/main.go",
@@ -822,12 +822,12 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 			len(names), word)
 	}
 
-	// Every acceptance block in SPEC.md must have at least one row. A block
+	// Every acceptance block in docs/design.md must have at least one row. A block
 	// silently dropping out of the map is the failure this table exists to make
 	// impossible.
-	spec, err := os.ReadFile("SPEC.md")
+	spec, err := os.ReadFile("docs/design.md")
 	if err != nil {
-		t.Fatalf("reading SPEC.md: %v", err)
+		t.Fatalf("reading docs/design.md: %v", err)
 	}
 	// Which sections state one is read from the headings, not inferred from
 	// a count: not every section has a block, so assuming they are numbered
@@ -846,12 +846,12 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 		checked++
 		milestone := string(spec[loc[2]:loc[3]])
 		if !strings.Contains(section, "| "+milestone+" |") {
-			t.Errorf("SPEC.md states an acceptance block for %s and the map has no row "+
+			t.Errorf("docs/design.md states an acceptance block for %s and the map has no row "+
 				"for it", milestone)
 		}
 	}
 	if total := strings.Count(string(spec), "**Acceptance:**"); checked != total {
-		t.Errorf("found %d acceptance blocks under milestone headings and %d in SPEC.md; "+
+		t.Errorf("found %d acceptance blocks under milestone headings and %d in docs/design.md; "+
 			"one is outside any heading this check can attribute", checked, total)
 	}
 }

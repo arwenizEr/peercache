@@ -67,7 +67,7 @@ jobs:
       # stands up its own gRPC cluster, and sharing a process with the latency
       # budgets pushed the remote p99 over its limit -- the same contention the
       # step above exists to avoid. It measures the async replication window
-      # SPEC.md section 6 asks for a number for, and until M8 it ran in no
+      # docs/design.md section 6 asks for a number for, and until M8 it ran in no
       # configuration at all: it was gated behind PEERCACHE_LATENCY_GATE and
       # then never named by any step that sets it.
       - name: async replication loss window

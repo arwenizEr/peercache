@@ -1002,7 +1002,7 @@ That is open question 27, for the third time. M6 fixed
 `internal/membership`'s tests; M7 found `cluster_test.go` had built its own
 helper and fixed that too, and wrote the closing line "a correct fix applied to
 some of the places that need it reads, in the commit log, exactly like a complete
-one". `acceptance_m4_test.go` had built a *third* helper, and it was never fixed.
+one". `acceptance_remote_test.go` had built a *third* helper, and it was never fixed.
 
 What made it invisible is worth more than the bug. The test is behind an opt-in
 latency gate that only CI's Linux runner sets, where the reserved band does not
@@ -2350,7 +2350,7 @@ returned, so no existing caller had been relying on the nil.
 ## The acceptance map
 
 CLAUDE.md's Definition of Done requires that "the milestone's acceptance criteria
-in SPEC.md are each covered by a named test that would fail if the behavior
+in docs/design.md are each covered by a named test that would fail if the behavior
 regressed". Every section above records a check against *one* invariant. None of
 them answered the question the rule actually asks: is every criterion covered?
 
@@ -2359,7 +2359,7 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-SPEC.md §4 carries nine `**Acceptance:**` blocks, M0 through M6, M9 and M10;
+docs/design.md §4 carries nine `**Acceptance:**` blocks, M0 through M6, M9 and M10;
 M7 states its requirements as bullets instead. Broken into individually
 testable claims they come to thirty. Each one, and the named test that would fail if it regressed:
 
@@ -2416,7 +2416,7 @@ author believes is in it.
 
 So it is no longer a habit. `TestAcceptanceMapCountsAreCorrect` counts the rows
 and the distinct test names in this section and fails if the prose disagrees with
-either, and it also fails if SPEC.md states an acceptance block with no row here —
+either, and it also fails if docs/design.md states an acceptance block with no row here —
 a milestone dropping silently out of the map being the failure the map exists to
 make impossible. Both of the mistakes described above were reproduced against it
 and both are caught, each naming the number it found and the number it expected.

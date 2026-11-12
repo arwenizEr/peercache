@@ -335,7 +335,7 @@ wall clock against a 50 ms budget.
   purpose
 - [`docs/decisions/`](docs/decisions/) — one file per significant choice, plus
   `open.md` for everything still guessed at
-- [`SPEC.md`](SPEC.md) — the build plan
+- [`docs/design.md`](docs/design.md) — the build plan
 - [`CLAUDE.md`](CLAUDE.md) — the non-negotiable constraints
 
 ---

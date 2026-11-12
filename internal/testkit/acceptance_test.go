@@ -8,7 +8,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// acceptanceBudget is the harness wall-clock ceiling from SPEC.md section 4.
+// acceptanceBudget is the harness wall-clock ceiling from docs/design.md section 4.
 const acceptanceBudget = 50 * time.Millisecond
 
 // TestM0Acceptance is the harness acceptance criterion, verbatim: create a

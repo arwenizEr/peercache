@@ -8,7 +8,7 @@
 
 M4 left a cluster where every key had exactly one home. Losing a pod lost its
 data, which CLAUDE.md's durability section permits — state is lossy by design —
-but "permitted" and "acceptable to run" are different bars. SPEC.md §4 asks for
+but "permitted" and "acceptable to run" are different bars. docs/design.md §4 asks for
 replication factors 1 to 3, promotion on owner failure, catch-up for a returning
 node, and a measured data-loss window for the asynchronous default.
 
@@ -111,7 +111,7 @@ holding by asking for them.
 ## Consequences
 
 **The asynchronous window is a measured number.** Mean ≈101 µs, p99 1.46 ms at
-RF=3 over loopback gRPC. Recorded in `docs/benchmarks.md` and SPEC.md §6, which
+RF=3 over loopback gRPC. Recorded in `docs/benchmarks.md` and docs/design.md §6, which
 had been carrying a placeholder since the spec was written.
 
 **RF=2 loses data when both holders die, and that is documented as a test**
@@ -145,5 +145,5 @@ the application to say "not yet".
 
 **Quorum writes.** Would close the window without the throughput cost of
 synchronous replication on the group. Rejected outright: it needs consensus,
-which SPEC.md §5 defers permanently, and CLAUDE.md forbids the words "strong"
+which docs/design.md §5 defers permanently, and CLAUDE.md forbids the words "strong"
 and "quorum" in this system's vocabulary for exactly this reason.

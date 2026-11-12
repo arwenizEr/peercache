@@ -261,7 +261,7 @@ func TestReportEvictionAccuracy(t *testing.T) {
 	}
 }
 
-// TestCandidateCountMeetsSpec pins SPEC.md's "at least two candidates".
+// TestCandidateCountMeetsSpec pins docs/design.md's "at least two candidates".
 func TestCandidateCountMeetsSpec(t *testing.T) {
 	seen := map[string]bool{}
 	for _, f := range Factories() {
@@ -277,7 +277,7 @@ func TestCandidateCountMeetsSpec(t *testing.T) {
 		c.Close()
 	}
 	if len(seen) < 2 {
-		t.Fatalf("SPEC.md requires at least two candidates; found %d", len(seen))
+		t.Fatalf("docs/design.md requires at least two candidates; found %d", len(seen))
 	}
 	t.Logf("evaluated %d candidates: %v", len(seen), seen)
 }

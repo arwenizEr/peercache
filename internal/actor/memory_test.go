@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 )
 
-// Group memory acceptance parameters, from SPEC.md section 4.
+// Group memory acceptance parameters, from docs/design.md section 4.
 const (
 	addressableGroups = 1_000_000
 	activeGroups      = 20_000
@@ -28,7 +28,7 @@ func heapMiB() float64 {
 // TestMemoryAtOneMillionAddressableGroups measures the group memory criterion:
 // a million addressable groups with twenty thousand active.
 //
-// SPEC.md says the budget must be "measured and recorded", and does not say what
+// docs/design.md says the budget must be "measured and recorded", and does not say what
 // it is. So this reports rather than asserting an invented threshold — except
 // for one bound that *is* meaningful: an addressable group must cost far less
 // than an active one, because that distinction is the entire reason records and

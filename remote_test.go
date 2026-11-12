@@ -893,7 +893,7 @@ func (c *countingClient) Invoke(ctx context.Context, method string, req []byte) 
 }
 
 // TestRouterIssuesOneRequestPerOwner is the router acceptance criterion from
-// SPEC.md §4: "a router submitting 10k messages across 3 owners issues at most
+// docs/design.md §4: "a router submitting 10k messages across 3 owners issues at most
 // 3 RPCs per flush window".
 //
 // The count is taken from the transport rather than inferred, and the messages

@@ -1,9 +1,9 @@
-# 0002 — The Clock interface is wider than SPEC.md section 3.6
+# 0002 — The Clock interface is wider than docs/design.md section 3.6
 
 **Status:** accepted, M0
 **Affects:** `internal/clock`, every package that waits
 
-## What SPEC.md specifies
+## What docs/design.md specifies
 
 ```go
 type Clock interface {

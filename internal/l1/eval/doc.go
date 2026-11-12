@@ -1,6 +1,6 @@
 // Package eval compares candidate local cache libraries for the L1 tier.
 //
-// SPEC.md section 4 (M1) requires evaluating at least two candidates under this
+// docs/design.md section 4 (M1) requires evaluating at least two candidates under this
 // workload and recording the comparison, rather than assuming the first one is
 // best. This package is that evaluation, kept in the tree so the numbers can be
 // re-derived rather than merely believed.

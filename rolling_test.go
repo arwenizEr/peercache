@@ -16,7 +16,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// Rolling-upgrade acceptance, from SPEC.md §4:
+// Rolling-upgrade acceptance, from docs/design.md §4:
 //
 //	a simulated rolling upgrade of a 9-node cluster under sustained write
 //	load completes with zero failed client requests and moves no more than

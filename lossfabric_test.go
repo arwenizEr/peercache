@@ -15,7 +15,7 @@ import (
 
 // The asynchronous data-loss window, measured.
 //
-// SPEC.md §4 requires a "measured and documented data-loss window for
+// docs/design.md §4 requires a "measured and documented data-loss window for
 // async mode", and §6 has a placeholder — "approximately X ms" — waiting for
 // this number. Async replication is the default, and its cost has to be a documented, measured figure rather than
 // an unknown.
@@ -206,7 +206,7 @@ func TestKillingInsideTheAsyncWindowLosesTheWrite(t *testing.T) {
 //
 // The fake-clock tests above bound the window in operations, which is the part
 // that is a property of this code. This puts a number on it in milliseconds,
-// which is what SPEC.md §6 asks for and what an operator actually needs.
+// which is what docs/design.md §6 asks for and what an operator actually needs.
 //
 // Opt-in, like every other timing measurement here: a window measured while the
 // rest of the suite competes for the same cores describes the machine.

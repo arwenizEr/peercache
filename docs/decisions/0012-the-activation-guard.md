@@ -17,7 +17,7 @@ being local. Two nodes each keep their own record map. If both believe they own
 own copy of the state. Nothing in M2 detects that — the mailbox is per-record,
 and neither record can see the other.
 
-Membership is gossip based and therefore AP, per SPEC.md §3.5. There is no
+Membership is gossip based and therefore AP, per docs/design.md §3.5. There is no
 moment at which the cluster agrees on who owns what. A node that has just
 learned of a departure believes it owns keys that the departing node may still
 be serving, because the departing node has not necessarily noticed anything at
@@ -47,7 +47,7 @@ guess about how long the previous owner takes to notice it lost the key. Too
 short and both nodes serve the group; too long and every membership change is a
 brownout.
 
-The epoch check is the other half of SPEC.md §4's requirement and it is
+The epoch check is the other half of docs/design.md §4's requirement and it is
 deliberately asymmetric. A caller whose epoch is *older* than ours reached its
 conclusion from facts we have since discarded, and gets `ErrStaleEpoch`. A
 caller whose epoch is *newer* is not wrong — we are behind, and cannot confirm
@@ -115,7 +115,7 @@ three seconds for a cluster of one is absurd.
 ## Alternatives rejected
 
 **A lease per group, renewed against a quorum.** Correct, and it closes the
-window rather than narrowing it. It also requires consensus, which SPEC.md §5
+window rather than narrowing it. It also requires consensus, which docs/design.md §5
 defers, and it puts a quorum round trip in front of every activation. Rejected
 for M3; the interface does not preclude it.
 

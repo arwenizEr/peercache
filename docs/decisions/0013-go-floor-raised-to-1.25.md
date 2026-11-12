@@ -11,7 +11,7 @@ the library, so it is recorded rather than absorbed silently.
 
 ## Why it is unavoidable
 
-SPEC.md section 4 (M3) requires "Gossip membership via memberlist".
+docs/design.md section 4 (M3) requires "Gossip membership via memberlist".
 `hashicorp/memberlist` pulls in `miekg/dns`, `golang.org/x/net`,
 `golang.org/x/sys` and `golang.org/x/sync`, and those have collectively moved
 past 1.23:
@@ -64,4 +64,4 @@ the reasoning at the time was sound on the information available.
 
 Nothing likely. Floors move in one direction, and 1.25 is current. If a future
 milestone finds a gossip implementation with a leaner graph, revisit — but
-memberlist is what SPEC.md names.
+memberlist is what docs/design.md names.

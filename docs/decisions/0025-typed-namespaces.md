@@ -7,7 +7,7 @@
 
 ## Context
 
-Open question 12, open since M1: SPEC.md section 2 promised "typed
+Open question 12, open since M1: docs/design.md section 2 promised "typed
 Get/Set/GetOrLoad" and section 3.1 delivered `[]byte`. `WithCodec` validated a
 codec name and encoded nothing (question 17). The codec registry existed and was
 tested, and nothing on a data path used it.
@@ -39,7 +39,7 @@ tested, and nothing on a data path used it.
 ## What it costs
 
 On Machine A a typed `Get` of a four-field struct is 487 ns against the byte
-path's 37 ns, and the difference is one MessagePack decode. That meets SPEC.md's
+path's 37 ns, and the difference is one MessagePack decode. That meets docs/design.md's
 criterion — the byte path plus one decode — and it means the codec, not the view,
 is the cost. A hot path that cannot spend half a microsecond per read keeps the
 byte API, and `Raw()` reaches it from a typed handle.

@@ -184,7 +184,7 @@ Measured on Machine A. Medians of three.
 
 ### Acceptance: memory at 1M addressable / 20k active
 
-SPEC.md requires this "measured and recorded" and does not state a budget, so
+docs/design.md requires this "measured and recorded" and does not state a budget, so
 these are reported rather than asserted against an invented number.
 
 ```
@@ -266,7 +266,7 @@ Measured on Machine A. Medians of five.
 
 ### Acceptance: distribution and movement
 
-SPEC.md §4 (M3) requires that keys distribute evenly and that removing a node
+docs/design.md §4 (M3) requires that keys distribute evenly and that removing a node
 moves only that node's share. Both are asserted in
 `internal/ownership/table_test.go` rather than merely measured.
 
@@ -311,7 +311,7 @@ Three things to read off this.
 
 **It is linear in members, at about 3 ns each.** That is inherent: the owner is
 the maximum score over the whole view, so every member is scored. At the cluster
-sizes SPEC.md targets this is tens of nanoseconds and irrelevant; at 256 nodes it
+sizes docs/design.md targets this is tens of nanoseconds and irrelevant; at 256 nodes it
 is 768 ns and would start to matter. Recorded as open question 23 rather than
 optimised speculatively.
 
@@ -379,7 +379,7 @@ Measured on Machine A.
 
 ### Acceptance: remote Get at load
 
-SPEC.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
+docs/design.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
 a 3-node real-network test". Three cache instances in one process over real gRPC
 on loopback TCP: real sockets, real serialisation, real deadlines, real
 connection pool.
@@ -564,7 +564,7 @@ essentially free, every remote operation would pay for it.
 
 ### Router batching
 
-SPEC.md §4 also asks that "a router submitting 10k messages across 3 owners
+docs/design.md §4 also asks that "a router submitting 10k messages across 3 owners
 issues at most 3 RPCs per flush window".
 
 | Messages | Groups | Owners | Remote requests |
@@ -583,7 +583,7 @@ Measured on Machine A.
 
 ### The asynchronous data-loss window
 
-SPEC.md §4 requires this be "measured and documented" rather than an unknown,
+docs/design.md §4 requires this be "measured and documented" rather than an unknown,
 and §6 has a placeholder waiting for it.
 
 **What it is.** Between an asynchronous write returning to its caller and the
@@ -660,7 +660,7 @@ hands to promotion, which is the allocation.
 
 ### Chaos
 
-SPEC.md §4: "a chaos test that kills a random node every 2 seconds for 60
+docs/design.md §4: "a chaos test that kills a random node every 2 seconds for 60
 seconds loses no key that was written with sync replication."
 
 | Configuration | Result |
@@ -720,7 +720,7 @@ runtime one.
 
 ### The rolling-upgrade acceptance
 
-SPEC.md §4: "a simulated rolling upgrade of a 9-node cluster under sustained
+docs/design.md §4: "a simulated rolling upgrade of a 9-node cluster under sustained
 write load completes with zero failed client requests and moves no more than the
 theoretically required key count ±10%."
 
@@ -749,7 +749,7 @@ Measured on Machine A.
 
 ### The soak
 
-SPEC.md §4 asks for "24h at target throughput, memory flat".
+docs/design.md §4 asks for "24h at target throughput, memory flat".
 
 **This was run for 2 minutes, not 24 hours.** The harness takes any duration —
 `PEERCACHE_SOAK=24h go test . -run TestSoak -timeout 25h` — and CI runs it for
@@ -875,7 +875,7 @@ string slice, two integers), about 50 bytes in MessagePack.
 | `BenchmarkTypedSetBytePath` | 351.0 | 85 | 2 | `Raw().Set` of pre-encoded bytes |
 | `BenchmarkTypedEncodeOnly` | 456.3 | 288 | 5 | one MessagePack encode, alone |
 
-SPEC.md's criterion is that the typed path costs the byte path plus one encode
+docs/design.md's criterion is that the typed path costs the byte path plus one encode
 or decode. For `Get`, 486.8 against 36.6 + 553.5 = 590.1: inside it. For `Set`,
 841.4 against 351.0 + 456.3 = 807.3: 4% over, within the run-to-run spread of
 either term (the decode-only runs ranged 469–1015 ns). Allocations agree

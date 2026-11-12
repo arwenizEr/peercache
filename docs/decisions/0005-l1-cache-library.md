@@ -3,7 +3,7 @@
 **Status:** accepted, M1
 **Affects:** `internal/l1`
 
-SPEC.md section 4 (M1) requires evaluating at least two candidate cache
+docs/design.md section 4 (M1) requires evaluating at least two candidate cache
 libraries under this workload and recording the comparison, rather than
 assuming the first one is best. Four were measured.
 

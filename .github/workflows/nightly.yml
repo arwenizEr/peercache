@@ -139,7 +139,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
 
-      # An hour, not the twenty-four SPEC.md names. The harness takes any
+      # An hour, not the twenty-four docs/design.md names. The harness takes any
       # duration and reports the one it actually ran; docs/benchmarks.md records
       # the measured figure with its duration rather than the aspiration.
       #

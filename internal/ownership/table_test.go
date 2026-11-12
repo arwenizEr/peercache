@@ -10,7 +10,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/ownership"
 )
 
-// Ownership acceptance parameters, from SPEC.md section 4.
+// Ownership acceptance parameters, from docs/design.md section 4.
 const (
 	acceptanceNodes = 7
 	acceptanceKeys  = 100_000

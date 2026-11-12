@@ -5,7 +5,7 @@
 
 ## The gap in the spec
 
-SPEC.md section 4 (M1) requires "Compression: LZ4, applied above a configurable
+docs/design.md section 4 (M1) requires "Compression: LZ4, applied above a configurable
 size threshold". Section 3.1 defines the namespace options and contains no
 threshold, and no compression option at all.
 
@@ -72,7 +72,7 @@ format's header would, so it would be redundant overhead on every value.
 
 `WithCodec` and `WithCompression` are independent. The codec registry (JSON,
 MsgPack) is built and tested in M1 but has nothing to encode yet, because
-SPEC.md section 3.1 defines a `[]byte` API and no typed one — see the M1 plan.
+docs/design.md section 3.1 defines a `[]byte` API and no typed one — see the M1 plan.
 `WithCodec` is validated at construction so an unregistered name fails at
 startup, which is the point of naming a codec in configuration.
 

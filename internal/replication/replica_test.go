@@ -62,7 +62,7 @@ func TestAnOlderCopyIsRejected(t *testing.T) {
 }
 
 // TestVersionConflictsAreCountedButRetransmissionsAreNot covers the metric
-// SPEC.md names, and the distinction that makes it worth having.
+// docs/design.md names, and the distinction that makes it worth having.
 //
 // A strictly older stamp arriving is a real out-of-order delivery — ordinary
 // under asynchronous replication, handled correctly by the stamp ordering, and
@@ -128,7 +128,7 @@ func TestALaterEpochWinsWhateverTheVersion(t *testing.T) {
 	}
 }
 
-// TestTwoOwnersInOneEpochIsAConflict is the split-brain detector SPEC.md §4
+// TestTwoOwnersInOneEpochIsAConflict is the split-brain detector docs/design.md §4
 // requires.
 //
 // One group has one owner, so two *different* nodes writing the same key under

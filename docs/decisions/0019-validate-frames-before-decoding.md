@@ -6,7 +6,7 @@
 
 ## Context
 
-CLAUDE.md forbids `panic` in library paths, and SPEC.md's M8 hardening asks that
+CLAUDE.md forbids `panic` in library paths, and docs/design.md's M8 hardening asks that
 no input from a peer may take a node down. `internal/wire` is the only code here
 that interprets bytes it did not write, and from M4 those bytes arrive over the
 network from anything that can reach the port.

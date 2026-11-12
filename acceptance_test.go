@@ -13,7 +13,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 )
 
-// Local-read acceptance parameters, from SPEC.md section 4.
+// Local-read acceptance parameters, from docs/design.md section 4.
 // latencyGateEnv opts a run into the latency assertion. See the skip in
 // TestLocalGetP99AtOneMillionKeys for why it is not on by default.
 const latencyGateEnv = "PEERCACHE_LATENCY_GATE"

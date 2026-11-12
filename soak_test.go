@@ -15,7 +15,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// SPEC.md asks for a "load and soak test: 24h at target throughput, memory flat".
+// docs/design.md asks for a "load and soak test: 24h at target throughput, memory flat".
 //
 // # What this actually runs, and why the distinction matters
 //

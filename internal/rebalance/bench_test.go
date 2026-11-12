@@ -33,7 +33,7 @@ func BenchmarkComputeRemoval(b *testing.B) {
 // BenchmarkComputeByClusterSize shows the cost scaling with membership.
 //
 // Each key is ranked against every member twice — once per view — so planning
-// is O(keys × members × rf). At the cluster sizes SPEC.md targets that is fine;
+// is O(keys × members × rf). At the cluster sizes docs/design.md targets that is fine;
 // this is here so the point at which it stops being fine is measured rather
 // than discovered.
 func BenchmarkComputeByClusterSize(b *testing.B) {

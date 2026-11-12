@@ -7,7 +7,7 @@ Format: what is unresolved, what was picked for now, and what would force a
 change.
 
 Numbers are permanent once assigned, because the code cites them by hand:
-`examples/rolling-upgrade/main.go` refers to question 26, `acceptance_m4_test.go` to questions
+`examples/rolling-upgrade/main.go` refers to question 26, `acceptance_remote_test.go` to questions
 27 and 29, and question 38 is named fourteen times in `.go` and `.sh` files alone. There is no question 19 —
 the gap predates this record's current form — and renumbering to close it would
 invalidate every one of those references for no gain.
@@ -16,7 +16,7 @@ invalidate every one of those references for no gain.
 
 ## 1. The shape of `PeerClient` and `Handler` — M0, confirmed by M4
 
-SPEC.md section 3.6 names `Transport.Dial(node) (PeerClient, error)` and
+docs/design.md section 3.6 names `Transport.Dial(node) (PeerClient, error)` and
 `Serve(l net.Listener, h Handler)` but never defines either type.
 
 **Picked:** a byte-oriented request/response pair.
@@ -51,7 +51,7 @@ chosen for.
 
 ## 2. Whether `Serve` should take a `net.Listener` — M0, deferred
 
-The signature is fixed by SPEC.md section 3.6 and it suits gRPC. It suits an
+The signature is fixed by docs/design.md section 3.6 and it suits gRPC. It suits an
 in-process transport badly: there is nothing to listen on.
 
 **Picked:** the fake transport accepts a nil listener and ignores it.
@@ -63,7 +63,7 @@ appears, replacing the parameter with an opaque `ListenSpec` would be tidier.
 
 ## 3. The contents of `Stats` — M0, provisional
 
-SPEC.md section 3.1 returns `Stats` and never says what is in it.
+docs/design.md section 3.1 returns `Stats` and never says what is in it.
 
 **Picked:** a plain struct with self, member count, epoch, key and group counts,
 and hit/miss counters. A struct, not an interface, so adding a field is not a
@@ -91,7 +91,7 @@ are quotations.
 
 ## 5. `Watch()` semantics under a slow consumer — M0, provisional
 
-SPEC.md section 3.5 gives `Watch() <-chan MembershipChange` with no buffering
+docs/design.md section 3.5 gives `Watch() <-chan MembershipChange` with no buffering
 or fan-out rule.
 
 **Picked:** one channel per call, buffered at 64, non-blocking send. A watcher
@@ -135,7 +135,7 @@ timings and the harness should probably default to matching them.
 
 ## 8. `activationDelay` interacts with join delay — M3, resolved
 
-SPEC.md section 4 (M3) requires a node to wait `activationDelay` after a
+docs/design.md section 4 (M3) requires a node to wait `activationDelay` after a
 membership change before activating groups it newly owns. The harness's
 `JoinDelay` is a different thing — admission latency, not activation latency —
 and the two will need to be reasoned about together.
@@ -210,7 +210,7 @@ after, someone adds `t.Parallel` and starts seeing phantom leaks.
 
 ## 12. There is no typed namespace API — M1, resolved in M10
 
-SPEC.md section 2 describes the namespace as "typed Get/Set/GetOrLoad". Section
+docs/design.md section 2 describes the namespace as "typed Get/Set/GetOrLoad". Section
 3.1 defines it entirely in terms of `[]byte`, and no typed API appears anywhere
 in section 3.
 
@@ -237,7 +237,7 @@ chooses the encoding, with MessagePack as the default. See
 `internal/l1` is complete and tested, and nothing calls it. On a single node
 every key is owned locally, so there is no non-owned copy to cache.
 
-**Picked:** build and test it standalone, as SPEC.md section 4 (M1) requires,
+**Picked:** build and test it standalone, as docs/design.md section 4 (M1) requires,
 and wire it in at M4 when remote reads exist.
 
 Recorded so that it is not mistaken for dead code at review.
@@ -303,7 +303,7 @@ consulted by any data path:
 |---|---|---|
 | `WithPartitioner` | M3 | Grouping decides which node owns a key. One node, no ownership, nothing to decide. |
 | `WithReplicationFactor` | M5 | There is nowhere to put a replica. |
-| `WithCodec` | M4 | SPEC.md section 3.1 defines a `[]byte` API; there is nothing to encode. See question 12. |
+| `WithCodec` | M4 | docs/design.md section 3.1 defines a `[]byte` API; there is nothing to encode. See question 12. |
 
 **Updated in M4.** `WithPartitioner` now acts: `namespace.groupKeyFor` consults
 it on every routed operation, so keys grouped under one group key share an owner
@@ -435,7 +435,7 @@ owner is the maximum. `BenchmarkOwner` on Machine A measures 16ns at 3 nodes,
 49ns at 7, 85ns at 16, 246ns at 64 and 768ns at 256 — about 3ns per member,
 allocation-free.
 
-**Picked:** accept it. SPEC.md targets clusters in the tens of nodes, where the
+**Picked:** accept it. docs/design.md targets clusters in the tens of nodes, where the
 cost is tens of nanoseconds and is dwarfed by the network hop M4 adds behind it.
 
 **What would force a change:** a cluster in the hundreds, where 768ns per
@@ -548,7 +548,7 @@ of the places that need it reads, in the commit log, exactly like a complete one
 
 **M8 addendum. There was a third caller, and the sentence above was right.**
 
-`acceptance_m4_test.go` builds gossip nodes through a helper of its own and never
+`acceptance_remote_test.go` builds gossip nodes through a helper of its own and never
 got the fix. It failed on every attempt here — `bind: An attempt was made to
 access a socket in a way forbidden by its access permissions`, on a port inside
 the reserved band — which means the M4 acceptance criterion had not executed on
@@ -599,7 +599,7 @@ are not settling — and a transient spike during churn is not.
 
 ## 29. The 50k rps acceptance figure is not reachable in-process — M4, met in M8
 
-SPEC.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
+docs/design.md §4 asks for "remote Get p99 under 2ms and p999 under 10ms at 50k rps in
 a 3-node real-network test". The latency half is met with 5/5 reliability. The
 rate half is not: five consecutive runs reached 45,168 to 48,035 rps.
 
@@ -670,7 +670,7 @@ sixty-four workers reaching 56k rps at a p50 of 1.2 ms; sixty-four workers now
 reach 235k at a p50 of 270 µs — four times the rate at a quarter of the latency,
 at the same concurrency on the same machine.
 
-**The criterion is met, with margin.** SPEC.md §4 asks for p99 under 2 ms and
+**The criterion is met, with margin.** docs/design.md §4 asks for p99 under 2 ms and
 p999 under 10 ms at 50k rps. The *lowest* point of the sweep offers 110k rps at
 p99 180 µs, eleven times inside the budget. There is no worker count in this
 range at which the criterion fails.
@@ -833,7 +833,7 @@ repeatable mistakes:
 
 ---
 
-## 33. Deliberately deferred, per SPEC.md section 5
+## 33. Deliberately deferred, per docs/design.md section 5
 
 Not open questions. Listed so that nobody reopens them by accident:
 
@@ -1426,7 +1426,7 @@ data, which would be a new event source rather than this constant.
 
 Asked whether PeerCache should write through to an external resilient store.
 CLAUDE.md decision 4 rules out writing to disk in v1 and allows persistence
-hooks to be designed for; SPEC.md section 5 defers WAL, snapshots and backup.
+hooks to be designed for; docs/design.md section 5 defers WAL, snapshots and backup.
 
 **Picked:** a design, `docs/decisions/0026-external-persistence-design.md`, and
 no code. It proposes a per-namespace `Persister` interface with write-behind as

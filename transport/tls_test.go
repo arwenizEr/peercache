@@ -21,7 +21,7 @@ import (
 	"github.com/arwenizEr/peercache/transport"
 )
 
-// SPEC.md §4 calls mTLS "optional but implemented". Optional is easy to test by
+// docs/design.md §4 calls mTLS "optional but implemented". Optional is easy to test by
 // omission; implemented is not, and an mTLS path that is never exercised is an
 // mTLS path that does not work. These tests generate a throwaway CA and two
 // node certificates, and complete a real TLS 1.3 handshake over loopback.

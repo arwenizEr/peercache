@@ -2,11 +2,11 @@
 
 **Status:** accepted
 **Milestone:** M4
-**Deviates from:** SPEC.md §4, which says "gRPC service per `proto/`"
+**Deviates from:** docs/design.md §4, which says "gRPC service per `proto/`"
 
 ## Context
 
-SPEC.md's M4 line reads "gRPC service per `proto/`", which ordinarily means a
+docs/design.md's M4 line reads "gRPC service per `proto/`", which ordinarily means a
 `.proto` file, a protoc invocation, generated `.pb.go` in the tree, and
 `google.golang.org/protobuf` as a direct dependency.
 

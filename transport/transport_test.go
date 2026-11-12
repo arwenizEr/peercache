@@ -286,7 +286,7 @@ func TestInvokeReturnsWhenTheContextExpires(t *testing.T) {
 }
 
 // TestKillingTheTransportMidRequestSurfacesAnError is the transport acceptance
-// criterion stated in SPEC.md §4: "killing the transport mid-request surfaces a
+// criterion stated in docs/design.md §4: "killing the transport mid-request surfaces a
 // deadline error, never a hang."
 //
 // The request is confirmed to be in flight before the server is killed, so this

@@ -5,7 +5,7 @@
 
 ## The problem
 
-SPEC.md section 3 defines the public API in the root `peercache` package. Some
+docs/design.md section 3 defines the public API in the root `peercache` package. Some
 of those definitions are concrete types — `Node`, `Event`, `Epoch`, `Stats` —
 that appear in the signatures of interfaces the internal packages must
 implement.
@@ -42,7 +42,7 @@ type GroupState = core.GroupState
 ```
 
 An alias is not a wrapper. `peercache.Node` and `core.Node` are the same type,
-so the public API is byte-identical to what SPEC.md specifies and no caller can
+so the public API is byte-identical to what docs/design.md specifies and no caller can
 tell the difference.
 
 Sentinel errors are handled the same way, by assignment rather than aliasing:
