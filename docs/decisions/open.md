@@ -1416,3 +1416,23 @@ life produces, so an emission added later is a visible change to that test.
 point the event has something to mean; or a request for events on namespace
 data, which would be a new event source rather than this constant.
 
+---
+
+## 44. External persistence — post-M10, designed, not built
+
+Asked whether PeerCache should write through to an external resilient store.
+CLAUDE.md decision 4 rules out writing to disk in v1 and allows persistence
+hooks to be designed for; SPEC.md section 5 defers WAL, snapshots and backup.
+
+**Picked:** a design, `docs/decisions/0026-external-persistence-design.md`, and
+no code. It proposes a per-namespace `Persister` interface with write-behind as
+the default and a key-coalescing queue, drivers in separate modules, and a
+per-key order that survives ownership changes — because the in-memory `Stamp`
+compares per-node epochs and cannot order writes across owners in a store that
+outlives them.
+
+**What would force building it:** a namespace whose data has no other source of
+truth and cannot tolerate the loss window M5 measured — or a deployment where
+M9's shedding of owned data, which persistence would turn into a reloadable miss,
+is costing more than a database write per key.
+
