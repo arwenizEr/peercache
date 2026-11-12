@@ -2111,6 +2111,20 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### The full audit after M10: 154 of 154
+
+Every entry in `scripts/mutation-audit.sh`, run end to end on a clean tree after
+M10 — the first full run since M8's 110. **caught: 154, vacuous: 0, skipped: 0,
+tree clean**, in 11 m 11 s on Machine A.
+
+It is not the same statement as the filtered runs that verified each entry as it
+was written. Those said each entry worked against the tree of its day; this says
+all of them work against the tree as it is, which is the only run that would
+notice a later change weakening an earlier test. Before it could be run, a dry
+check of every entry's text against its file found five that M9 and the coverage
+sweep had silently turned into skips; they were repointed first. The drain entry
+recorded above as flaky was caught.
+
 ### The documented way to build a cluster did not compile outside this module
 
 The coverage sweep's remaining zeros were mostly trivial — no-op logger methods,
