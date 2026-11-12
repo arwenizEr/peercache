@@ -1,6 +1,7 @@
 # 0026 — External persistence: a design, not an implementation
 
-**Status:** proposed. Nothing here is built.
+**Status:** proposed, and **not buildable as written** — an independent review
+found ten defects in it, listed at the end. Nothing here is built.
 **Milestone:** none yet; a candidate for the first one after v1.
 **Bound by:** CLAUDE.md decision 4 — "Durability: none… Persistence hooks may be
 designed for, but nothing is written to disk in v1" — and SPEC.md §5, which
@@ -118,7 +119,7 @@ which `peercache_split_brain_detections_total` already exists for.
 | Owner and all replicas killed | Keys whose ops were persisted reload through the loader. Keys whose ops were still queued are lost — the measured window. |
 | Persister unavailable | Writes keep succeeding in memory; the queue fills and coalesces; failures and queue depth are exported. Readiness is unaffected — the cache can serve — and `peercache_persist_lag_seconds` says how far behind durability is. |
 | Graceful drain | `Drain` flushes the queue before handing off; a drain that cannot flush reports it. |
-| Memory shedding (M9) | Shedding an owned key must **not** delete it from the persister — shedding is memory relief, not a deletion. With a persister, a shed key is reloadable, which turns M9's data loss into a cache miss. This is the strongest argument for building it. |
+| Memory shedding (M9) | Shedding an owned key must **not** delete it from the persister — shedding is memory relief, not a deletion. With a persister, a shed key is reloadable, which turns M9's data loss into a cache miss. This is the best argument for building it. |
 | TTL expiry | `ExpiresAt` is persisted; the adapter expires or filters on load. Not a delete op. |
 
 ## Metrics it would add
@@ -156,3 +157,57 @@ reordering and duplication, and the existing chaos and simulation harnesses
 extended with "kill every holder of a key" — the case that today loses data by
 design — asserting the key reloads at its last persisted value and never at an
 older one.
+
+## Review findings — what must be resolved before building
+
+An independent code review of this note (high effort) checked it against the
+code and found the following. Each is a reason the design, as written above,
+would lose or misattribute writes.
+
+1. **The Order seed needs a read the write path never makes.** `Set` is a blind
+   write. A new owner writing a key it does not hold starts at Order 1, and a
+   persister holding Order 7 refuses every write until the counter passes it —
+   while `Set` reports success. The seed has to come from somewhere every write
+   reaches, not only from loads.
+2. **A promoted replica can be behind what is persisted.** Under asynchronous
+   replication the old owner may have flushed Order 5 and replicated only 4. The
+   new owner continues from 4, its next write collides with the stored 5, and
+   the collision is counted as a split brain that never happened. Promotion must
+   seed from the persister, or the persisted order must be replicated.
+3. **Replicas carry the in-memory version, not the Order.** The note says the
+   new owner learns the order from replicas, and also that the Order is not the
+   Stamp. The version restarts when the sweeper reclaims an entry, and the
+   version floor is memory-only. Nothing currently carries the Order.
+4. **`Apply` needs a result per op.** Applied, refused as older, and rejected as
+   a conflict are three different outcomes, and one error for a batch cannot say
+   which key had which.
+5. **A delete loses its Order.** If the adapter drops the row, a delayed older
+   write is applied over nothing and the value comes back — question 42 at the
+   persistence layer. If it keeps a tombstone that `Load` reports as absent, the
+   next owner has nothing to start above. `Load` must return tombstones with
+   their Order.
+6. **Overflow cannot reread what it dropped.** A key marked for reread may have
+   been deleted or merely shed (M9); the owned store cannot tell which, and one
+   choice loses a delete while the other deletes a shed key. The marked set is
+   also unbounded.
+7. **Real split brain is mostly undetected.** Two activations advance their
+   Orders independently and coalesce, so their writes usually differ in Order;
+   the lower is refused as older with no signal. "Make it detectable" is not
+   achieved by equal-Order detection alone.
+8. **Persister conflicts must not feed `peercache_split_brain_detections_total`.**
+   That metric means two nodes wrote under one epoch; persister conflicts include
+   false ones from finding 2. They belong in their own counter only.
+9. **`Load` cannot be adapted into the existing `Loader` type** without losing
+   the Order and the absolute deadline, which the scheme depends on.
+10. **Word choice** — corrected above.
+
+Also noted by the review: the claim that stamps are compared only within one
+ownership lineage contradicts `Stamp.NewerThan`'s own comment, whose epoch rule
+exists to order writes across an ownership change; and a persisted absolute
+deadline is filtered by the adapter's clock, not the owner's, so skew moves
+expiry on load.
+
+The common root of 1–5 and 9: the design needs a per-key order that is durable,
+replicated and carried by every path that writes or loads a key, and v1 has no
+such thing. Building one is the first milestone of this work, not a detail of it.
+
