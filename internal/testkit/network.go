@@ -418,8 +418,7 @@ func (t *netTransport) Dial(node core.Node) (core.PeerClient, error) {
 }
 
 // Serve implements [core.Transport]. The listener is ignored: an in-process
-// transport has nothing to listen on, and SPEC.md section 3.6 fixes the
-// signature. It blocks until the transport or the network is closed.
+// transport has nothing to listen on, and the interface fixes the signature. It blocks until the transport or the network is closed.
 func (t *netTransport) Serve(_ net.Listener, h core.Handler) error {
 	if h == nil {
 		return fmt.Errorf("testkit: nil handler: %w", core.ErrInvalidOption)

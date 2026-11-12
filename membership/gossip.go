@@ -186,8 +186,8 @@ func New(opts Options) (*Gossip, error) {
 	cfg.Name = opts.Self.ID
 	cfg.Delegate = (*delegate)(g)
 	cfg.Events = &memberlist.ChannelEventDelegate{Ch: events}
-	// memberlist logs to the standard logger by default, which CLAUDE.md
-	// forbids; silence it and route what matters through our own Logger.
+	// memberlist logs to the standard logger by default, which a library
+	// must not do; silence it and route what matters through our own Logger.
 	cfg.LogOutput = discard{}
 
 	if opts.BindAddr != "" {
@@ -484,7 +484,7 @@ func (d *delegate) NodeMeta(limit int) []byte {
 }
 
 // NotifyMsg implements [memberlist.Delegate]. PeerCache carries no user data
-// over gossip — that is what the transport in M4 is for — so this is empty.
+// over gossip — that is what the transport is for — so this is empty.
 func (d *delegate) NotifyMsg([]byte) {}
 
 // GetBroadcasts implements [memberlist.Delegate].
@@ -527,8 +527,8 @@ const metaRPCAddrKey = "peercache.rpc_addr"
 // metaEpochKey is where a peer's advertised epoch is kept in [core.Node.Meta].
 const metaEpochKey = "epoch"
 
-// discard swallows memberlist's own logging. CLAUDE.md forbids the log package,
-// and memberlist writes to it by default.
+// discard swallows memberlist's own logging. The library never uses the log
+// package, and memberlist writes to it by default.
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }

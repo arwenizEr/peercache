@@ -11,8 +11,7 @@ import (
 // are stamped with the epoch they were made under so that a node returning from
 // a partition can recognise its own conclusions as stale.
 //
-// Epochs are per-view, not globally agreed: SPEC.md §3.5 makes gossip
-// membership AP, so two nodes can hold different epochs at the same instant.
+// Epochs are per-view, not globally agreed: gossip membership is AP, so two nodes can hold different epochs at the same instant.
 // Comparing epochs establishes staleness, never consensus.
 type Epoch uint64
 
@@ -115,7 +114,7 @@ type MembershipChange struct {
 
 // MembershipAuthority is the source of truth for who is in the cluster.
 //
-// SPEC.md §3.5. The gossip implementation is AP and is the default; the
+// The gossip implementation is AP and is the default; the
 // interface exists so a CP implementation can be substituted without a rewrite.
 type MembershipAuthority interface {
 	Self() Node
@@ -140,7 +139,7 @@ type MembershipAuthority interface {
 // versions alone would reject that fresh value as stale.
 //
 // Even so, the ordering is an optimisation, not a guarantee. A non-owned copy's
-// TTL is the real bound on staleness (CLAUDE.md non-negotiable 6).
+// TTL is the real bound on staleness.
 //
 // The msgpack tags are here rather than in internal/wire so that the storage
 // and protocol layers share one definition instead of converting between two.

@@ -2,10 +2,8 @@ package core
 
 // Stats is a point-in-time snapshot of a node's view of itself and the cluster.
 //
-// SPEC.md names Stats in §3.1 but never defines it. This shape covers what M0
-// through M3 can populate honestly; M7 extends it with the correctness counters
-// (split-brain detections, stale-epoch rejections, version conflicts). It is a
-// plain struct rather than an interface so that adding a field is not a
+// Alongside throughput it carries the correctness counters (split-brain
+// detections, stale-epoch rejections, version conflicts). It is a plain struct rather than an interface so that adding a field is not a
 // breaking change for implementers.
 //
 // Every field is a snapshot, not a live view. Reading Stats never blocks a data
@@ -59,9 +57,8 @@ type Stats struct {
 	RefusedActivations  int64
 	DeferredActivations int64
 	// StaleEpochRefusals counts activations refused because the caller
-	// resolved ownership under a view older than this node's. It stays zero
-	// until M4, when requests start arriving with an epoch attached; a
-	// sustained rate after that means a caller is caching ownership for
+	// resolved ownership under a view older than this node's. A sustained
+	// rate means a caller is caching ownership for
 	// longer than membership stays still.
 	StaleEpochRefusals int64
 	// EpochSkew counts peer requests whose caller had resolved ownership
@@ -80,7 +77,8 @@ type Stats struct {
 	// because the queue was full, which is the designed behaviour under
 	// write pressure; Failed counts peers that did not accept one. Both
 	// mean some node will serve a stale copy until its TTL expires, which
-	// is the documented bound — see CLAUDE.md non-negotiable 6. They are
+	// is the documented bound: correctness never depends on an
+	// invalidation arriving. They are
 	// worth watching as a ratio, not alerting on individually.
 	InvalidationsSent    int64
 	InvalidationsDropped int64
@@ -103,8 +101,8 @@ type Stats struct {
 	// nodes under one membership epoch.
 	//
 	// One group has one owner, so this cannot happen unless two nodes
-	// believed they owned the same key — the partition case SPEC.md §4
-	// requires be detected and counted. It is never merged: conflicting
+	// believed they owned the same key — the partition case, which must be
+	// detected and counted. It is never merged: conflicting
 	// writes are reported, and choosing between them is the application's
 	// business.
 	//
@@ -128,7 +126,7 @@ type Stats struct {
 	// Together they account for every replica ReplicasEvicted counts: a
 	// membership change moves keys, and each moved copy is either placed
 	// elsewhere or held onto. Dropping it because this node stopped ranking
-	// for it — which is what happened before M8 — loses the key whenever the
+	// for it loses the key whenever the
 	// nodes that now rank for it hold nothing, which is the ordinary case
 	// after a partition heals. See docs/decisions/open.md question 38.
 	//
@@ -245,16 +243,12 @@ type Stats struct {
 	// The methods no-op and the violation is counted instead — silence would
 	// be wrong and a panic in someone else's goroutine would be worse — which
 	// makes this counter the only way the bug is ever visible.
-	//
-	// internal/actor/state.go said this was exported from M7. It was not; the
-	// counter stopped at actor.Counters and reached neither Stats nor the
-	// metrics output. Found by the M8 audit.
 	StateEscapes int64
 
 	// MailboxRejections counts calls refused because a group's mailbox was
 	// full, reported to the caller as ErrGroupOverloaded.
 	//
-	// SPEC.md's M7 bullet names this as a correctness metric. A rising value
+	// This is a correctness metric. A rising value
 	// is backpressure working as designed, not a fault — but it is the
 	// signal that a group is saturated, and the only one that arrives before
 	// the latency does.

@@ -38,7 +38,7 @@ type model struct {
 	nowNs   func() int64
 	// floor is the store's per-shard version floor: the highest version a
 	// shard has deleted or shed. A first write to an absent key starts above
-	// it (open question 42).
+	// it.
 	floor   map[int]uint64
 	shardOf func(string) int
 }

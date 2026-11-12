@@ -14,7 +14,7 @@ import (
 
 // TLSConfig configures mutual TLS between peers.
 //
-// SPEC.md §4 (M4) calls mTLS "optional but implemented". Optional means the
+// mTLS is optional but implemented. Optional means the
 // zero value is plaintext, which is the honest default for a single Kubernetes
 // cluster where the pod network is already private and a mesh may be handling
 // transport security. Implemented means it is real when switched on: both sides

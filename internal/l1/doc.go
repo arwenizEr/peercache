@@ -1,7 +1,7 @@
 // Package l1 caches copies of keys this node does not own.
 //
 // Two rules govern every entry, and they are correctness rules rather than
-// tuning (CLAUDE.md, decision 6):
+// tuning:
 //
 //  1. Entries are TTL bounded, always. The TTL is the upper bound on how stale
 //     a read can be, and it is the only such bound that exists. There is no way

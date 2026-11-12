@@ -45,7 +45,7 @@ type Options struct {
 	MaxActive int
 	// CanActivate is consulted before a group is activated, and may refuse.
 	//
-	// M3 supplies the ownership guard here: a node must not activate a group
+	// The cache supplies the ownership guard here: a node must not activate a group
 	// it does not own, nor one it acquired so recently that the previous
 	// owner may not have noticed. A nil hook permits everything, which is
 	// correct for a single node with no membership.

@@ -8,6 +8,4 @@
 // The reasoning is that PeerCache's guarantees are honest about having windows
 // in them. A window that is not counted is indistinguishable from a window that
 // does not exist, and an operator deserves to be able to tell the difference.
-//
-// Milestone: M7. This package is empty until then.
 package metrics

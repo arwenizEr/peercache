@@ -33,7 +33,7 @@ const pressureLargeWrite = 64 << 10
 //  2. Replicas. Losing one lowers that key's replication factor until the owner
 //     next writes it or this node next catches up; the owner still holds it.
 //  3. Owned data. This loses the key, which state that is lossy by design
-//     (CLAUDE.md decision 4) is allowed to do, and which a loader rebuilds.
+//     is allowed to do, and which a loader rebuilds.
 //
 // The low-water mark is what keeps it from shedding on every write once it has
 // shed once: a cache at its budget would otherwise shed a little, grow a

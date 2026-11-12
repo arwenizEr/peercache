@@ -233,7 +233,7 @@ func callerID(ctx context.Context) string {
 // Close implements [core.Transport]. It is idempotent.
 //
 // In-flight requests fail rather than hang: Stop, not GracefulStop. A graceful
-// drain belongs to M6's shutdown sequence, which transfers ownership first and
+// drain belongs to the cache's Drain, which transfers ownership first and
 // therefore has somewhere for the work to go. Draining here would only make
 // Close slow.
 func (t *Transport) Close() error {

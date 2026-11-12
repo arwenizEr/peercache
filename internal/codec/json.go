@@ -36,8 +36,8 @@ func (jsonCodec) Unmarshal(data []byte, v any) error { return json.Unmarshal(dat
 func init() {
 	// Built-in codecs are installed directly rather than through Register.
 	// Register returns an error, and there is nothing an init function may
-	// do with an error except panic — which CLAUDE.md forbids in library
-	// paths, and rightly: a library that aborts an application's startup
+	// do with an error except panic — which library paths never do, and
+	// rightly: a library that aborts an application's startup
 	// over its own internal bookkeeping is not a library.
 	//
 	// The name is a constant registered exactly once here, so there is no

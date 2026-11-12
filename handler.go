@@ -70,7 +70,7 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 // only showed up once two nodes had genuinely diverged: a reader at epoch 6 was
 // refused by an owner at epoch 4, and *both were right*.
 //
-// An epoch counts the membership transitions one node has observed. SPEC.md
+// An epoch counts the membership transitions one node has observed. The design
 // §3.5 makes membership AP and [core.Epoch] says so directly — epochs are
 // per-view, not globally agreed, and comparing them "establishes staleness,
 // never consensus". Two nodes that agree exactly about who is in the cluster
@@ -219,7 +219,7 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	// anywhere but the node that happened to read it first.
 	//
 	// But a namespace created here gets *default* options — replication
-	// factor 1 — and options are fixed at creation (open question 26). So an
+	// factor 1 — and options are fixed at creation. So an
 	// owner whose application has not yet opened the namespace silently
 	// replicates nothing, and killing it loses its entire share. That
 	// presented as 53 of 300 keys destroyed by a node failure at RF=3, and
@@ -431,7 +431,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	// the *next* membership change reconciled it. At RF=1 there is no next
 	// change and no replica set to belong to, so it would be evicted
 	// instead: a graceful shutdown would lose exactly the data it was trying
-	// to save. A mutation audit found that, by way of a test that passed
+	// to save. Breaking it on purpose found that, by way of a test that passed
 	// while drain did nothing at all.
 	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && ns.err == nil && h.ownsKey(ns, in.Key) {
 		// in.Value is the sender's stored form, framed already, as every
@@ -563,8 +563,7 @@ func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte
 	// Deliberately no epoch check. An invalidation is a hint, and refusing
 	// a hint because the sender's view has moved on would discard exactly
 	// the messages sent during a membership change, which is when stale
-	// copies are most likely. Correctness does not depend on it either way
-	// (CLAUDE.md non-negotiable 6).
+	// copies are most likely. Correctness does not depend on it either way.
 	if ns, ok := h.localNamespace(in.Namespace); ok && ns.l1 != nil {
 		for _, key := range in.Keys {
 			ns.l1.InvalidateOlderThan(key, in.Stamp)

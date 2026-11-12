@@ -11,7 +11,7 @@ import (
 // later option overrides an earlier one.
 type Option = core.Option
 
-// NamespaceOption configures one namespace (SPEC.md section 3.1).
+// NamespaceOption configures one namespace.
 type NamespaceOption = core.NamespaceOption
 
 // WithNodeID sets this node's cluster-unique identifier. It is required, and it
@@ -57,7 +57,7 @@ func WithLogger(l Logger) Option {
 //
 // It is off by default because the cost was measured rather than assumed: an
 // observation is 15.8ns uncontended and 36.9ns under concurrency, against a
-// local read path M1 measured at 515ns. That is ~7%, and on a platform whose
+// measured local read path of 515ns. That is ~7%, and on a platform whose
 // clock resolves to ~500us a sub-microsecond operation times as zero regardless
 // — so the local path would pay for nothing.
 //
@@ -215,8 +215,7 @@ func WithEventHandler(fn func(Event)) Option {
 	return func(o *core.Options) { o.OnEvent = fn }
 }
 
-// WithLoader registers the function that reconstructs a missing value
-// (SPEC.md section 3.1).
+// WithLoader registers the function that reconstructs a missing value.
 //
 // The loader belongs to the namespace rather than to each call, so that it
 // exists by name on every pod and the key's owner can execute it locally
@@ -226,7 +225,7 @@ func WithLoader(l Loader) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.Loader = l }
 }
 
-// WithPartitioner sets how keys map to groups (SPEC.md section 3.4). The
+// WithPartitioner sets how keys map to groups. The
 // default is [PartitionByKey].
 //
 // The partitioner must be pure and identical on every pod. Two nodes
@@ -328,8 +327,8 @@ func WithL1TTL(d time.Duration) NamespaceOption {
 // benefit. The threshold exists because compressing a forty-byte counter costs
 // more than it saves.
 //
-// SPEC.md section 3.1 does not define this option; section 4 (M1) requires
-// compression above a configurable threshold, and this is that knob. See
+// Compression applies above a configurable threshold, and this is that knob.
+// See
 // docs/decisions/0008-compression-is-opt-in.md.
 func WithCompression(name string, threshold int) NamespaceOption {
 	return func(o *core.NamespaceOptions) {
@@ -360,8 +359,7 @@ func WithShards(n int) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.Shards = n }
 }
 
-// Loader reconstructs a namespace value that is not resident
-// (SPEC.md section 3.1).
+// Loader reconstructs a namespace value that is not resident.
 //
 // The returned ttl is applied exactly as [Namespace.Set] would apply it: a
 // non-positive value means the loaded value does not expire on its own. A
@@ -369,8 +367,7 @@ func WithShards(n int) NamespaceOption {
 // refreshed, which is occasionally what is wanted and more often an oversight.
 type Loader = core.Loader
 
-// Partitioner maps a cache key to the group key that decides its owner
-// (SPEC.md section 3.4).
+// Partitioner maps a cache key to the group key that decides its owner.
 type Partitioner = core.Partitioner
 
 // PartitionerFunc adapts an ordinary function to [Partitioner].

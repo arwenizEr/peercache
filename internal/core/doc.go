@@ -3,7 +3,7 @@
 //
 // # Why this package exists
 //
-// SPEC.md §3 defines the public API in the root package. Several of those
+// The public API lives in the root package. Several of those
 // definitions are concrete types — [Node], [Event], [Epoch] — that appear in the
 // signatures of interfaces the internal packages must implement. Go's structural
 // interface satisfaction does not help there: an internal package cannot declare
@@ -13,12 +13,11 @@
 // If the root package owned those definitions, then internal/transport,
 // internal/membership and internal/actor would all have to import the root
 // package, while the root package's own constructor imports them back. That is
-// an import cycle, and it appears the moment M2 begins.
+// an import cycle.
 //
 // So the definitions live here, and the root package re-exports them as type
 // aliases. An alias is not a wrapper: peercache.Node and core.Node are the same
-// type, so the public API is exactly what SPEC.md §3 specifies and callers can
-// never tell the difference. The rule this buys is worth stating plainly:
+// type, so callers can never tell the difference. The rule this buys is worth stating plainly:
 //
 //	No package under internal/ may import the root peercache package.
 //

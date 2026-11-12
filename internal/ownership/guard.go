@@ -57,14 +57,14 @@ type Guard struct {
 	// a burst as the single transition it really is.
 	settled atomic.Pointer[snapshot]
 
-	// deferrals and refusals are the correctness metrics M7 exports. A
+	// deferrals and refusals are exported as correctness metrics. A
 	// non-zero refusal count under steady membership means clients are
 	// resolving ownership differently from this node.
 	deferrals atomic.Int64
 	refusals  atomic.Int64
 	// staleEpochs counts activations refused because the caller resolved
-	// ownership under a view older than this node's. Zero until M4, when
-	// requests start arriving with an epoch attached.
+	// ownership under a view older than this node's. Only requests that
+	// arrive with an epoch attached can raise it.
 	staleEpochs atomic.Int64
 
 	// onUpdate is called after each view is applied, on the watcher
@@ -156,7 +156,7 @@ func (g *Guard) CanActivate(groupKey string) error {
 // CanActivateAt reports whether this node may activate the group on behalf of a
 // caller that resolved ownership under epoch.
 //
-// SPEC.md §4 (M3) requires a node to refuse a group whose epoch is stale. The
+// A node refuses a group whose epoch is stale. The
 // two directions of disagreement are different problems and get different
 // errors, because they call for opposite corrective actions:
 //
@@ -169,10 +169,6 @@ func (g *Guard) CanActivate(groupKey string) error {
 //
 // Collapsing them into one error would send a caller away from the node that is
 // about to be able to serve it.
-//
-// M3 has no caller that carries an epoch, since nothing crosses the network
-// until M4. The check is implemented and tested now rather than left as a hole
-// for the transport to fall into.
 func (g *Guard) CanActivateAt(groupKey string, epoch core.Epoch) error {
 	snap := g.table.current.Load()
 	if len(snap.nodes) == 0 {
@@ -237,7 +233,8 @@ func (g *Guard) CanActivateAt(groupKey string, epoch core.Epoch) error {
 // An earlier version skipped updates whose membership was identical, on the
 // theory that gossip re-delivering the current view should not restart the
 // activation delay. It was added while chasing an unrelated bug, did not fix
-// that bug, and was reverted after a mutation audit showed what it cost: with
+// that bug, and was reverted after deliberately breaking the code showed what it
+// cost: with
 // identical views skipped, the settled-view logic below is exercised so rarely
 // that breaking it deliberately no longer fails any test.
 //

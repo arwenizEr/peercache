@@ -10,16 +10,16 @@ import (
 
 // Options is the resolved configuration of a Cache.
 //
-// Only the fields M0 can honestly act on are present. Later milestones add
-// their own rather than reserving space now, because an option that exists and
-// does nothing is worse documentation than an option that does not exist.
+// Only fields the library acts on are present. Nothing is reserved ahead of
+// its implementation, because an option that exists and does nothing is worse
+// documentation than an option that does not exist.
 type Options struct {
 	// LatencyHistograms records the distribution of remote operation
 	// latencies, exported as Prometheus histograms.
 	//
 	// Off by default, and the reason is measurement rather than caution. An
 	// observation costs 15.8ns uncontended and 36.9ns under concurrency,
-	// which is ~7% of the 515ns local read path M1 measured — and on a
+	// which is ~7% of the measured 515ns local read path — and on a
 	// platform whose monotonic clock resolves to ~500us, timing a
 	// sub-microsecond operation records zeros anyway. Paying 7% for zeros is
 	// not a trade worth making silently.
@@ -32,8 +32,8 @@ type Options struct {
 	NodeID string
 	// Listener is what the peer transport serves on.
 	//
-	// It is separate from Transport because SPEC.md §3.6 fixes
-	// Transport.Serve to take a net.Listener, and because the two have
+	// It is separate from Transport because Transport.Serve takes a
+	// net.Listener, and because the two have
 	// different lifetimes in practice: an application often wants to bind
 	// its port before constructing the cache so that a bind failure is
 	// reported at startup rather than from a goroutine.
@@ -119,8 +119,7 @@ func (o *Options) Validate() error {
 	return nil
 }
 
-// NamespaceOptions is the resolved configuration of one namespace
-// (SPEC.md section 3.1).
+// NamespaceOptions is the resolved configuration of one namespace.
 type NamespaceOptions struct {
 	// Loader reconstructs missing values. Nil means GetOrLoad returns
 	// [ErrNoLoader].
@@ -129,7 +128,7 @@ type NamespaceOptions struct {
 	Partitioner Partitioner
 	// SyncReplication makes a write wait for its replicas before returning.
 	//
-	// Off by default (CLAUDE.md non-negotiable 7). Turning it on trades
+	// Off by default. Turning it on trades
 	// latency for a closed data-loss window: the write returns only once
 	// every replica has the value, so losing the owner immediately
 	// afterwards loses nothing. It also bounds that group's write rate by
@@ -153,8 +152,8 @@ type NamespaceOptions struct {
 	// L1TTL bounds how long a non-owned copy may be served. Negative
 	// disables the non-owned tier entirely, so every read of a key owned
 	// elsewhere is a round trip and nothing is ever served stale. It is a
-	// correctness bound, not a tuning knob: CLAUDE.md decision 6 makes it
-	// the only thing standing between a stale read and an unbounded one.
+	// correctness bound, not a tuning knob: invalidation is best-effort, so
+	// this is the only thing standing between a stale read and an unbounded one.
 	L1TTL time.Duration
 
 	// Compressor names the compressor applied to stored values at or above
@@ -163,9 +162,8 @@ type NamespaceOptions struct {
 	// compression codec on the hot path of a cache whose premise is
 	// sub-microsecond local reads.
 	//
-	// SPEC.md section 3.1 does not define a compression option; section 4
-	// (M1) requires compression above a configurable threshold. This is
-	// that knob. See docs/decisions/0008-compression-is-opt-in.md.
+	// Compression applies above a configurable threshold; this is that
+	// knob. See docs/decisions/0008-compression-is-opt-in.md.
 	Compressor string
 	// CompressionThreshold is the size at or above which compression is
 	// attempted. Ignored when Compressor is empty.
@@ -193,7 +191,8 @@ const (
 	DefaultReplicationFactor = 1
 	// DefaultL1TTL bounds non-owned copies by default. Short on purpose.
 	DefaultL1TTL = 5 * time.Second
-	// MaxReplicationFactor is the ceiling from SPEC.md section 3.1.
+	// MaxReplicationFactor is the highest replication factor a namespace
+	// may ask for.
 	MaxReplicationFactor = 3
 	// DefaultLoaderTimeout bounds one loader invocation. Generous, because
 	// a loader usually talks to a database; finite, because a load that

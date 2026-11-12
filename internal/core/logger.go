@@ -2,7 +2,7 @@ package core
 
 // Logger is the logging surface of the library.
 //
-// CLAUDE.md forbids the log package: a library that writes to a global logger
+// The library never uses the log package: a library that writes to a global logger
 // takes a decision that belongs to the application embedding it. The default is
 // [NopLogger], which discards everything, so an embedding application that
 // configures nothing pays nothing.

@@ -22,7 +22,7 @@ import (
 )
 
 // Cache is the top-level handle: one per process, constructed at startup and
-// closed at shutdown (SPEC.md section 3.1).
+// closed at shutdown.
 //
 // A Cache is safe for concurrent use. Namespace and Group return handles, not
 // data, and are cheap enough to call on a hot path.
@@ -40,8 +40,8 @@ type Cache interface {
 	// RegisterGroupFunc registers fn under name so that it can be invoked
 	// by [Group.Call] from any pod.
 	//
-	// Registration is a startup activity. Closures are never serialized
-	// (CLAUDE.md, decision 3): an RPC carries the name and opaque argument
+	// Registration is a startup activity. Closures are never serialized:
+	// an RPC carries the name and opaque argument
 	// bytes, and every pod is assumed to run the same binary and therefore
 	// to have registered the same names. Registering the same name twice
 	// returns [ErrDuplicateRegistration].
@@ -131,8 +131,7 @@ type Cache interface {
 	Close(ctx context.Context) error
 }
 
-// GroupFunc is a function registered by name and executed on a group's owner
-// (SPEC.md section 3.3).
+// GroupFunc is a function registered by name and executed on a group's owner.
 //
 // It runs inside that group's turn, so it has exclusive access to s for the
 // duration of the call and needs no locking. It must respect ctx: the caller's
@@ -157,9 +156,6 @@ const sweepShardsPerTick = 8
 // startup rather than on the first request. [WithNodeID] is required.
 //
 // The returned Cache owns one background goroutine, released by [Cache.Close].
-//
-// M1 status: namespaces are fully functional locally. Groups arrive in M2 and
-// report [ErrNotImplemented] until then; nothing is distributed until M3.
 func New(opts ...Option) (Cache, error) {
 	resolved := core.DefaultOptions()
 	for _, opt := range opts {
@@ -321,7 +317,7 @@ func New(opts ...Option) (Cache, error) {
 	return c, nil
 }
 
-// cache is the M1 implementation of [Cache].
+// cache implements [Cache].
 type cache struct {
 	opts core.Options
 
@@ -395,7 +391,8 @@ type cache struct {
 	epochSkew atomic.Int64
 
 	// degradedWrites counts synchronous writes acknowledged with fewer copies
-	// than the namespace's replication factor asked for. See open question 37.
+	// than the namespace's replication factor asked for. See
+	// docs/decisions/open.md question 37.
 	degradedWrites atomic.Int64
 
 	// underReplicated counts synchronous writes refused because fewer copies
@@ -415,8 +412,9 @@ type cache struct {
 	typedFuncs sync.Map
 
 	// serving tracks the goroutine running Transport.Serve, so that Close
-	// can wait for it rather than leaving it to notice on its own. M3 lost a
-	// milestone to a Close that only signalled; this one waits.
+	// can wait for it rather than leaving it to notice on its own. A Close
+	// that only signals leaves the serving goroutine racing whatever runs
+	// next; this one waits.
 	serving sync.WaitGroup
 
 	// ticker drives one sweeper for every namespace. Per-namespace
@@ -651,8 +649,8 @@ func (c *cache) sweepLoop() {
 			// Reconcile on the same tick.
 			//
 			// Reconciliation is normally driven by membership
-			// changes, which is right and enough for the cases M5
-			// tested. It is not enough for a hand-off: a draining
+			// changes, which is right and enough for failures. It is
+			// not enough for a hand-off: a draining
 			// node announces its departure *before* transferring, so
 			// the receivers' membership change has already happened
 			// when the keys arrive. If the sender is then killed,
@@ -772,9 +770,8 @@ func (c *cache) Close(ctx context.Context) error {
 			}
 		}
 	})
-	// The context is accepted for the graceful-drain semantics that arrive
-	// in M6. There is nothing to drain on a single node with no ownership
-	// to transfer, so an expired context changes nothing here — but it is
+	// Close does not drain — Drain does — so an expired context changes
+	// nothing here. It is
 	// still reported, because silently succeeding on an expired deadline
 	// would train callers to ignore it.
 	if err := ctx.Err(); err != nil {

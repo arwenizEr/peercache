@@ -36,8 +36,8 @@ const handoffTimeout = 10 * time.Second
 //
 // Reconciliation used to drop a replica the moment this node stopped ranking for
 // its key, decided from the local ranking alone, with nothing asking whether a
-// node that now ranks for it holds a copy. Open question 38 identified that as a
-// hazard, wrote a test for it, and could not reproduce it — the kill-and-rejoin
+// node that now ranks for it holds a copy. That was identified as a hazard
+// (docs/decisions/open.md question 38), tested for, and not reproduced — the kill-and-rejoin
 // churn it tried does not take ranking away from the holder of a last copy.
 //
 // A partition does. Writes accepted while one node is cut off place their copies

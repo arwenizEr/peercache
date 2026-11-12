@@ -1,8 +1,7 @@
 // Package ownership decides which node owns a group key.
 //
 // The algorithm is rendezvous hashing — also called highest random weight — over
-// the live member set, not a consistent hash ring. This is settled (CLAUDE.md,
-// decision 1) and is not to be relitigated in code.
+// the live member set, not a consistent hash ring.
 //
 // # Why rendezvous rather than a ring
 //

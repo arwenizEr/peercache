@@ -2,8 +2,8 @@ package core
 
 import "fmt"
 
-// EventKind classifies an [Event]. The set matches the lifecycle hooks listed
-// in SPEC.md §4 (M2).
+// EventKind classifies an [Event]. The set matches the library's lifecycle
+// hooks.
 type EventKind int
 
 const (
@@ -53,7 +53,7 @@ func (k EventKind) String() string {
 //
 // Events are informational. Nothing in PeerCache may depend on an event being
 // observed, for the same reason nothing may depend on an invalidation broadcast
-// arriving (CLAUDE.md, decision 6).
+// arriving.
 type Event struct {
 	Kind    EventKind
 	GroupID string

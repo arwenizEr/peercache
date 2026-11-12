@@ -9,7 +9,6 @@
 // silently, leaves nothing useful in metrics, and turns one dead peer into a
 // pool of blocked goroutines.
 //
-// Milestone: M4. This package is empty until then. The test harness supplies an
-// in-process transport with fault injection for earlier milestones; see
+// The test harness supplies an in-process transport with fault injection; see
 // internal/testkit.
 package transport

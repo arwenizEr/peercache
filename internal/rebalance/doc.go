@@ -7,6 +7,4 @@
 //
 // Transfer is streamed, with backpressure and resumability, so that a move
 // interrupted by a second membership change resumes instead of restarting.
-//
-// Milestone: M6. This package is empty until then.
 package rebalance

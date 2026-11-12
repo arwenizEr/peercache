@@ -6,15 +6,13 @@
 //
 // # Why this is not golang.org/x/sync/singleflight
 //
-// Three reasons, in order of weight:
+// Two reasons, in order of weight:
 //
 //  1. That package re-panics in every waiter when the shared call panics. A
 //     loader is application code; a bug in it must not become a panic storm in
 //     unrelated goroutines. Here a panicking loader becomes [core.ErrLoaderPanic]
 //     for everyone who was waiting, which is a result they can handle.
-//  2. Its latest versions require Go 1.25, and CLAUDE.md fixes the floor at
-//     1.23. Pinning an old release to dodge that is a maintenance trap.
-//  3. The loader has to run under a context detached from whichever caller
+//  2. The loader has to run under a context detached from whichever caller
 //     happened to arrive first. Otherwise the leader's deadline silently
 //     becomes everyone's deadline, and a caller with 5ms left can abort a load
 //     that nine hundred callers with a second left were depending on.

@@ -201,7 +201,7 @@ func TestSheddingTakesL1AndReplicasBeforeOwnedData(t *testing.T) {
 // TestAShedKeyIsNeverServedAtAnOlderValue is M9's correctness criterion.
 //
 // An owner that sheds a key and is then asked to write it again starts that
-// key's version sequence over (open question 18). If the shed had dropped only
+// key's version sequence over. If the shed had dropped only
 // the owner's copy, the replica would still hold the old value at a version the
 // rewrite cannot beat — the rewrite is refused there as a retransmission — and a
 // failover would promote the old value over the one the caller last wrote.

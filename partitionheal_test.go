@@ -368,8 +368,8 @@ func TestAHandOffThatCannotBePlacedKeepsTheCopy(t *testing.T) {
 	})
 	f.settle(t)
 
-	// A dropped message looks like silence rather than an error on this fabric
-	// (decision 0004), so the hand-off does not fail -- it waits out its
+	// A dropped message looks like silence rather than an error on this fabric,
+	// so the hand-off does not fail -- it waits out its
 	// deadline, which is measured on the injected clock. Advancing is how this
 	// suite expresses waiting; CLAUDE.md forbids the alternative.
 	//
@@ -377,8 +377,8 @@ func TestAHandOffThatCannotBePlacedKeepsTheCopy(t *testing.T) {
 	// unreachable peer costs the hand-off worker one timeout per key before the
 	// copy comes back, which is the same head-of-line cost the replicator's
 	// single goroutine has always had.
-	// A dropped message looks like silence rather than an error on this fabric
-	// (decision 0004), so a hand-off does not fail -- it waits out its deadline,
+	// A dropped message looks like silence rather than an error on this fabric,
+	// so a hand-off does not fail -- it waits out its deadline,
 	// which is measured on the injected clock. Advancing is how this suite
 	// expresses waiting; CLAUDE.md forbids the alternative.
 	//

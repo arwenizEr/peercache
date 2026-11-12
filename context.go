@@ -13,8 +13,8 @@ import "context"
 // caller's goroutine, with a stack that points at peercache rather than at the
 // call site that passed nil.
 //
-// CLAUDE.md forbids panics in library code paths, and it does not carve out an
-// exception for caller error. A panic crossing an API boundary takes down a
+// The library does not panic, and that rule carves out no exception for
+// caller error. A panic crossing an API boundary takes down a
 // process that could have carried on, and an embedded library shares that
 // process with an application that has its own opinion about how to fail.
 //

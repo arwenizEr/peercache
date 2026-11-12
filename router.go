@@ -9,8 +9,7 @@ import (
 	"github.com/arwenizEr/peercache/transport"
 )
 
-// Router routes typed messages to the owner of the group each belongs to
-// (SPEC.md section 3.4).
+// Router routes typed messages to the owner of the group each belongs to.
 //
 // This is the queue-workload shape of the same idea as [Partitioner], and it is
 // a first-class API rather than an internal optimisation because the batching
@@ -35,7 +34,7 @@ type Router[T any] interface {
 // # What the handler receives
 //
 // The handler is an ordinary registered group function, so it is named rather
-// than serialised (CLAUDE.md non-negotiable 3). Its argument is not one message
+// than serialised. Its argument is not one message
 // but the whole batch for that group, encoded — unpack it with [Batch]. Handing
 // it the batch is what makes the affinity real: the function runs once per
 // group per flush, inside one turn, instead of once per message.
@@ -122,7 +121,7 @@ func (r *messageRouter[T]) Submit(ctx context.Context, msgs ...T) error {
 
 	// Then group the groups by owner. This second grouping is what bounds
 	// the request count by the number of owners rather than by the number of
-	// groups or messages, which is the acceptance criterion in SPEC.md §4.
+	// groups or messages.
 	byOwner := make(map[string]*ownerWork)
 	var ownerOrder []string
 	var failures error

@@ -151,10 +151,9 @@ func (cu *catchUp) run(ctx context.Context) error {
 				c.opts.Logger.Warn("catch-up failed",
 					"namespace", name, "peer", peer.ID, "error", err)
 				// Collected rather than returned: one unreachable peer
-				// is no reason to skip the others. From M5 until this
-				// line existed the variable was declared and never
-				// assigned, so CatchUp returned nil after reaching
-				// nobody.
+				// is no reason to skip the others. Without this line
+				// the variable is declared and never assigned, and
+				// CatchUp returns nil after reaching nobody.
 				failures = errors.Join(failures, fmt.Errorf(
 					"peercache: catch-up of %q from %s: %w", name, peer.ID, err))
 			}

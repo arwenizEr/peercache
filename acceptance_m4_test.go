@@ -264,7 +264,7 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	// a comment that argues carefully to a value the code does not use is
 	// worse than no comment, because it is read as evidence.
 	//
-	// Thirty-six is kept. The M8 sweep (open question 29) measured 110k rps at
+	// Thirty-six is kept. The M8 sweep measured 110k rps at
 	// twelve workers and 235k at sixty-four, with p99 rising 180µs → 334µs
 	// across that range — so the queueing the paragraph above warns about does
 	// not begin anywhere near here, and offering ~4x the target rather than

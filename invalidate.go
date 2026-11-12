@@ -40,8 +40,8 @@ const invalidationTimeout = 2 * time.Second
 // passing context.Background(), which is ordinary, Set blocked forever.
 //
 // So a best-effort optimisation had become the slowest possible dependency of
-// the write path: exactly the inversion CLAUDE.md non-negotiable 6 exists to
-// prevent, and a path that could block past any deadline because it had none.
+// the write path: exactly the inversion a best-effort invalidation must never
+// cause, and a path that could block past any deadline because it had none.
 //
 // The queue makes the property structural rather than aspirational. Enqueueing
 // never blocks and never fails; a full queue drops the hint and counts it. The
@@ -167,8 +167,7 @@ func (iv *invalidator) deliver(inv invalidation) {
 // Close stops the delivery goroutine and waits for it.
 //
 // It waits rather than only signalling, so that when Close returns there is no
-// goroutine left holding a reference to the cache. M3 lost a milestone to a
-// Close that only signalled.
+// goroutine left holding a reference to the cache.
 func (iv *invalidator) Close() {
 	close(iv.done)
 	// Cancel before waiting, so a send already on the wire returns now

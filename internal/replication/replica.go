@@ -39,8 +39,7 @@ type Store struct {
 	// versionConflicts counts copies rejected because what is already held
 	// is newer.
 	//
-	// SPEC.md's M7 bullet names "version conflicts" as a correctness metric
-	// in its own right, separately from split-brain detections, and the two
+	// "Version conflicts" is a correctness metric in its own right, separately from split-brain detections, and the two
 	// are genuinely different questions. A conflict is two nodes writing one
 	// key under one epoch — a correctness failure. This is one node's writes
 	// arriving out of order, which asynchronous replication makes ordinary
@@ -140,9 +139,8 @@ func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
 // conflict reports that a *different* node wrote this key under the *same*
 // epoch. Under one owner per group that cannot happen, so it is direct evidence
 // that two nodes believed they owned the same key at the same time — the
-// split-brain SPEC.md §4 requires be detected and counted. It is reported, not
-// resolved: CLAUDE.md is explicit that conflicting writes are not automatically
-// merged.
+// split-brain that must be detected and counted. It is reported, not resolved:
+// conflicting writes are never automatically merged.
 func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	nr := s.namespaceFor(namespace)
 
@@ -318,7 +316,7 @@ func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]E
 // `stillMine` is answered from the local ranking, which says nothing about
 // whether a node that *now* ranks for the key holds a copy. After a partition
 // heals it usually does not, and dropping on that basis loses the key — see
-// handoff.go in the root package and decision 0020.
+// handoff.go in the root package and docs/decisions/0020-hand-off-before-evicting.md.
 //
 // The caller therefore uses [Store.Drain] with the inverted predicate to take
 // the orphans out and hand them on, and reaches for this only where there is no

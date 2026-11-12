@@ -1,6 +1,6 @@
 // Package testkit is the in-process cluster harness.
 //
-// It exists so that every later milestone is provable without a container, a
+// It exists so that every cluster behaviour is provable without a container, a
 // port, or a sleep. A test builds N nodes over a fake [Network], injects faults
 // — drop, delay, reorder, partition, graceful kill, hard kill, revival — and
 // drives the whole thing with a fake clock. An hour of simulated time costs
@@ -17,7 +17,7 @@
 // # What the membership implementation here is, and is not
 //
 // [Membership] is a reachability oracle, not a failure detector. It does not
-// gossip, it does not send heartbeats, and it is not a preview of the M3
+// gossip, it does not send heartbeats, and it is not a model of the gossip
 // implementation. It asks the [Network] whether a peer is reachable, and models
 // detection latency with a single timer per observed peer, armed at the moment
 // reachability changes.
@@ -27,10 +27,10 @@
 // an hour across five nodes at a one-second interval is seventy-two thousand
 // goroutine spawns — which blows the harness's entire wall-clock budget on
 // simulating silence. Event-driven detection makes an idle hour genuinely free,
-// which is the property the M0 acceptance criterion is really asking for.
+// which is the property a harness for long simulated runs needs.
 //
-// When M3 lands, the real memberlist-backed authority runs on this same harness
-// unchanged; it satisfies the same interface and consumes the same transport.
+// The real memberlist-backed authority runs on this same harness unchanged; it
+// satisfies the same interface and consumes the same transport.
 //
 // # Determinism
 //

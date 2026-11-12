@@ -167,7 +167,7 @@ func (g *Group) run(ctx context.Context, key string, c *call, fn Func) {
 //
 // This is a metric, and it is also the only way to prove from outside that a
 // thousand callers were genuinely concurrent rather than merely sequential and
-// fast. M7 exports it.
+// fast.
 func (g *Group) Inflight() int64 { return g.inflight.Load() }
 
 // Loads returns the total number of loader invocations.

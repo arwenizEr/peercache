@@ -6,8 +6,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 )
 
-// Group is a handle to a named collection of keys guaranteed to share an owner
-// (SPEC.md section 3.2).
+// Group is a handle to a named collection of keys guaranteed to share an owner.
 //
 // A group is a virtual actor: addressable at all times, activated lazily, and
 // deactivated after an idle period. While activated it owns exactly one
@@ -75,7 +74,7 @@ type Group interface {
 	Flush(ctx context.Context) error
 }
 
-// GroupState is the actor-turn view of a group's memory (SPEC.md section 3.3).
+// GroupState is the actor-turn view of a group's memory.
 //
 // Its methods take no context and return no error because they are plain local
 // map accesses running on the group's single activation goroutine. There is
@@ -90,7 +89,7 @@ type Group interface {
 // inside a Call and there is nobody to return an error to.
 type GroupState = core.GroupState
 
-// group is the M2 implementation of [Group], delegating to the actor runtime.
+// group implements [Group], delegating to the actor runtime.
 type group struct {
 	cache *cache
 	id    string
@@ -210,7 +209,7 @@ func (g *group) Items(ctx context.Context) (map[string][]byte, error) {
 
 // Call runs fn on the group's owner, wherever that is.
 //
-// This is the API SPEC.md §3.2 calls primary, and the only group operation that
+// This is the primary group API, and the only group operation that
 // crosses the network. The rest — Get, Set, Keys, Items — read or write group
 // state directly and are answered only by the owner, because shipping a group's
 // state to a caller is the thing this design exists to avoid. A caller that

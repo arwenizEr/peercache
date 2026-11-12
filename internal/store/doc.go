@@ -28,10 +28,11 @@
 //
 // # Durability
 //
-// None. Memory only, by decision (CLAUDE.md, decision 4): graceful shutdown
+// None. Memory only, by decision: graceful shutdown
 // transfers state to the new owner, and ungraceful termination loses it. Every
 // namespace must therefore either be reconstructible from a loader or tolerate
 // loss.
 //
-// The replica store, which holds copies of keys owned elsewhere, arrives in M5.
+// The replica store, which holds copies of keys owned elsewhere, is
+// internal/replication.
 package store

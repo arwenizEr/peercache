@@ -16,7 +16,7 @@ import (
 // busy with a stream that does keep arriving.
 //
 // A million entries in one batch is far beyond anything the router produces;
-// SPEC.md §3.4's batching exists precisely to keep requests small.
+// the router's batching exists precisely to keep requests small.
 const MaxSliceElements = 1 << 20
 
 // Why these decoders exist
@@ -350,11 +350,11 @@ func (r SubmitResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
 
 // DecodeMsgpack implements [msgpack.CustomDecoder].
 //
-// # Why this pair exists, when M4 was meant to have finished this work
+// # Why this pair exists separately
 //
-// Every other variable-length message got a bounded decoder in M4. This one did
-// not, and the reason is the reason it is worth writing down: the M4 fuzz target
-// covered five message types chosen as a representative sample, and
+// Every other variable-length message got a bounded decoder at once. This one
+// did not, and the reason is the reason it is worth writing down: the first fuzz
+// target covered five message types chosen as a representative sample, and
 // SubmitResponse was not among the five. The defect the sample was written to
 // catch was therefore still present, in the one shape nobody had pointed the
 // fuzzer at.

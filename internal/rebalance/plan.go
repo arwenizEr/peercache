@@ -85,8 +85,7 @@ func (p Plan) ForNode(id string) []Move {
 //
 // # What "only the affected partitions" means here
 //
-// SPEC.md §4 requires that planning "compute only the affected partitions, never
-// a full reshuffle". With rendezvous hashing that is a property of the hash
+// Planning must compute only the affected partitions, never a full reshuffle. With rendezvous hashing that is a property of the hash
 // rather than of this function: adding or removing one node of N changes the
 // placement of roughly 1/N of keys and leaves the rest exactly where they are.
 // What this function does is *report* that, so a test can assert the bound

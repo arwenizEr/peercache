@@ -122,7 +122,7 @@ type BatchEntry struct {
 type CallRequest struct {
 	Group string `msgpack:"group"`
 	// FuncName selects a function registered at startup. Closures never
-	// cross the network (CLAUDE.md non-negotiable 3), so this is a name
+	// cross the network, so this is a name
 	// and a byte payload rather than anything executable.
 	FuncName string `msgpack:"func_name"`
 	Args     []byte `msgpack:"args"`
@@ -236,8 +236,8 @@ type CatchUpEntry struct {
 
 // InvalidateRequest tells a peer that keys it may be caching have changed.
 //
-// It is a latency optimisation and nothing else. CLAUDE.md non-negotiable 6
-// requires that correctness never depend on one of these arriving, which is why
+// It is a latency optimisation and nothing else. Correctness never depends on
+// one of these arriving, which is why
 // non-owned entries are TTL-bounded independently of it.
 type InvalidateRequest struct {
 	Namespace string   `msgpack:"namespace"`

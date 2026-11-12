@@ -4,7 +4,7 @@ import "errors"
 
 // Sentinel errors.
 //
-// CLAUDE.md requires sentinel errors to live in the root package. They are
+// Sentinel errors belong to the root package. They are
 // declared here because internal packages must be able to return them without
 // importing the root, and the root re-exports each one by assignment:
 //
@@ -15,10 +15,9 @@ import "errors"
 // through either name. The public surface still reads as though the root
 // package owns them.
 var (
-	// ErrNotImplemented is returned by every no-op implementation created
-	// in M0. Its presence in a returned error means the code path exists
-	// but the milestone that fills it in has not run yet. It must not
-	// survive past the milestone that implements the path.
+	// ErrNotImplemented reports an RPC method this binary does not
+	// recognise, or a cache asked to reach another node with no transport
+	// configured. See the root package's documentation of it.
 	ErrNotImplemented = errors.New("peercache: not implemented")
 
 	// ErrNotFound means the key or group does not exist. It is distinct
@@ -30,7 +29,7 @@ var (
 	ErrClosed = errors.New("peercache: cache is closed")
 
 	// ErrGroupOverloaded means a group's mailbox was full and the request
-	// was rejected rather than queued (SPEC.md §4, M2). This is
+	// was rejected rather than queued. This is
 	// backpressure working as designed, and it is retryable.
 	ErrGroupOverloaded = errors.New("peercache: group mailbox full")
 
@@ -65,8 +64,8 @@ var (
 	ErrNoLoader = errors.New("peercache: namespace has no registered loader")
 
 	// ErrFuncNotRegistered means Call named a group function that was not
-	// registered on this node. Because all pods run the same binary
-	// (CLAUDE.md, decision 3), this indicates a rolling upgrade in progress
+	// registered on this node. Because all pods run the same binary,
+	// this indicates a rolling upgrade in progress
 	// or a registration that did not happen at startup.
 	ErrFuncNotRegistered = errors.New("peercache: group function not registered")
 

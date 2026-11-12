@@ -19,7 +19,7 @@ const probationWatchBuffer = 64
 //
 // # Why it wraps the authority rather than changing the ranking
 //
-// Rendezvous hashing ranks whatever members it is given (CLAUDE.md decision 1),
+// Rendezvous hashing ranks whatever members it is given,
 // and every consumer of membership — the ownership guard, catch-up, drain,
 // readiness — already reads it through [core.MembershipAuthority]. Filtering
 // here changes what all of them see at once and changes none of them. A filter

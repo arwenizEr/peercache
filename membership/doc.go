@@ -10,7 +10,7 @@
 // neither side blocks. Two live views can therefore each believe they own the
 // same group. That window is narrowed by the activation delay in
 // internal/ownership and detected through epochs. It is not eliminated, and no
-// configuration setting will eliminate it (CLAUDE.md, decision 5).
+// configuration setting will eliminate it.
 //
 // Nothing above this package may assume a single authoritative epoch. The
 // interface exists so that a CP implementation can be substituted later without

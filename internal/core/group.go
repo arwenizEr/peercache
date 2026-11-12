@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// GroupState is the actor-turn view of a group's memory (SPEC.md §3.3).
+// GroupState is the actor-turn view of a group's memory.
 //
 // The methods take no context and return no error because they are plain local
 // map access executing on the group's single activation goroutine. That is the
@@ -42,8 +42,8 @@ type GroupState interface {
 	Emit(event Event)
 }
 
-// GroupFunc is a function registered by name and executed on the group's owner
-// (SPEC.md §3.3). Closures never cross the network (CLAUDE.md, decision 3): an
+// GroupFunc is a function registered by name and executed on the group's owner.
+// Closures never cross the network: an
 // RPC carries the registered name and opaque argument bytes.
 //
 // The function runs inside the group's turn, so it has exclusive access to s.
@@ -51,7 +51,7 @@ type GroupState interface {
 // function that ignores it holds the group's single goroutine hostage.
 type GroupFunc func(ctx context.Context, s GroupState, arg []byte) ([]byte, error)
 
-// Loader reconstructs a namespace value that is not resident (SPEC.md §3.1).
+// Loader reconstructs a namespace value that is not resident.
 //
 // It is registered on the namespace at construction rather than passed to
 // GetOrLoad, so that it exists by name on every pod and the owner can execute
@@ -75,8 +75,7 @@ type TypedLoaderSpec interface {
 	Loader(encode func(any) ([]byte, error)) Loader
 }
 
-// Partitioner maps a cache key to the group key that decides its owner
-// (SPEC.md §3.4).
+// Partitioner maps a cache key to the group key that decides its owner.
 //
 // It must be pure and identical on every pod: two nodes disagreeing about a
 // key's group is indistinguishable from a split brain.

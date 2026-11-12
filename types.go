@@ -6,12 +6,9 @@ import (
 )
 
 // The types below are aliases, not wrappers. peercache.Node and the internal
-// definition are the same type, so the public API is exactly what SPEC.md
-// section 3 specifies while internal packages remain free of an import cycle
-// back to this one. See docs/decisions/0001-core-types-location.md.
-//
-// SPEC.md section 2 gives these types no file of their own; types.go is a
-// deliberate, documented deviation from that layout.
+// definition are the same type, so the public API is unchanged while internal
+// packages remain free of an import cycle back to this one. See
+// docs/decisions/0001-core-types-location.md.
 
 // Epoch is a monotonically increasing membership version.
 //
@@ -56,8 +53,7 @@ const (
 // subsequent ownership decisions with it directly.
 type MembershipChange = core.MembershipChange
 
-// MembershipAuthority is the source of truth for cluster membership
-// (SPEC.md section 3.5).
+// MembershipAuthority is the source of truth for cluster membership.
 //
 // The default implementation is gossip over memberlist and is AP: it will
 // report a partitioned peer as failed rather than block. A CP implementation
@@ -107,7 +103,7 @@ type Event = core.Event
 // Reading it never blocks a data path.
 type Stats = core.Stats
 
-// Clock is the injected time source (SPEC.md section 3.6).
+// Clock is the injected time source.
 //
 // Nothing in the library reads the wall clock directly. Supply
 // [github.com/arwenizEr/peercache/internal/clock.Real] in production; the test
@@ -120,7 +116,7 @@ type Timer = clock.Timer
 // Ticker is a repeating alarm produced by a [Clock].
 type Ticker = clock.Ticker
 
-// Transport is the injected peer-to-peer message fabric (SPEC.md section 3.6).
+// Transport is the injected peer-to-peer message fabric.
 //
 // Implementations must guarantee that a request returns when its context is
 // done, whatever the state of the network. A hang is a worse failure than an

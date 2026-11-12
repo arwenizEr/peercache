@@ -21,8 +21,8 @@ type scoredNode struct {
 //
 // Snapshots are never mutated after publication. A new membership produces a
 // new snapshot and an atomic pointer swap, which is what lets [Table.Owner] run
-// without a lock: it is on the path of every activation and, from M4, of every
-// remote call, and a read lock there would put an atomic read-modify-write on
+// without a lock: it is on the path of every activation and of every remote
+// call, and a read lock there would put an atomic read-modify-write on
 // one shared cache line in front of the entire cluster's traffic.
 type snapshot struct {
 	nodes []scoredNode
@@ -53,7 +53,7 @@ func NewTable() *Table {
 // What the sort actually buys is a deterministic tie-break when two members
 // score identically on a key, and a stable ranking for [Table.Replicas].
 //
-// Recorded precisely because the mutation audit caught this comment claiming
+// Recorded because deliberately breaking the code caught this comment claiming
 // more than the code does: removing the sort left every ownership test passing,
 // as it should have.
 func (t *Table) Update(nodes []core.Node, epoch core.Epoch) {
@@ -100,9 +100,9 @@ func (t *Table) Owner(groupKey string) (core.Node, core.Epoch, error) {
 // Replicas returns the rf highest-scoring nodes for groupKey, owner first.
 //
 // Rendezvous hashing gives this for free: the ordering by score is a total
-// order over the members, so the replica set is just its prefix. M5 uses it;
-// M3 only needs the head, but implementing it here keeps the scoring in one
-// place rather than having replication invent a second answer.
+// order over the members, so the replica set is just its prefix. Ownership
+// only needs the head, but implementing it here keeps the scoring in one place
+// rather than having replication invent a second answer.
 func (t *Table) Replicas(groupKey string, rf int) ([]core.Node, core.Epoch, error) {
 	if rf < 1 {
 		return nil, 0, fmt.Errorf("ownership: replication factor %d must be positive: %w",

@@ -29,7 +29,7 @@ type Metric = metrics.Metric
 // PeerCache is embedded in somebody else's binary. Forcing a metrics client on
 // every importer is a cost paid by applications that already have a different
 // one, and both client libraries carry substantial transitive graphs — against
-// a dependency budget that CLAUDE.md deliberately keeps small.
+// a dependency budget this library deliberately keeps small.
 //
 // So this returns plain values and the adapter is a dozen lines you write once.
 // [Cache.WriteMetrics] covers the Prometheus text format directly, which is

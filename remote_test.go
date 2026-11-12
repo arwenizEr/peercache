@@ -549,7 +549,7 @@ func TestARemoteCallRunsOnTheOwner(t *testing.T) {
 	ctx := context.Background()
 
 	// Every node registers the same function, because every pod runs the
-	// same binary (CLAUDE.md non-negotiable 3).
+	// same binary.
 	for _, id := range f.ids {
 		if err := f.caches[id].RegisterGroupFunc("append", func(_ context.Context, s peercache.GroupState, arg []byte) ([]byte, error) {
 			existing, _ := s.Get("log")

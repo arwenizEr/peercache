@@ -1,7 +1,7 @@
 // Package actor runs groups as virtual actors.
 //
 // A group is addressable at all times but activated lazily and deactivated
-// after an idle timeout (CLAUDE.md, decision 2). While activated it owns exactly
+// after an idle timeout. While activated it owns exactly
 // one goroutine, and every operation on it is fed through a bounded mailbox and
 // executed in turn. That single goroutine is the entire serialization
 // mechanism, which is why the public API has no lock.

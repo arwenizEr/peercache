@@ -18,7 +18,7 @@ import (
 // node disappears, the node that ranked second for each of its keys ranks first
 // on every surviving node at the same instant, computed from the same
 // membership with no messages exchanged. That is the whole promotion protocol
-// and M3 built it.
+// and ownership already implements it.
 //
 // What was missing is that the new owner has to *hold the data*. This is that:
 // on a membership change, keys this node held as a replica and now owns move
@@ -107,7 +107,7 @@ func (p *promoter) reconcile() {
 			//
 			// Creating it here was the first version and it was a
 			// trap. Namespace options are fixed at creation and
-			// silently ignored afterwards (open question 26), so a
+			// silently ignored afterwards, so a
 			// namespace conjured with defaults gets replication
 			// factor 1 — and the application's later
 			// Namespace(name, WithReplicationFactor(3)) returns that
@@ -151,7 +151,7 @@ func (p *promoter) reconcile() {
 		// and after a partition heals it usually does not: the copies were
 		// placed at ranking positions computed without the absent node, so
 		// its return moves every one of those keys to a node holding
-		// nothing. Open question 38 is that loss. See handoff.go.
+		// nothing. See handoff.go.
 		//
 		// Draining with the inverted predicate removes the orphans under the
 		// same lock that Evict used, so a concurrent Put cannot strand a copy
@@ -162,7 +162,7 @@ func (p *promoter) reconcile() {
 			// A namespace that replicates nothing has no replica set for a
 			// copy to belong to, so there is nowhere to hand one. Anything
 			// here arrived under a configuration that no longer applies and
-			// is dropped, exactly as it was before M8.
+			// is dropped.
 			//
 			// Handing off instead would not merely be pointless, it would
 			// not terminate: replicaTargets returns nothing below RF 2, so

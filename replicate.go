@@ -18,7 +18,7 @@ import (
 //
 // Larger than the invalidation queue, because these carry data rather than
 // hints: dropping one loses a replica's copy until the next write to that key,
-// which widens the data-loss window this milestone exists to bound. It is still
+// which widens the data-loss window replication exists to bound. It is still
 // finite, because an unbounded queue in front of a slow peer is a memory leak
 // with a scheduling delay.
 const replicaQueue = 4096
@@ -39,7 +39,7 @@ const replicaTimeout = 5 * time.Second
 // where the two modes take different code paths is one where the rarely-used
 // mode is the broken one.
 //
-// Asynchronous is the default, per CLAUDE.md non-negotiable 7, and its cost is
+// Asynchronous is the default, configurable per namespace, and its cost is
 // a measured data-loss window rather than an unknown: between a write returning
 // and the replica holding it, the value exists on exactly one node.
 type replicator struct {
@@ -96,7 +96,7 @@ func newReplicator(c *cache) *replicator {
 // The rf < 2 test is a fast path, not a correctness guard, and saying so
 // matters: at RF=1 the ranking is just the owner, and the self-filter below
 // removes it, so replication factor 1 sends nothing whether or not this branch
-// exists. A mutation audit proved that — removing the branch changed no
+// exists. Breaking the branch on purpose proved that — removing it changed no
 // behaviour and no test. It stays because computing a ranking to discard it is
 // wasted work on every write in the common case, which is what RF=1 is.
 func (c *cache) replicaTargets(groupKey string, rf int) ([]core.Node, core.Epoch, error) {
@@ -183,7 +183,7 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		}
 		if resp.Conflict {
 			// Two nodes wrote this key in one epoch. Counted, never
-			// merged: CLAUDE.md is explicit, and picking a winner
+			// merged: the design rules it out, and picking a winner
 			// here would be a resolution policy invented on the spot.
 			r.conflicts.Add(1)
 			r.cache.opts.Logger.Warn("conflicting write detected by replica",

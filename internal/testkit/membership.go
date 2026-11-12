@@ -50,7 +50,7 @@ func (c *MembershipConfig) withDefaults() {
 // Membership is the harness's [core.MembershipAuthority]: a reachability
 // oracle with a configurable detection delay.
 //
-// It is not a failure detector and not a preview of M3. See the package
+// It is not a failure detector and not a model of gossip membership. See the package
 // documentation for why polling heartbeats are the wrong shape for a harness
 // that must be able to skip an idle hour for free.
 type Membership struct {

@@ -20,7 +20,7 @@ const readyPollInterval = 25 * time.Millisecond
 // Readiness is why a node can be a cluster member and still be the wrong place
 // to send traffic.
 //
-// The two facts are independent and M5 proved it the hard way. A node becomes an
+// The two facts are independent. A node becomes an
 // owner the instant it joins — every peer recomputes the ranking and starts
 // routing to it — but it holds nothing until catch-up runs. In between it
 // answers ErrNotFound, confidently, for data that exists elsewhere. That is
@@ -190,7 +190,7 @@ func (s ReadyState) String() string {
 // It exists for the common startup shape — construct, join, catch up, wait,
 // then serve — and it does not itself call [Cache.CatchUp]. That remains
 // explicit, because a node deciding for itself when to pull an entire replica
-// set is the behaviour M5 rejected.
+// set is the behaviour catch-up was designed to avoid.
 func (c *cache) WaitReady(ctx context.Context) error {
 	ctx = ctxOrBackground(ctx)
 	for {

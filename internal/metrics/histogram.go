@@ -25,8 +25,8 @@ import (
 // structure to merge, on a path where the whole operation costs 500 ns.
 //
 // The buckets below are chosen for this system's actual numbers: sub-microsecond
-// local reads (M1 measured p99 at 515 ns), millisecond remote ones (M4 measured
-// p99 at 1.7 ms). They run from 100 ns to 10 s.
+// local reads (measured p99 515 ns), millisecond remote ones (measured p99
+// 1.7 ms). They run from 100 ns to 10 s.
 //
 // A Histogram is safe for concurrent use and its zero value is ready.
 type Histogram struct {

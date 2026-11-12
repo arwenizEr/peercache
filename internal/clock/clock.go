@@ -7,12 +7,10 @@ import (
 
 // Clock abstracts every source of time.
 //
-// SPEC.md §3.6 specifies only Now, After and NewTimer. That is not enough to
-// build the group actor runtime on: M2 needs one-shot callbacks that do not
-// require a goroutine parked on a channel (AfterFunc), periodic work
-// (NewTicker) and a wait that respects a caller's context (Sleep). Growing the
-// interface in M2 would churn every implementation and every call site, so it
-// is grown here instead. See docs/decisions/0002-clock-interface.md.
+// Now, After and NewTimer are not enough to build the group actor runtime on:
+// it needs one-shot callbacks that do not require a goroutine parked on a
+// channel (AfterFunc), periodic work (NewTicker) and a wait that respects a
+// caller's context (Sleep). See docs/decisions/0002-clock-interface.md.
 type Clock interface {
 	// Now returns the current time. For [Fake] this is simulated time.
 	Now() time.Time

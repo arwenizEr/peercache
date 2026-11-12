@@ -9,9 +9,9 @@ import "github.com/arwenizEr/peercache/internal/core"
 // this package wrap their cause with %w; unwrap to reach transport or codec
 // detail.
 var (
-	// ErrNotImplemented means the code path exists but the milestone that
+	// ErrNotImplemented means the code path exists but the work that
 	// fills it in has not run yet. It is scaffolding, not a runtime
-	// condition, and must not survive the milestone that implements the
+	// condition, and must not survive the change that implements the
 	// path.
 	ErrNotImplemented = core.ErrNotImplemented
 
@@ -53,7 +53,7 @@ var (
 	// ErrStateEscaped names the condition where a [GroupState] is used
 	// outside the actor turn that produced it.
 	//
-	// Nothing returns it, and nothing can. SPEC.md section 3.3 requires the
+	// Nothing returns it, and nothing can. The design requires the
 	// condition be caught without a panic, and it is — but the goroutine
 	// committing the violation is not inside a Call, so there is no caller to
 	// hand an error to. The offending method does nothing and

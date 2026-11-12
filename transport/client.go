@@ -24,7 +24,7 @@ const DefaultDialTimeout = 2 * time.Second
 //
 // It is a guard against a malformed length prefix turning into an allocation,
 // not a considered capacity limit. A batch large enough to approach it should
-// have been split by the caller; SPEC.md §3.4's router exists to do that.
+// have been split by the caller; the router exists to do that.
 const DefaultMaxMessageBytes = 16 << 20
 
 // Dial implements [core.Transport].

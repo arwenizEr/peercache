@@ -280,8 +280,8 @@ func readinessGatesTraffic(c *cluster) error {
 	// This is a correctness requirement, not tidiness. A write routed to
 	// its owner creates the namespace there if the application has not
 	// opened it — with *default* options, meaning replication factor 1.
-	// Options are fixed at creation and silently ignored afterwards
-	// (open question 26), so that owner then replicates nothing and keeps
+	// Options are fixed at creation and silently ignored afterwards,
+	// so that owner then replicates nothing and keeps
 	// ignoring the RF=3 asked for later. Killing it loses its whole share.
 	//
 	// CLAUDE.md assumes every pod runs the same binary; the corollary is

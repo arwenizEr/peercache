@@ -50,7 +50,7 @@ func run() error {
 	// replication factor and L1 TTL.
 	sessions := cache.Namespace("sessions",
 		// Grouping decides ownership, so it has no observable effect
-		// until there is a cluster to own anything (M3).
+		// until there is a cluster to own anything.
 		peercache.WithPartitioner(peercache.PartitionByPrefix("/")),
 		peercache.WithReplicationFactor(2),
 		peercache.WithL1TTL(2*time.Second),

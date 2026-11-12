@@ -26,8 +26,8 @@
 //
 // # Status
 //
-// All seven milestones are built. [ErrNotImplemented] survives them, but no
-// longer means "not written yet": it now reports an RPC method this binary does
+// Every feature is built. [ErrNotImplemented] does not mean "not written
+// yet": it reports an RPC method this binary does
 // not recognise — which is what a peer running a newer build looks like during a
 // rolling upgrade — or a cache asked to reach another node with no transport
 // configured.

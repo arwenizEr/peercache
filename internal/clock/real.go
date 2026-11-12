@@ -32,8 +32,8 @@ func (realClock) AfterFunc(d time.Duration, f func()) Timer {
 
 func (realClock) NewTicker(d time.Duration) Ticker {
 	if d <= 0 {
-		// time.NewTicker panics on a non-positive duration and CLAUDE.md
-		// forbids panics in library paths. A ticker that never fires is
+		// time.NewTicker panics on a non-positive duration, and library
+		// paths do not panic. A ticker that never fires is
 		// the least destructive answer; [Fake] reports the same misuse
 		// loudly so tests catch it.
 		return deadTicker{}

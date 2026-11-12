@@ -14,7 +14,7 @@ import (
 // Under asynchronous replication a Delete's tombstone can fail to reach a
 // replica — a full queue drops it, an unreachable peer fails it — and nothing
 // retries. The replica keeps the old value at, say, version 5. A later Set of
-// the same key on the owner started again at version 1 (question 18); the
+// the same key on the owner started again at version 1; the
 // replica refused it as older; and when the owner died the replica was promoted
 // holding the value that had been deleted and then overwritten. The caller's
 // last write was lost and an older one served in its place.

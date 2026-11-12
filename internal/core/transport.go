@@ -7,14 +7,12 @@ import (
 
 // Transport is the peer-to-peer message fabric.
 //
-// SPEC.md §3.6 names this interface and its Dial/Serve/Close shape but never
-// defines PeerClient or Handler. The definitions below are this project's
-// choice; they are recorded as an open question in docs/decisions/open.md and
-// may change in M4 when the gRPC implementation lands.
+// The gRPC implementation is in the transport package; the test harness has an
+// in-process one with fault injection.
 //
 // The shape is deliberately byte-oriented rather than one Go method per RPC.
 // gRPC can implement it, an in-process fake can implement it in a few hundred
-// lines, and adding an RPC in a later milestone does not widen this interface.
+// lines, and adding an RPC does not widen this interface.
 type Transport interface {
 	// Dial returns a client for node. Implementations are expected to pool
 	// connections, so repeated Dials for the same node are cheap and the
@@ -24,8 +22,7 @@ type Transport interface {
 	// Serve begins accepting requests and dispatching them to h. It blocks
 	// until the transport is closed or the listener fails.
 	//
-	// The [net.Listener] argument comes from SPEC.md §3.6 and suits the
-	// gRPC implementation. An in-process transport has nothing to listen
+	// The [net.Listener] argument suits the gRPC implementation. An in-process transport has nothing to listen
 	// on and accepts a nil listener.
 	Serve(l net.Listener, h Handler) error
 

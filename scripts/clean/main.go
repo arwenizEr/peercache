@@ -9,9 +9,8 @@
 // binaries sat in the repository root for a day as a result, matched by
 // .gitignore's `*.exe` and by nothing in the target whose job was removing them.
 //
-// Two lists that must agree with nothing checking them is the defect this
-// repository spent a milestone finding in its documentation. Reading .gitignore
-// leaves one list.
+// Two lists that must agree with nothing checking them drift apart. Reading
+// .gitignore leaves one list.
 //
 // Only the first section is read. The second names editor and OS directories —
 // .idea/, .vscode/ — which are the developer's, not this project's, and deleting

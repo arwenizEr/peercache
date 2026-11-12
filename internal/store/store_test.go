@@ -96,7 +96,7 @@ func TestVersionsIncrementPerKey(t *testing.T) {
 	// Deleting does not reset the sequence. It used to — the version lived
 	// with the entry and went with it — and a replica that missed the
 	// deletion's tombstone then refused the rewrite as older and promoted the
-	// deleted value on failover (open question 42). The shard keeps a floor
+	// deleted value on failover. The shard keeps a floor
 	// at the highest version it deleted, and the rewrite starts above it.
 	s.Delete("a")
 	if got := s.Set("a", []byte("v"), 0); got != 6 {

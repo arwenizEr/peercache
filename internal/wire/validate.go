@@ -16,8 +16,8 @@ import (
 //
 // It exists because the validator is recursive, and a recursive function walking
 // attacker-supplied structure without a depth bound is a stack overflow with a
-// network trigger. That would be a panic, which CLAUDE.md forbids in library
-// paths, and one no `recover` could usefully catch.
+// network trigger. That would be a panic, which library paths never do, and one
+// no `recover` could usefully catch.
 //
 // It bounds the error message too, which is not incidental. Each level wraps the
 // one below it, so the rejection for a frame of 4096 nested arrays is 4096 nested
@@ -230,7 +230,7 @@ func scanCounted(data []byte, off, depth, lenBytes, perElement int) (int, error)
 	// This bound is a fast path, not a correctness guard, and saying so
 	// matters. Removing it entirely changes no outcome: scanN calls scan for
 	// each element and the first one runs out of bytes, so the frame is
-	// rejected either way. A mutation audit proved that — deleting the check
+	// rejected either way. Deleting the check on purpose proved that — it
 	// left the whole package passing — which is the same result replicate.go
 	// records for its own `rf < 2` branch.
 	//

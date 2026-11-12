@@ -17,7 +17,7 @@ import (
 
 // Defaults for [Options].
 const (
-	// DefaultShards is the shard count from SPEC.md section 4 (M1). It is
+	// DefaultShards is the default shard count. It is
 	// well above any realistic core count, so lock contention comes from
 	// key collisions rather than from the shard map itself.
 	DefaultShards = 256
@@ -274,7 +274,7 @@ func (s *Store) Exists(key string) bool {
 // whether an expired entry has been reclaimed depends on when the sweeper last
 // passed. A deleted or shed entry does not restart it: the shard keeps a floor
 // at the highest version it removed that way, and a first write starts above it,
-// because a replica may still hold that version (open question 42). Do not treat
+// because a replica may still hold that version. Do not treat
 // "lower version" as proof that a value is stale; see docs/decisions/open.md
 // question 18.
 func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
@@ -482,7 +482,8 @@ func (s *Store) Delete(key string) bool {
 		sh.bytes.Add(-size(key, e.val))
 		// The deletion's tombstone is replicated asynchronously and may
 		// not arrive, leaving a replica holding this version. A rewrite
-		// must start above it, as after a shed. Open question 42.
+		// must start above it, as after a shed. See
+		// docs/decisions/open.md question 42.
 		if e.version > sh.floor {
 			sh.floor = e.version
 		}
@@ -592,14 +593,14 @@ func (s *Store) Bytes() int64 {
 //
 // A replica holds the owner's copy at the owner's version. If this store shed a
 // key at version 5 and then started its rewrite at version 1, as an ordinary
-// absent key does (open question 18), the replica would refuse the rewrite and a
+// absent key does, the replica would refuse the rewrite and a
 // failover would promote the shed value over the one last written. The caller
 // replicates a removal through visit, which would prevent that if it arrived —
-// but correctness must not depend on a message arriving (CLAUDE.md decision 6).
+// but correctness must not depend on a message arriving.
 // So each shard remembers the highest version it shed, and a first write to an
 // absent key in that shard starts above it. Delete raises the same floor, for
-// the same reason: its tombstone is replicated asynchronously and may be lost
-// (open question 42). Sweep does not, because an expiry happens on every holder
+// the same reason: its tombstone is replicated asynchronously and may be lost.
+// Sweep does not, because an expiry happens on every holder
 // at the same deadline and leaves no copy for a rewrite to have to outrank.
 func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64 {
 	if target <= 0 {

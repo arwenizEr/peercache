@@ -17,7 +17,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/store"
 )
 
-// Namespace is a handle to a named keyspace (SPEC.md section 3.1).
+// Namespace is a handle to a named keyspace.
 //
 // Values are opaque bytes at this layer; encoding is the codec's business. Keys
 // map to groups through the namespace's [Partitioner], and a group maps to
@@ -83,7 +83,7 @@ type Namespace interface {
 	GetOrLoad(ctx context.Context, key string) ([]byte, error)
 }
 
-// namespace is the M1 implementation of [Namespace].
+// namespace implements [Namespace].
 //
 // err, when non-nil, is a configuration failure captured at construction —
 // [Cache.Namespace] cannot return an error, and reporting the failure from
@@ -109,8 +109,7 @@ type namespace struct {
 	// membership authority, because a cluster of one owns everything and a
 	// second copy of a local key would only be a way to serve it stale.
 	//
-	// Built in M1 and connected here in M4, which is when the first
-	// non-owned read exists — see docs/decisions/open.md question 13.
+	// See docs/decisions/open.md question 13.
 	l1 *l1.Cache
 }
 
@@ -135,7 +134,7 @@ func (n *namespace) status() error {
 // This is where WithPartitioner takes effect. Grouping related keys under one
 // group key is what lets a caller keep a customer's orders on one node and
 // compute over them in place, which is the point of the partitioner and the
-// reason it was accepted and validated back in M1 while doing nothing.
+// reason it is validated at construction.
 func (n *namespace) groupKeyFor(key string) string {
 	if n.opts.Partitioner == nil {
 		return key
@@ -323,7 +322,8 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, deleted bool) error {
 	// The replication factor is checked once, inside replicaTargets, which
 	// is the only place that can act on it. Checking here as well would be
-	// two conditions that must agree forever, and a mutation audit showed
+	// two conditions that must agree forever, and breaking either on purpose
+	// showed
 	// exactly what that buys: removing either one changes nothing, so
 	// neither is tested.
 	targets, _, err := n.cache.replicaTargets(n.groupKeyFor(key), n.opts.ReplicationFactor)
@@ -388,7 +388,8 @@ func (n *namespace) refuseUnderFactor(placed int) error {
 // reach — none — and returns nil. The caller asked for three copies, got one,
 // and cannot tell.
 //
-// That is open question 37, and this counter is its first option: make the
+// That is docs/decisions/open.md question 37, and this counter is its first
+// option: make the
 // window visible without changing what any data path does. A caller that reads
 // `Set` returning nil as "RF nodes have this" is wrong during a partition, and
 // until now nothing said so. Now `Stats().DegradedWrites` and
@@ -661,7 +662,7 @@ func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time
 // absent.
 //
 // The loader runs on the owner and nowhere else. That is the whole reason
-// SPEC.md §3.1 registers loaders by name rather than passing them per call: if
+// loaders are registered by name rather than passed per call: if
 // every node ran its own, a cold key would send one request per pod to the
 // database behind it, which is the stampede single-flighting exists to prevent,
 // reintroduced at cluster scale.
