@@ -1206,7 +1206,7 @@ boundary rather than at the code someone had already thought about.
 
 ---
 
-## 40. Readiness answers availability, not durability — M8, a real question
+## 40. Readiness answers availability, not durability — M8, resolved post-M8
 
 `ReadyState.CaughtUp` is a one-shot flag. It is set the first time `CatchUp`
 completes and never cleared, so a node that joined, caught up, and then lived
@@ -1249,6 +1249,40 @@ in a milestone that is designing one, not bolted onto the end of this one.
 RF=2. At RF=3 the window costs a copy and the cluster still tolerates a failure;
 at RF=2 it costs the only redundancy there is, and the difference between "ready"
 and "safe to replace the next pod" stops being academic.
+
+**Resolved: the third thing.** `ReadyState.ReplicasCurrent`, mirrored in
+`Stats().ReplicasCurrent` and the gauge `peercache_replicas_current`, reports
+whether this node has completed a catch-up — every peer in its view, no failure —
+that began under the membership epoch it holds now. Readiness is unchanged: it
+still answers whether the node can serve, and a ready node may report
+`ReplicasCurrent` false.
+
+The epoch is read *before* the run. A change while pages are in flight means some
+were chosen under a ranking that no longer holds, so that run does not count.
+Concurrent catch-ups record whichever finishes last, which can understate
+currency but never overstate it.
+
+It is a per-node fact, and says so. The cluster is back at its factor when every
+node reports it under the same view; a rollout gates on the minimum across pods.
+It does not account for asynchronous replication still in flight — that window
+is measured separately in `docs/benchmarks.md`.
+
+**Building it found a bug underneath.** `CatchUp` had returned `nil` since M5
+whatever happened: the per-peer errors were logged and counted, and the variable
+meant to carry them was declared and never assigned. A signal defined as "the
+last catch-up succeeded" would have inherited that and reported success after
+reaching nobody. `CatchUp` now joins every peer's error, and
+`TestCatchUpReportsAPeerItCouldNotReach` pins it. No existing test depended on the
+old behaviour: every call site that fails on the error calls it after the view
+has converged.
+
+Pinned by `TestReplicasCurrentFollowsCatchUpAndMembership`,
+`TestCatchUpReportsAPeerItCouldNotReach` and `TestASingleNodeHasCurrentReplicas`.
+
+**What would reopen it:** a deployment that needs the cluster-wide answer from a
+single node. That needs every node's epoch and catch-up state gossiped, and
+membership is AP, so the answer would be one node's belief about the others —
+weaker than the per-node fact, and not obviously worth a protocol change.
 
 ---
 

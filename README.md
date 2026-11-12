@@ -98,7 +98,11 @@ the feature list rather than after it.
 
   `CatchUp` is what closes the window, which is why it is an explicit call. The
   operational rule is the same one restarts already have: after a membership
-  change, catch up before you rely on the replication factor again. A test that
+  change, catch up before you rely on the replication factor again.
+  `Ready().ReplicasCurrent`, exported as `peercache_replicas_current`, says when
+  a node has done so under the view it holds now. It sits beside readiness rather
+  than inside it, because a node can serve correctly long before the cluster is
+  back at its factor. A test that
   skipped this reported the loss as a failure of RF=3, roughly one run in seven,
   and the cache was behaving exactly as documented.
 - **A membership change moves replicas rather than discarding them.** When the
@@ -187,7 +191,8 @@ invalidate.go     Best-effort L1 invalidation broadcast         (M5)
 drain.go          Hands work away without closing               (M6)
 handoff.go        Moves replicas on a membership change rather
                   than dropping them                            (M8)
-ready.go          Readiness and its three conditions            (M6)
+ready.go          Readiness, its three conditions, and whether
+                  replicas are current for this view            (M6)
 observe.go        Stats and the metric series they export       (M7)
 
 internal/

@@ -1185,6 +1185,33 @@ mutate "the nightly soak timeout fits one soak test, not two" \
   'run: go test . -run TestSoak -count=1 -timeout 85m' \
   'TestNightlySoakFitsItsTimeouts$' .
 
+# --- Question 40: ReplicasCurrent, and the CatchUp error it exposed ---
+
+# The bug from M5: the per-peer error is computed and discarded, so CatchUp
+# returns nil after reaching nobody.
+mutate "CatchUp drops the errors of the peers it could not reach" \
+  catchup.go \
+  'failures = errors.Join(failures, fmt.Errorf(' \
+  '_ = errors.Join(failures, fmt.Errorf(' \
+  'TestCatchUpReportsAPeerItCouldNotReach$' .
+
+# Without the epoch comparison, one catch-up makes a node current forever, which
+# is the one-shot CaughtUp flag question 40 was opened about.
+mutate "ReplicasCurrent ignores membership changes" \
+  ready.go \
+  'return at != 0 && at-1 == uint64(c.guard.Stats().Epoch)' \
+  'return at != 0' \
+  'TestReplicasCurrentFollowsCatchUpAndMembership$' .
+
+# A catch-up that failed against some peers must not count as current.
+mutate "a failed catch-up still marks replicas current" \
+  catchup.go \
+  '	if err == nil {
+		c.readiness.markCurrent(epoch)' \
+  '	if true {
+		c.readiness.markCurrent(epoch)' \
+  'TestCatchUpReportsAPeerItCouldNotReach$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

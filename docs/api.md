@@ -59,7 +59,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter the earlier milestones built is exported: `MetricsHandler` serves
-39 series in the Prometheus text exposition format, and PeerCache imports no
+40 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -564,7 +564,14 @@ states: a read succeeds either way.
 
 If you depend on the replication factor after a topology change — draining a
 node, scaling up, recovering from a partition — call `CatchUp` and let it finish
-first. `Stats().ReplicasPulled` stops rising when it has.
+first. `Ready().ReplicasCurrent` says when it has, on each node, for the view
+that node holds now.
+
+`CatchUp` returns an error wrapping every peer it could not pull from, and keeps
+going past each one: one unreachable peer is no reason to skip the others. From
+M5 until after M8 it returned `nil` regardless — the error was collected into
+a variable that was never assigned — so a caller checking it was told catch-up
+had finished by a node that had reached nobody.
 
 ### Conflicts
 
@@ -602,6 +609,25 @@ that exists elsewhere. The gate keeps clients away until the two agree.
 `ReadyState` is a struct rather than a bool because the remedies differ: waiting
 for gossip needs patience, an uncaught-up node needs `CatchUp`, a draining one
 needs to be left alone. `String()` is written for a probe response body.
+
+#### `ReplicasCurrent` — beside readiness, not inside it
+
+`Ready` answers whether this node can serve. `ReplicasCurrent` answers whether it
+has pulled, from every peer in its view and without a failure, the replicas it
+ranks for under the membership it holds *now*. It goes false on every membership
+change the node observes and true again only when a `CatchUp` that began under
+the new view returns `nil`.
+
+A ready node serves every request correctly while `ReplicasCurrent` is false;
+what it cannot yet promise is that losing another node loses nothing. That is a
+question about replacing the *next* pod, so it does not gate this one's traffic.
+Gate the rolling update on it instead: the replication factor is back once every
+node reports `ReplicasCurrent` under the same membership. One node reporting it
+says only that this node has done its part.
+
+Also in `Stats().ReplicasCurrent`, and exported as the gauge
+`peercache_replicas_current` (1 or 0), so the rollout can wait on
+`min(peercache_replicas_current) == 1` across the pods.
 
 ### `Drain` — the PreStop hook
 
@@ -728,13 +754,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 39 series come out of it.
+format with the content type a scraper expects, and 40 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 39 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 40 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

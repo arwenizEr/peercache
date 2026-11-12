@@ -2,6 +2,8 @@ package peercache
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/peercache/peercache/internal/core"
@@ -83,9 +85,20 @@ func (c *cache) CatchUp(ctx context.Context) error {
 		// Nothing to catch up from. A single node holds everything it
 		// owns and replicates to nobody.
 		c.readiness.markCaughtUp()
+		if c.guard != nil {
+			c.readiness.markCurrent(c.guard.Stats().Epoch)
+		}
 		return nil
 	}
+	// The epoch is read before the run, not after. A membership change while
+	// pages are in flight means some of them were chosen under a ranking that
+	// no longer holds, and reading it afterwards would report that run as
+	// current for a view it never saw.
+	epoch := c.guard.Stats().Epoch
 	err := c.catchup.run(ctx)
+	if err == nil {
+		c.readiness.markCurrent(epoch)
+	}
 	// Marked even when individual peers failed. Catching up from three of
 	// four owners leaves this node far better placed than never trying, and
 	// a readiness gate that never opens because one peer was briefly
@@ -137,6 +150,13 @@ func (cu *catchUp) run(ctx context.Context) error {
 				cu.failures.Add(1)
 				c.opts.Logger.Warn("catch-up failed",
 					"namespace", name, "peer", peer.ID, "error", err)
+				// Collected rather than returned: one unreachable peer
+				// is no reason to skip the others. From M5 until this
+				// line existed the variable was declared and never
+				// assigned, so CatchUp returned nil after reaching
+				// nobody.
+				failures = errors.Join(failures, fmt.Errorf(
+					"peercache: catch-up of %q from %s: %w", name, peer.ID, err))
 			}
 		}
 	}

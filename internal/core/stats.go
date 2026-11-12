@@ -155,6 +155,11 @@ type Stats struct {
 	CatchUpRuns     int64
 	CatchUpFailures int64
 
+	// ReplicasCurrent mirrors ReadyState.ReplicasCurrent: this node has
+	// completed a catch-up, with no failure, under the membership view it
+	// holds now. It is here as well so the metrics surface can carry it.
+	ReplicasCurrent bool
+
 	// KeysHandedOff counts keys pushed to a new owner during a graceful
 	// drain. Zero on a node that has never drained; on one that has, it
 	// should equal what it owned when the drain began.

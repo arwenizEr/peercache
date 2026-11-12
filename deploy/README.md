@@ -127,8 +127,10 @@ for the second.
 
 That is why a rolling update should not replace the next pod the instant the
 previous one is ready. `maxUnavailable: 1` and a `minReadySeconds` long enough
-for catch-up to finish is the shape you want; `Stats().ReplicasPulled` going flat
-is the signal it has. Replacing pods faster than the cluster restores copies is
+for catch-up to finish is the shape you want, and `peercache_replicas_current`
+reading 1 on every pod is the signal it has. It is the gauge form of
+`Ready().ReplicasCurrent`, which a node reports only after a `CatchUp` that began
+under its current membership view returned `nil`. Replacing pods faster than the cluster restores copies is
 how a rolling upgrade at RF=3 ends up, briefly, at RF=1.
 
 ## What these manifests deliberately do not include

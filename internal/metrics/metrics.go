@@ -153,6 +153,10 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_replicas_pulled_total", Counter, "Keys obtained by catch-up after a restart.", float64(s.ReplicasPulled)},
 		{"peercache_catchup_runs_total", Counter, "Catch-up invocations.", float64(s.CatchUpRuns)},
 		{"peercache_catchup_failures_total", Counter, "Peers unreachable during a catch-up. The replica set is thinner than configured.", float64(s.CatchUpFailures)},
+		{"peercache_replicas_current", Gauge,
+			"1 when this node has completed a catch-up, with no failure, under its current membership view; 0 otherwise. " +
+				"Not readiness: a ready node can serve while this is 0. Before replacing the next pod, wait for every node to report 1.",
+			boolGauge(s.ReplicasCurrent)},
 		{"peercache_keys_handed_off_total", Counter, "Keys pushed to a new owner during a graceful drain.", float64(s.KeysHandedOff)},
 		{"peercache_keys_adopted_total", Counter, "Keys received from a draining peer that this node already owned.", float64(s.KeysAdopted)},
 	}
@@ -210,4 +214,12 @@ func formatFloat(v float64) string {
 		return strconv.FormatInt(int64(v), 10)
 	}
 	return strconv.FormatFloat(v, 'g', -1, 64)
+}
+
+// boolGauge renders a condition as the 0 or 1 a Prometheus gauge carries.
+func boolGauge(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }

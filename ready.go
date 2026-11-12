@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
+
+	"github.com/peercache/peercache/internal/core"
 )
 
 // readyPollInterval is how often [Cache.WaitReady] rechecks.
@@ -36,6 +38,10 @@ type readiness struct {
 	// draining is set by Drain, and clears nothing: a draining node never
 	// becomes ready again.
 	draining atomic.Bool
+	// currentAt is one more than the membership epoch under which the last
+	// complete catch-up began, or zero if none has completed. One more, so
+	// that zero can mean "never" without reserving an epoch.
+	currentAt atomic.Uint64
 }
 
 // ReadyState explains a readiness decision.
@@ -60,6 +66,23 @@ type ReadyState struct {
 	// CaughtUp reports whether this node has pulled the replicas it is
 	// responsible for at least once.
 	CaughtUp bool
+	// ReplicasCurrent reports whether this node has pulled, from every peer
+	// in its view and without a failure, the replicas it ranks for under the
+	// membership view it holds now.
+	//
+	// It is not part of Ready, deliberately. A node that is ready can serve
+	// every request correctly while ReplicasCurrent is false; what it cannot
+	// yet do is guarantee that losing another node loses nothing. That is a
+	// question about the next pod to be replaced, not about this one, so it
+	// is reported beside readiness rather than gating it. See
+	// docs/decisions/open.md question 40.
+	//
+	// It goes false on every membership change this node observes, and true
+	// again only when a call to [Cache.CatchUp] that began under the new view
+	// returns nil. The replication factor is restored cluster-wide once every
+	// node reports it under the same membership; a single node reporting it
+	// says only that this node has done its part.
+	ReplicasCurrent bool
 	// Draining reports whether shutdown has begun.
 	Draining bool
 	// Members is the size of the current view.
@@ -85,8 +108,9 @@ type ReadyState struct {
 // everything, there is nobody to catch up from, and nothing can change.
 func (c *cache) Ready() ReadyState {
 	st := ReadyState{
-		CaughtUp: c.readiness.caughtUp.Load(),
-		Draining: c.readiness.draining.Load(),
+		CaughtUp:        c.readiness.caughtUp.Load(),
+		Draining:        c.readiness.draining.Load(),
+		ReplicasCurrent: c.replicasCurrent(),
 	}
 
 	switch {
@@ -132,14 +156,33 @@ func (c *cache) Ready() ReadyState {
 // markCaughtUp records that catch-up has completed.
 func (r *readiness) markCaughtUp() { r.caughtUp.Store(true) }
 
+// markCurrent records that a catch-up which began under epoch completed with no
+// failure.
+//
+// A plain store, not a maximum. Two concurrent catch-ups finishing out of order
+// can leave the older epoch recorded, which reports "not current" when it might
+// be; that errs towards telling an operator to wait, which is the safe direction
+// for a signal that gates replacing the next pod.
+func (r *readiness) markCurrent(epoch core.Epoch) { r.currentAt.Store(uint64(epoch) + 1) }
+
+// replicasCurrent reports [ReadyState.ReplicasCurrent].
+func (c *cache) replicasCurrent() bool {
+	if c.guard == nil {
+		// A cluster of one holds every copy there is.
+		return true
+	}
+	at := c.readiness.currentAt.Load()
+	return at != 0 && at-1 == uint64(c.guard.Stats().Epoch)
+}
+
 // String implements [fmt.Stringer], so a probe handler can write the state
 // directly into a response body.
 func (s ReadyState) String() string {
 	if s.Ready {
-		return fmt.Sprintf("ready (members=%d)", s.Members)
+		return fmt.Sprintf("ready (members=%d replicasCurrent=%v)", s.Members, s.ReplicasCurrent)
 	}
-	return fmt.Sprintf("not ready: %s (members=%d joined=%v settled=%v caughtUp=%v draining=%v)",
-		s.Reason, s.Members, s.Joined, s.Settled, s.CaughtUp, s.Draining)
+	return fmt.Sprintf("not ready: %s (members=%d joined=%v settled=%v caughtUp=%v replicasCurrent=%v draining=%v)",
+		s.Reason, s.Members, s.Joined, s.Settled, s.CaughtUp, s.ReplicasCurrent, s.Draining)
 }
 
 // WaitReady blocks until this node is ready or ctx ends.

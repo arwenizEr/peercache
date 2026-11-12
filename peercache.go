@@ -522,6 +522,7 @@ func (c *cache) Stats() Stats {
 		// block, the counter rose and Stats reported zero.
 		DegradedWrites:          c.degradedWrites.Load(),
 		UnderReplicatedRefusals: c.underReplicated.Load(),
+		ReplicasCurrent:         c.replicasCurrent(),
 	}
 	if c.replicas != nil {
 		stats.VersionConflicts = c.replicas.VersionConflicts()

@@ -2111,6 +2111,29 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### After M8: question 40, and a CatchUp error that had never been returned
+
+`ReadyState.ReplicasCurrent` reports whether a node has completed a catch-up,
+with no failure, under the membership epoch it holds now. Defining it as "the
+last catch-up succeeded" meant reading what `CatchUp` returns, and it returned
+`nil` unconditionally: since M5 the per-peer error was logged, counted in
+`CatchUpFailures`, and never assigned to the variable that was returned. The
+metric was right and the return value was not, and every test that checked the
+return value did so on a converged view, where nil was also the correct answer.
+
+`TestCatchUpReportsAPeerItCouldNotReach` partitions the asker while its view
+still lists both peers. It was written before the fix and could not compile
+until `ReplicasCurrent` existed, so its failure against the old code is shown by
+the first audit entry below, which restores that code, rather than by a run
+before the fix. The root package ran green under `-race` with the error now
+returned, so no existing caller had been relying on the nil.
+
+| Mutation | Caught by |
+|---|---|
+| `CatchUp` discards the per-peer error again | `TestCatchUpReportsAPeerItCouldNotReach` |
+| `ReplicasCurrent` ignores the epoch | `TestReplicasCurrentFollowsCatchUpAndMembership` |
+| a failed catch-up still marks replicas current | `TestCatchUpReportsAPeerItCouldNotReach` |
+
 ---
 
 ## The acceptance map
