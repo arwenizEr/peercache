@@ -368,7 +368,10 @@ func (s *Store) Snapshot(after string, limit int, want func(key string) bool) ([
 		return nil, false
 	}
 
-	var candidates []SnapshotEntry
+	// Keys first, values only for the page. Copying every candidate's value
+	// before cutting to the limit, as an earlier version did, made each page
+	// allocate in proportion to the whole store.
+	var candidates []string
 	now := s.clk.Now().UnixNano()
 	for _, sh := range s.shards {
 		sh.mu.RLock()
@@ -382,23 +385,33 @@ func (s *Store) Snapshot(after string, limit int, want func(key string) bool) ([
 			if want != nil && !want(key) {
 				continue
 			}
-			val := make([]byte, len(e.val))
-			copy(val, e.val)
-			candidates = append(candidates, SnapshotEntry{
-				Key:       key,
-				Value:     val,
-				Version:   e.version,
-				ExpiresAt: e.expiresAt,
-			})
+			candidates = append(candidates, key)
 		}
 		sh.mu.RUnlock()
 	}
 
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Key < candidates[j].Key })
-	if len(candidates) > limit {
-		return candidates[:limit], true
+	sort.Strings(candidates)
+	more := len(candidates) > limit
+	if more {
+		candidates = candidates[:limit]
 	}
-	return candidates, false
+
+	page := make([]SnapshotEntry, 0, len(candidates))
+	for _, key := range candidates {
+		sh := s.shardFor(key)
+		sh.mu.RLock()
+		e, ok := sh.entries[key]
+		if ok && (e.expiresAt == 0 || now < e.expiresAt) {
+			val := make([]byte, len(e.val))
+			copy(val, e.val)
+			page = append(page, SnapshotEntry{Key: key, Value: val, Version: e.version, ExpiresAt: e.expiresAt})
+		}
+		// A key removed between the two passes is simply absent from the
+		// page. The caller's cursor is the last key returned, so the next
+		// page continues correctly either way.
+		sh.mu.RUnlock()
+	}
+	return page, more
 }
 
 // SnapshotEntry is one key's worth of a [Store.Snapshot].

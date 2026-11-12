@@ -3,6 +3,7 @@ package store_test
 import (
 	"fmt"
 	"math/rand"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -301,5 +302,32 @@ func TestSetIfAbsentDoesNotReplaceALiveEntry(t *testing.T) {
 	want := entrySize("k", []byte("first")) + entrySize("e", []byte("new"))
 	if got := s.Bytes(); got != want {
 		t.Fatalf("Bytes = %d, want %d", got, want)
+	}
+}
+
+// TestASnapshotPageAllocatesOnlyItsPage: found by code review. Snapshot copied
+// every remaining value before cutting the result to its limit, so each page of
+// a catch-up or hand-off allocated in proportion to the whole store — the shape
+// of the out-of-memory paging was meant to prevent.
+func TestASnapshotPageAllocatesOnlyItsPage(t *testing.T) {
+	s, _ := newStore(t)
+	const size = 10 << 10
+	for i := 0; i < 1000; i++ {
+		s.Set(fmt.Sprintf("k%04d", i), make([]byte, size), 0)
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	page, more := s.Snapshot("", 1, nil)
+	runtime.ReadMemStats(&after)
+
+	if len(page) != 1 || !more {
+		t.Fatalf("Snapshot(limit 1) returned %d entries, more=%v", len(page), more)
+	}
+	// One value is 10 KiB; the whole store is 10 MiB. Allow the keys, the
+	// sort and slack, and nothing near the values of the other 999.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 1<<20 {
+		t.Fatalf("a one-entry page allocated %d bytes from a store of 1000 10 KiB values; "+
+			"it is copying values it then discards", allocated)
 	}
 }

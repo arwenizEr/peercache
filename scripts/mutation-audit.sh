@@ -1631,6 +1631,11 @@ mutate "Close leaves each L1 tier's goroutine running"   peercache.go   '			if n
 mutate "a failed New leaves the sweep ticker armed"   peercache.go   '				c.ticker.Stop()
 				_ = groups.Close(context.Background())'   '				_ = groups.Close(context.Background())'   'TestAFailedNewLeavesNothingRunning$' .
 
+# A snapshot page that copies every candidate instead of its page.
+mutate "a snapshot page copies the whole store"   internal/store/store.go   '	if more {
+		candidates = candidates[:limit]
+	}'   ''   'TestASnapshotPageAllocatesOnlyItsPage$' ./internal/store/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
