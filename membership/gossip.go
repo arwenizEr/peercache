@@ -68,6 +68,16 @@ type Gossip struct {
 	stopConsume chan struct{}
 	consumeDone chan struct{}
 
+	// republish asks the republisher goroutine to push this node's metadata
+	// to its peers, and republishDone is closed when that goroutine exits.
+	// The push is not made from the event goroutine itself: UpdateNode
+	// re-enters memberlist, which, holding its node lock, sends a NotifyUpdate
+	// for this node into the very event channel only that goroutine drains.
+	// With the channel full — a burst of joins into a large cluster — the two
+	// would wait on each other for good, and all of gossip with them.
+	republish     chan struct{}
+	republishDone chan struct{}
+
 	mu       sync.Mutex
 	watchers []chan core.MembershipChange
 	closed   bool
@@ -157,11 +167,13 @@ func New(opts Options) (*Gossip, error) {
 	}
 
 	g := &Gossip{
-		self:        opts.Self.Clone(),
-		logger:      opts.Logger,
-		members:     make(map[string]core.Node),
-		stopConsume: make(chan struct{}),
-		consumeDone: make(chan struct{}),
+		self:          opts.Self.Clone(),
+		logger:        opts.Logger,
+		members:       make(map[string]core.Node),
+		stopConsume:   make(chan struct{}),
+		consumeDone:   make(chan struct{}),
+		republish:     make(chan struct{}, 1),
+		republishDone: make(chan struct{}),
 	}
 	g.started = clock.Real().Now().UnixNano()
 	g.meta.Store(&nodeMeta{Started: g.started})
@@ -218,7 +230,27 @@ func New(opts Options) (*Gossip, error) {
 	g.members[g.self.ID] = g.self.Clone()
 
 	go g.consume(events)
+	go g.republisher()
 	return g, nil
+}
+
+// republisher pushes this node's metadata to its peers whenever asked.
+// Requests that arrive while one is in flight coalesce into a single push, which
+// carries the latest metadata anyway.
+func (g *Gossip) republisher() {
+	defer close(g.republishDone)
+	for {
+		select {
+		case <-g.stopConsume:
+			return
+		case <-g.republish:
+			// Best effort: republishing is how peers learn our epoch, and
+			// failing is not fatal.
+			if err := g.list.UpdateNode(100 * time.Millisecond); err != nil {
+				g.logger.Debug("membership: republishing node metadata", "error", err)
+			}
+		}
+	}
 }
 
 // consume translates memberlist events into membership changes.
@@ -273,12 +305,13 @@ func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
 		if transition {
 			epoch = core.Epoch(g.epoch.Add(1))
 			g.meta.Store(&nodeMeta{Epoch: epoch, RPCAddr: g.self.Addr, Started: g.started})
-			if g.list != nil {
-				// Best effort: republishing is how peers learn
-				// our epoch, and failing is not fatal.
-				if err := g.list.UpdateNode(100 * time.Millisecond); err != nil {
-					g.logger.Debug("membership: republishing node metadata", "error", err)
-				}
+			// Asked of the republisher rather than done here; see the
+			// republish field for why this goroutine must never call
+			// UpdateNode itself. Non-blocking: a request already pending
+			// will carry this metadata too.
+			select {
+			case g.republish <- struct{}{}:
+			default:
 			}
 		}
 
@@ -420,6 +453,7 @@ func (g *Gossip) Close() error {
 	// leaves its event channel open.
 	close(g.stopConsume)
 	<-g.consumeDone
+	<-g.republishDone
 
 	for _, ch := range watchers {
 		close(ch)
