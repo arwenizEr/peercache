@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/transport"
 )
 
 // SPEC.md §4 calls mTLS "optional but implemented". Optional is easy to test by

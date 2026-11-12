@@ -28,8 +28,11 @@ func WithBindAddr(addr string) Option {
 	return func(o *core.Options) { o.BindAddr = addr }
 }
 
-// WithSeeds sets the addresses used to join an existing cluster. An empty list
-// means this node forms a cluster of one and waits to be joined.
+// WithSeeds sets the addresses used to join an existing cluster. New passes them
+// to the membership authority's Join once the peer transport is serving, and
+// fails if the join does. An empty list means this node forms a cluster of one
+// and waits to be joined. Seeds with no [WithMembership] are rejected with
+// [ErrInvalidOption]: there is nothing to join through.
 func WithSeeds(seeds ...string) Option {
 	return func(o *core.Options) { o.Seeds = seeds }
 }

@@ -8,8 +8,8 @@ import (
 
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/replication"
-	"github.com/peercache/peercache/internal/transport"
 	"github.com/peercache/peercache/internal/wire"
+	"github.com/peercache/peercache/transport"
 )
 
 // peerHandler is the server side of the peer protocol.

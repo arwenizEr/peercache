@@ -11,8 +11,8 @@ import (
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/membership"
 	"github.com/peercache/peercache/internal/testkit"
+	"github.com/peercache/peercache/membership"
 )
 
 // These are the only tests in the repository that run two real cache instances

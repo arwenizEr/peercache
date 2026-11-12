@@ -33,11 +33,11 @@ const clockPackage = "internal/clock"
 // whose timers run on the wall clock and which no injected clock reaches, so
 // the adapter has to speak the same units.
 //
-// internal/membership wraps memberlist, whose probes, timeouts and suspicion
+// membership wraps memberlist, whose probes, timeouts and suspicion
 // timers are its own — bounding a graceful Leave means handing memberlist a
 // real duration.
 //
-// internal/transport wraps gRPC, whose keepalive pings, dial backoff and
+// transport wraps gRPC, whose keepalive pings, dial backoff and
 // deadline propagation are likewise internal. A fake clock cannot make gRPC
 // believe a connection has been idle.
 //
@@ -46,8 +46,9 @@ const clockPackage = "internal/clock"
 // deterministically against internal/testkit instead.
 var realTimePackages = []string{
 	"internal/clock",
-	"internal/membership",
-	"internal/transport",
+	// Public since decision 0024; the exemption moved with them.
+	"membership",
+	"transport",
 }
 
 // realTimeFiles are individual files exempt from the same rule, for the same

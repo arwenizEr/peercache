@@ -11,8 +11,8 @@ import (
 	"github.com/hashicorp/memberlist"
 
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/membership"
 	"github.com/peercache/peercache/internal/testkit"
+	"github.com/peercache/peercache/membership"
 )
 
 // These are integration tests over loopback, and they are honestly real-time:

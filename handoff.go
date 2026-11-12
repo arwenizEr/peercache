@@ -8,8 +8,8 @@ import (
 
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/replication"
-	"github.com/peercache/peercache/internal/transport"
 	"github.com/peercache/peercache/internal/wire"
+	"github.com/peercache/peercache/transport"
 )
 
 // handoffQueue bounds pending replica hand-offs.

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/transport"
 )
 
 // These tests bind real loopback sockets and speak real gRPC.
@@ -652,7 +652,7 @@ func TestConcurrentDialsShareOneConnection(t *testing.T) {
 // not the other fails here rather than becoming a peer that answers "unknown
 // method" in production.
 func TestProtoMatchesMethodConstants(t *testing.T) {
-	body, err := os.ReadFile("../../proto/peercache.proto")
+	body, err := os.ReadFile("../proto/peercache.proto")
 	if err != nil {
 		t.Fatalf("reading the proto: %v", err)
 	}

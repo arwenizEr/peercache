@@ -2111,6 +2111,24 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### The documented way to build a cluster did not compile outside this module
+
+The coverage sweep's remaining zeros were mostly trivial — no-op logger methods,
+`String` methods, memberlist delegate stubs. One was not: `WithSeeds`, set by its
+option and read by nothing. Following it found that the gossip membership and the
+gRPC transport lived under `internal/`, and that `docs/api.md` told applications
+to import them from there.
+
+That was checked rather than assumed: a scratch module with a `replace` onto this
+repository, containing the documented wiring, failed to build with "use of
+internal package ... not allowed". An application could run one node and nothing
+more. No test could see it, because every test and example is inside the module.
+
+Both packages are public now (decision 0024), `WithSeeds` joins, and
+`TestAnExternalModuleCanBuildACluster` compiles the documented wiring as a
+separate module, offline, on every run. It was written first and failed for the
+right reason — the packages were not at the public path — before the move.
+
 ### The rest of the coverage sweep: four more paths, three more findings
 
 After the TTL fix, the remaining zero-count blocks were worked through in order

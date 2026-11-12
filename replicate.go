@@ -10,8 +10,8 @@ import (
 
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/transport"
 	"github.com/peercache/peercache/internal/wire"
+	"github.com/peercache/peercache/transport"
 )
 
 // replicaQueue bounds pending asynchronous fan-out.

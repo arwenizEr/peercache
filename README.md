@@ -227,6 +227,11 @@ observe.go        Stats and the metric series they export       (M7)
 pressure.go       The memory budget and the order it sheds in   (M9)
 probation.go      Keeps young nodes out of the ranking          (M9)
 
+membership/       Gossip membership over memberlist. Public: an
+                  application builds its cluster with it      (M3)
+transport/        gRPC client and server. Public, for the same
+                  reason                                      (M4)
+
 internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
@@ -239,8 +244,6 @@ internal/
   actor/          Group activation, mailbox, lifecycle        (M2)
                   Records persist state; activations hold the goroutine
   ownership/      Rendezvous hashing, ring epochs             (M3)
-  membership/     Gossip membership over memberlist           (M3)
-  transport/      gRPC client and server                      (M4)
   wire/           Protocol messages, bounded decoders, frame
                   validation. The only code here that interprets
                   bytes it did not write.                     (M4)

@@ -13,7 +13,7 @@ import (
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/testkit"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/transport"
 )
 
 // These tests run a real multi-node cache over the in-process fabric from

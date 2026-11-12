@@ -106,6 +106,10 @@ func (o *Options) Validate() error {
 	if o.Logger == nil {
 		return fmt.Errorf("peercache: Logger must not be nil: %w", ErrInvalidOption)
 	}
+	if len(o.Seeds) > 0 && o.Membership == nil {
+		return fmt.Errorf("peercache: seeds %v given with no membership authority to join through: %w",
+			o.Seeds, ErrInvalidOption)
+	}
 	if o.JoinProbation < 0 {
 		return fmt.Errorf("peercache: join probation %v must not be negative: %w", o.JoinProbation, ErrInvalidOption)
 	}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/transport"
 )
 
 // These measure the transport alone: an echo handler, no store, no ownership,

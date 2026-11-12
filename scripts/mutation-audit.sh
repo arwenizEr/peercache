@@ -546,17 +546,17 @@ mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '
 mutate "local activation does not use the current epoch"   internal/ownership/guard.go   'return g.CanActivateAt(groupKey, g.table.Epoch())'   'return g.CanActivateAt(groupKey, 0)'   'TestCanActivateUsesTheCurrentEpoch' ./internal/ownership/
 
 mutate "gossip metadata updates advance the epoch" \
-  internal/membership/gossip.go \
+  membership/gossip.go \
   'kind, transition = core.ChangeUpdate, false' \
   'kind, transition = core.ChangeUpdate, true' \
-  'TestEpochDoesNotRunAway' ./internal/membership/
+  'TestEpochDoesNotRunAway' ./membership/
 
 mutate "the gossip event goroutine is never released" \
-  internal/membership/gossip.go \
+  membership/gossip.go \
   'close(g.stopConsume)
 	<-g.consumeDone' \
   '_ = g.consumeDone' \
-  'TestCloseLeavesNoGoroutines' ./internal/membership/
+  'TestCloseLeavesNoGoroutines' ./membership/
 
 # The two below are wiring mutations rather than logic mutations. Every M3
 # invariant above holds inside internal/ownership whether or not the library
@@ -618,54 +618,54 @@ mutate "the epoch does not dominate the version" \
   'TestStampOrdering' ./internal/wire/
 
 mutate "the transport codec drops the body" \
-  internal/transport/codec.go \
+  transport/codec.go \
   'b.payload = data.Materialize()' \
   'b.payload = nil' \
-  'TestRoundTripOverLoopback' ./internal/transport/
+  'TestRoundTripOverLoopback' ./transport/
 
 mutate "a caller does not identify itself" \
-  internal/transport/client.go \
+  transport/client.go \
   'ctx = metadata.AppendToOutgoingContext(ctx, metadataFromNode, c.transport.self.ID)' \
   '_ = metadataFromNode' \
-  'TestRoundTripOverLoopback' ./internal/transport/
+  'TestRoundTripOverLoopback' ./transport/
 
 mutate "sentinel errors do not survive the hop" \
-  internal/transport/client.go \
+  transport/client.go \
   'return fmt.Errorf("transport: %s: %s: %w", node.ID, st.Message(), sentinel)' \
   'return errors.New(st.Message())' \
-  'TestSentinelErrorsSurviveTheHop' ./internal/transport/
+  'TestSentinelErrorsSurviveTheHop' ./transport/
 
 mutate "Unavailable is read as a deferred activation" \
-  internal/transport/client.go \
+  transport/client.go \
   'sentinel = core.ErrNodeUnreachable
 		}' \
   'sentinel = core.ErrActivationPending
 		}' \
-  'TestUnavailableDefaultsToUnreachable' ./internal/transport/
+  'TestUnavailableDefaultsToUnreachable' ./transport/
 
 mutate "connections are not pooled" \
-  internal/transport/client.go \
+  transport/client.go \
   'if c, ok := t.clients[node.ID]; ok && c.addr == node.Addr {' \
   'if c, ok := t.clients[node.ID]; ok && false {' \
-  'TestDialPoolsConnections' ./internal/transport/
+  'TestDialPoolsConnections' ./transport/
 
 mutate "the server does not verify client certificates" \
-  internal/transport/tls.go \
+  transport/tls.go \
   'ClientAuth:   tls.RequireAndVerifyClientCert,' \
   'ClientAuth:   tls.RequireAnyClientCert,' \
-  'TestMutualTLSRejectsAnImpostorCA' ./internal/transport/
+  'TestMutualTLSRejectsAnImpostorCA' ./transport/
 
 mutate "the client does not verify the server" \
-  internal/transport/tls.go \
+  transport/tls.go \
   'RootCAs:            pool,' \
   'InsecureSkipVerify: true, RootCAs: pool,' \
-  'TestMutualTLSRejectsAnUntrustedServer' ./internal/transport/
+  'TestMutualTLSRejectsAnUntrustedServer' ./transport/
 
 mutate "the TLS floor drops to 1.0" \
-  internal/transport/tls.go \
+  transport/tls.go \
   'MinVersion:   tls.VersionTLS13,' \
   'MinVersion:   tls.VersionTLS10,' \
-  'TestTLSFloorIsEnforced' ./internal/transport/
+  'TestTLSFloorIsEnforced' ./transport/
 
 mutate "the router batches per group rather than per owner" \
   router.go \
@@ -693,12 +693,12 @@ mutate "every node runs its own loader" \
   'TestTheLoaderRunsOnlyOnTheOwner' .
 
 mutate "gossip advertises the SWIM port as the RPC address" \
-  internal/membership/gossip.go \
+  membership/gossip.go \
   'if meta.RPCAddr != "" {
 				node.Addr = meta.RPCAddr' \
   'if false {
 				node.Addr = meta.RPCAddr' \
-  'TestGossipAdvertisesTheRPCAddress' ./internal/membership/
+  'TestGossipAdvertisesTheRPCAddress' ./membership/
 mutate "enqueueing an invalidation blocks when the queue is full" \
   invalidate.go \
   '	select {
@@ -1169,9 +1169,9 @@ mutate "a write placed on some replicas but not enough is acknowledged"   namesp
 
 # The sentinel has to survive gRPC, or a write through any non-owner sees a
 # generic unreachable error and the distinction exists only for local writes.
-mutate "ErrUnderReplicated stops surviving the gRPC hop"   internal/transport/client.go   '	case codes.Internal:
+mutate "ErrUnderReplicated stops surviving the gRPC hop"   transport/client.go   '	case codes.Internal:
 		// gRPC raises Internal itself'   '	case codes.DataLoss:
-		// gRPC raises Internal itself'   'TestSentinelErrorsSurviveTheHop$' ./internal/transport/
+		// gRPC raises Internal itself'   'TestSentinelErrorsSurviveTheHop$' ./transport/
 
 # Requiring the factor under asynchronous replication cannot be honoured. Letting
 # it through would be an option that silently does nothing.
@@ -1354,10 +1354,10 @@ mutate "GetOrLoad without a loader asks the owner anyway" \
   'TestRemoteGetOrLoadWithoutALoaderOnTheOwner$' .
 
 mutate "a peer's own failure is reported as unreachable" \
-  internal/transport/client.go \
+  transport/client.go \
   '	code := codes.Unknown' \
   '	code := codes.Internal' \
-  'TestAnApplicationErrorIsNotReportedAsUnreachable$' ./internal/transport/
+  'TestAnApplicationErrorIsNotReportedAsUnreachable$' ./transport/
 
 mutate "probation swallows the departure announcement" \
   probation.go \
@@ -1404,6 +1404,14 @@ mutate "lifecycle events are never delivered" \
   '		r.rt.opts.OnEvent(e)' \
   '		_ = e' \
   'TestEventHandlerSeesEveryLifecycleEvent$' .
+
+# --- Decision 0024: WithSeeds joins ---
+
+mutate "seeds are never joined"   peercache.go   '	if len(resolved.Seeds) > 0 {
+		if err := resolved.Membership.Join(resolved.Seeds); err != nil {'   '	if false {
+		if err := resolved.Membership.Join(resolved.Seeds); err != nil {'   'TestWithSeedsJoinsThroughTheMembership$' .
+
+mutate "seeds without a membership are accepted"   internal/core/options.go   '	if len(o.Seeds) > 0 && o.Membership == nil {'   '	if false {'   'TestSeedsWithoutMembershipAreRejected$' .
 
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #

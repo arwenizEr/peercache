@@ -16,9 +16,9 @@ import (
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/membership"
 	"github.com/peercache/peercache/internal/testkit"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/membership"
+	"github.com/peercache/peercache/transport"
 )
 
 // M4 acceptance, from SPEC.md §4:

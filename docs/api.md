@@ -831,8 +831,17 @@ ownership from it: rendezvous hashing over the current view, stamped with the
 view's epoch. Without one, the node is a cluster of one and owns everything,
 which is the correct answer rather than a special case.
 
-`github.com/peercache/peercache/internal/membership` provides a gossip-backed
-implementation over hashicorp/memberlist.
+`github.com/peercache/peercache/membership` provides a gossip-backed
+implementation over hashicorp/memberlist, and
+`github.com/peercache/peercache/transport` the gRPC transport. Both are public
+packages, so an application imports them directly. They were under `internal/`
+until after M9, where Go refuses to let another module import them — so the
+documented way to build a cluster compiled only inside this repository.
+`TestAnExternalModuleCanBuildACluster` now compiles this page's wiring as a
+separate module.
+
+`WithSeeds` hands its addresses to the authority's `Join` once the transport is
+serving, and `New` fails if the join does. Before, nothing read it.
 
 ```go
 gossip, err := membership.New(membership.Options{

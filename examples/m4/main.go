@@ -40,8 +40,8 @@ import (
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/membership"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/membership"
+	"github.com/peercache/peercache/transport"
 )
 
 // budget bounds every wait, so a broken example reports rather than hangs.

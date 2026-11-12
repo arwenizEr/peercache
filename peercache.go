@@ -293,6 +293,17 @@ func New(opts ...Option) (Cache, error) {
 	}
 
 	go c.sweepLoop()
+
+	// Join last: once a node is a member, peers rank it and route to it, so it
+	// must already be serving — which the block above waited for. Until this
+	// existed WithSeeds was read by nothing, and an application that set it
+	// got a cluster of one that thought it was joining.
+	if len(resolved.Seeds) > 0 {
+		if err := resolved.Membership.Join(resolved.Seeds); err != nil {
+			_ = c.Close(context.Background())
+			return nil, fmt.Errorf("peercache: joining seeds %v: %w", resolved.Seeds, err)
+		}
+	}
 	return c, nil
 }
 

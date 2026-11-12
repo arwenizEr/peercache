@@ -13,7 +13,7 @@ import (
 	"github.com/peercache/peercache/internal/core"
 	"github.com/peercache/peercache/internal/ownership"
 	"github.com/peercache/peercache/internal/testkit"
-	"github.com/peercache/peercache/internal/transport"
+	"github.com/peercache/peercache/transport"
 )
 
 // These tests exist because the M7 mutation audit found that they did not.

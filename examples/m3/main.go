@@ -34,7 +34,7 @@ import (
 	"github.com/peercache/peercache"
 	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
-	"github.com/peercache/peercache/internal/membership"
+	"github.com/peercache/peercache/membership"
 )
 
 // activationDelay is how long a node defers a group it has just acquired. The
