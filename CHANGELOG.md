@@ -7,7 +7,9 @@ change the public API.
 
 ## [Unreleased]
 
-The first public release. Everything below is new.
+## [0.1.0] - 2026-11-12
+
+The first release. Everything below is new.
 
 ### Cache and namespaces
 
@@ -58,4 +60,5 @@ The first public release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/commits/main
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/arwenizEr/peercache/releases/tag/v0.1.0
