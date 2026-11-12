@@ -2115,8 +2115,8 @@ and could not see it. Both counters now sit outside that block, beside
 
 `TestLatencyHistogramsRecordRemoteOperations`, written in the coverage sweep,
 asserted that a remote read under a 2 ms delay per hop took at least 4 ms — a
-request and a response. It passed for weeks of runs and failed once, reading
-2 ms. The fake network delays a call's request and returns its response at
+request and a response. It passed in every run in the session it was written,
+then failed once in a full gate, reading 2 ms. The fake network delays a call's request and returns its response at
 once, so the true lower bound is 2 ms; the test had passed only because its
 waiting loop steps the fake clock and inflated every measurement it took. The
 bound is 2 ms now, ten clean repetitions, and its mutation entry is still
