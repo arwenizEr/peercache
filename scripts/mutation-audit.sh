@@ -25,8 +25,8 @@ cd "$(dirname "$0")/.." || exit 1
 # lists. A bad edit that drops the `mutate` leaves the arguments behind as a
 # command of their own: bash runs it, fails with "not found" on a stderr nobody
 # reads, and carries on. The entry then sits in this file looking audited while
-# never running. That happened to M6's acceptance criterion and was not noticed
-# until M7.
+# never running. That happened to the drain acceptance criterion and was not
+# noticed for weeks.
 #
 # Neither `set -e` nor a command_not_found_handle catches it. The failure is one
 # of a list of top-level commands whose exit statuses this script deliberately
@@ -100,7 +100,7 @@ def logical_lines(text):
 #
 # It matched only names beginning with Test until the first Fuzz entry was
 # written, at which point an orphaned fuzz entry would have been exactly as
-# invisible as the orphaned M6 entry this guard was built for. Adding the
+# invisible as the orphaned drain entry this guard was built for. Adding the
 # alternation looked like the fix and was not: a -run argument is a regexp, the
 # new entries are written anchored as '^FuzzCodecRoundTrip$', and a string
 # starting with a caret begins with neither Test nor Fuzz. The widened guard was
@@ -112,7 +112,7 @@ def logical_lines(text):
 # is why it is verified by orphaning a real entry each time it changes rather
 # than by reading it.
 #
-# It was [A-Za-z0-9_|] until M8, which is every character a name or an
+# It was once [A-Za-z0-9_|], which is every character a name or an
 # alternation needs and none of the anchors. An entry passing
 # 'TestSomethingSpecific$' -- an anchor, to select one test where another name
 # extends it -- therefore did not match, so this check could not see the entry
@@ -266,7 +266,7 @@ mutate "TTL deadline overflow reintroduced" \
   'expiresAt = s.clk.Now().Add(ttl).UnixNano()' \
   'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
 
-# These two moved in M4, when the L1 tier began comparing (epoch, version)
+# These two moved when the L1 tier began comparing (epoch, version)
 # stamps rather than bare versions. The audit reported them as SKIP rather
 # than passing them silently, which is the whole reason SKIP is a failure: a
 # mutation whose pattern no longer matches verifies nothing, and a refactor
@@ -567,7 +567,7 @@ mutate "the gossip event goroutine is never released" \
   '_ = g.consumeDone' \
   'TestCloseLeavesNoGoroutines' ./membership/
 
-# The two below are wiring mutations rather than logic mutations. Every M3
+# The two below are wiring mutations rather than logic mutations. Every ownership
 # invariant above holds inside internal/ownership whether or not the library
 # ever calls it; these check that peercache.New connects the guard to the
 # membership authority and to activation. A seam nobody tests is a seam that
@@ -584,9 +584,9 @@ mutate "the guard never learns the membership" \
   '_ = resolved.Membership' \
   'TestJoiningNodeDefersNewlyAcquiredGroups' .
 
-# ---------------------------------------------------------------- M4
+# ---------------------------------------------------------------- remote
 
-# Retargeted in M8. This guarded bounded.go through
+# Retargeted once already. This guarded bounded.go through
 # TestALengthPrefixCannotBuyAnAllocation until the frame validator landed in
 # front of the decoders, at which point that test's inputs were refused before
 # any decoder saw them and the entry went VACUOUS -- the audit said so on its
@@ -717,7 +717,7 @@ mutate "enqueueing an invalidation blocks when the queue is full" \
 	}' \
   '	iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}' \
   'TestInvalidationBacklogIsDroppedNotQueued' .
-# ---------------------------------------------------------------- M5
+# ---------------------------------------------------------------- replication
 
 mutate "an older replica copy overwrites a newer one" \
   internal/replication/replica.go \
@@ -864,7 +864,7 @@ mutate "catch-up does not reconcile what it pulled" \
   'defer c.promoter.reconcile()' \
   '' \
   'TestARestartedNodeRecoversItsColdReplicas' .
-# ---------------------------------------------------------------- M6
+# ---------------------------------------------------------------- lifecycle
 
 mutate "readiness ignores catch-up" \
   ready.go \
@@ -974,18 +974,18 @@ mutate "unchanged keys are never counted" \
   '' \
   'TestNoChangeMeansNoMoves' ./internal/rebalance/
 
-# --- M6 lifecycle: the entry that was truncated -------------------------------
+# --- lifecycle: the entry that was truncated ----------------------------------
 #
 # What stood here was an orphaned argument list with no `mutate` in front of it,
 # left by a bad edit. Under `set -u` without `set -e` that line is a command
 # named TestRollingUpgradeLosesNoRequests, which fails with "not found" on
-# stderr the run discards, and the script carries on. So M6's acceptance
+# stderr the run discards, and the script carries on. So the drain acceptance
 # criterion sat in this file looking audited and was not.
 #
 # Reconstructing it found that the criterion could not have caught either
 # mutation anyway: it runs at replication factor 2 with synchronous replication,
 # so the replicas hold every key and deleting the handoff costs it nothing. The
-# two tests below were written for M7 to close that, at replication factor 1
+# two tests below were written to close that, at replication factor 1
 # where the handoff is the only copy.
 mutate "drain hands off nothing" \
   drain.go \
@@ -1021,7 +1021,7 @@ mutate "drain transfers before announcing departure" \
 	}' \
   'TestDrainAnnouncesDepartureBeforeTransferring' .
 
-# --- M7 observability ---------------------------------------------------------
+# --- observability ------------------------------------------------------------
 #
 # A metric that reports the wrong number is worse than no metric: it is an
 # alerting rule that does not fire and a dashboard that says the system is fine.
@@ -1086,7 +1086,7 @@ mutate "a stats field is exported under the wrong name" \
   'TestEveryStatsFieldIsExported' ./internal/metrics/
 
 
-# --- M8 -------------------------------------------------------------------
+# --- failure guarantees ----------------------------------------------------
 
 # The frame validator is the whole defence against a declared length buying an
 # allocation. Removing the call restores the defect decision 0019 describes: a
@@ -1109,7 +1109,7 @@ mutate "the validator's nesting bound is effectively unbounded" \
   'TestValidateRejectsUnboundedNesting' ./internal/wire/
 
 # Hand-off before eviction is decision 0020. Dropping the orphans instead of
-# queueing them is precisely the pre-M8 behaviour, and it loses keys whenever a
+# queueing them is precisely the old eviction behaviour, and it loses keys whenever a
 # partition heals -- which is what the test constructs.
 mutate "a moved replica is dropped instead of handed off" \
   promote.go \
@@ -1195,7 +1195,7 @@ mutate "the nightly soak timeout fits one soak test, not two" \
 
 # --- Question 40: ReplicasCurrent, and the CatchUp error it exposed ---
 
-# The bug from M5: the per-peer error is computed and discarded, so CatchUp
+# The original bug: the per-peer error is computed and discarded, so CatchUp
 # returns nil after reaching nobody.
 mutate "CatchUp drops the errors of the peers it could not reach" \
   catchup.go \
@@ -1220,7 +1220,7 @@ mutate "a failed catch-up still marks replicas current" \
 		c.readiness.markCurrent(epoch)' \
   'TestCatchUpReportsAPeerItCouldNotReach$' .
 
-# --- M9, part one: the memory budget (decision 0022) ---
+# --- resource pressure, part one: the memory budget (decision 0022) ---
 
 # The version floor is what keeps a shed-then-rewritten key above a replica's
 # copy without depending on the removal message arriving.
@@ -1288,7 +1288,7 @@ mutate "replica arrivals never check the budget" \
   '	if conflict {' \
   'TestAReplicaOnlyNodeStaysWithinItsBudget$' .
 
-# --- M9, part two: join probation (decision 0023) ---
+# --- resource pressure, part two: join probation (decision 0023) ---
 
 mutate "probation hides nobody" \
   probation.go \
@@ -1311,7 +1311,7 @@ mutate "a cold start ranks nobody" \
   '	if false {' \
   'TestColdStartRanksEveryNode$' .
 
-# --- M9, part three: a slow node ---
+# --- resource pressure, part three: a slow node ---
 
 # Asynchronous writes that waited on their replicas would make every write
 # whose replica is a throttled node as slow as that node.
@@ -1421,7 +1421,7 @@ mutate "seeds are never joined"   peercache.go   '	if len(resolved.Seeds) > 0 {
 
 mutate "seeds without a membership are accepted"   internal/core/options.go   '	if len(o.Seeds) > 0 && o.Membership == nil {'   '	if false {'   'TestSeedsWithoutMembershipAreRejected$' .
 
-# --- M8, part two: the fuzz targets and the checks on the build files ---
+# --- failure guarantees, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,
 # and the result recorded in docs/verification.md. They are entered so that the
@@ -1474,7 +1474,7 @@ mutate "a root file disappears from the repository map" \
   'handoff_go        Moves replicas on a membership change rather' \
   'TestReadmeListsEveryRootFile' .
 
-# --- M10: typed namespaces (decision 0025) ---
+# --- typed namespaces (decision 0025) ---
 
 mutate "one name may hold two types" \
   namespace.go \
@@ -1530,11 +1530,11 @@ mutate "a two-digit milestone row stops being counted" \
 
 mutate "a deletion no longer raises the version floor" \
   internal/store/store.go \
-  '		// must start above it, as after a shed. Open question 42.
+  '		// docs/decisions/open.md question 42.
 		if e.version > sh.floor {
 			sh.floor = e.version
 		}' \
-  '		// must start above it, as after a shed. Open question 42.' \
+  '		// docs/decisions/open.md question 42.' \
   'TestALostDeleteDoesNotResurrectAnOlderValue$' .
 
 # --- Typed group functions ---

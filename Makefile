@@ -10,20 +10,18 @@ TIMEOUT ?= 300s
 # twice under the race detector in one binary.
 #
 # The root package takes ~215s for one race pass on Machine A, so `-count=2`
-# needed 439s when this was written and measures 527s now that M8's tests are in
-# it. The 300s this file used to share with the non-race gate was not being met:
+# needed 439s when this was written and measured 527s later. The 300s this file used to share with the non-race gate was not being met:
 # `make test-race` failed with `panic: test timed out after 5m0s`, mid-way
 # through the second pass, with a test running normally at the moment the alarm
-# fired. M8 measured it; the gate had been unpassable on this machine for some
-# time before that, since a single pass has been over 200s since at least the
-# start of that milestone.
+# fired; the gate had been unpassable on this machine for some time before
+# anyone measured it.
 #
 # Raising it is not weakening the gate. A timeout here exists to turn a deadlock
 # into a failure rather than a hung CI job, and 900s does that just as well as
 # 300s did — what 300s had additionally become was an undeclared performance
 # budget that the suite outgrew silently.
 #
-# The margin is 1.7x and was 2.0x one milestone ago. Re-measure before assuming
+# The margin is 1.7x and was 2.0x before the simulation tests. Re-measure before assuming
 # it, rather than after the gate stops passing; that is the mistake 300s was.
 #
 # Where the time goes is measured in docs/benchmarks.md, "What the test suite
@@ -41,8 +39,8 @@ ci: vet lint test test-race latency examples bench
 
 ## examples runs every example to completion. Compiling them is not enough:
 ## each one asserts the behaviour it demonstrates, and an example that is only
-## compiled is documentation that can quietly start lying. M1 broke the M0
-## example and nothing noticed.
+## compiled is documentation that can quietly start lying. A change once broke
+## the lifecycle example and nothing noticed.
 examples:
 	$(GO) run ./examples/lifecycle
 	$(GO) run ./examples/namespace
@@ -63,10 +61,10 @@ test:
 test-race:
 	$(GO) test $(PKGS) -race -count=2 -timeout $(RACE_TIMEOUT)
 
-## latency gates the M1 p99 acceptance criterion, alone.
+## latency gates the local p99 acceptance criterion, alone.
 ##
 ## It cannot share a machine with the rest of the suite. `go test ./...` runs
-## packages concurrently, and from M4 that means measuring a sub-microsecond
+## packages concurrently, and that means measuring a sub-microsecond
 ## budget while gRPC servers and gossip clusters compete for the same cores —
 ## which reports the machine's load, not the cache's latency. Measured idle it
 ## is 478ns; measured alongside everything else, 1.87us.
@@ -88,7 +86,7 @@ bench:
 	$(GO) test $(PKGS) -run '^$$' -bench . -benchmem -benchtime $(BENCHTIME) -count $(BENCHCOUNT)
 
 ## fuzz exercises the frame parser, which is the only code here that interprets
-## bytes it did not write. From M4 those bytes arrive over the network, and
+## bytes it did not write. Those bytes arrive over the network, and
 ## "no panic in library paths" needs evidence stronger than a handful of
 ## hand-written corrupt inputs.
 ##

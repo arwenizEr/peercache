@@ -22,7 +22,7 @@ option go_package = "github.com/arwenizEr/peercache/proto;peercachev1";
 
 // Peer is the single service every pod both serves and dials.
 //
-// Every method is unary. Streaming is deliberately absent: M6's resumable
+// Every method is unary. Streaming is deliberately absent: a resumable
 // partition transfer is the first thing that will want it, and adding a
 // streaming method later does not reshape the unary ones. See
 // docs/decisions/open.md question 1.
@@ -209,7 +209,7 @@ message ReplicateRequest {
   Stamp stamp = 5;
   // from is the sending node's ID. Two different senders writing one key under
   // one epoch is a split brain, and the replica is the only party that can see
-  // both. See docs/design.md section 4 (M5).
+  // both. See docs/design.md section 4.
   string from = 6;
   // deleted marks a removal rather than a write. A deletion has to replicate:
   // a replica that missed it would resurrect the key on promotion.

@@ -52,8 +52,9 @@ jobs:
         run: go test ./... -timeout 300s
 
       # Each example asserts the behaviour it demonstrates and exits non-zero
-      # if it is wrong. Compiling them is not enough: M1 made the M0 example's
-      # assertions false and nothing noticed, because nothing ran them.
+      # if it is wrong. Compiling them is not enough: a change once made the
+      # lifecycle example's assertions false and nothing noticed, because
+      # nothing ran them.
       - name: latency gate
         # Alone, and without the race detector. A sub-microsecond budget
         # measured while other packages' gRPC servers and gossip clusters
@@ -67,8 +68,8 @@ jobs:
       # stands up its own gRPC cluster, and sharing a process with the latency
       # budgets pushed the remote p99 over its limit -- the same contention the
       # step above exists to avoid. It measures the async replication window
-      # docs/design.md section 6 asks for a number for, and until M8 it ran in no
-      # configuration at all: it was gated behind PEERCACHE_LATENCY_GATE and
+      # docs/design.md section 6 asks for a number for, and for a long time it
+      # ran in no configuration at all: it was gated behind PEERCACHE_LATENCY_GATE and
       # then never named by any step that sets it.
       - name: async replication loss window
         env:
@@ -111,11 +112,11 @@ jobs:
       # The timeout is 900s, not the 300s the other steps use, and the two are
       # different for a reason worth stating. `-timeout` applies per test binary,
       # so this step has to fit *two* race passes of the root package inside it.
-      # One pass measures ~215s on Machine A; 300s could not hold two, and M8
-      # confirmed it by running this exact command and getting `panic: test timed
+      # One pass measures ~215s on Machine A; 300s could not hold two, which
+      # running this exact command confirmed, and getting `panic: test timed
       # out after 5m0s` with a test running normally at the alarm. The corrected
       # gate measures 527s end-to-end, so the margin here is 1.7x — it was 2.0x
-      # before M8's tests landed. Re-measure it rather than inherit it.
+      # before the simulation tests landed. Re-measure it rather than inherit it.
       #
       # A timeout here is a deadlock detector, not a performance budget. 900s
       # still turns a hang into a failure rather than a job that runs until the

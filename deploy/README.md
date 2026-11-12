@@ -94,7 +94,7 @@ addresses to `Join`.
 They are different sockets. A node advertises its *data* address through gossip
 metadata; assuming the two are the same makes every peer dial memberlist
 expecting gRPC, which fails with `error reading server preface: EOF`. This is
-not hypothetical — it is how M4's first real-network run failed.
+not hypothetical — it is how the first real-network run failed.
 
 ### 5. The readiness probe and PreStop hook are not optional
 
