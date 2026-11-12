@@ -193,6 +193,9 @@ func New(opts ...Option) (Cache, error) {
 			ActivationDelay: resolved.ActivationDelay,
 		})
 		if err != nil {
+			if probation != nil {
+				probation.Close()
+			}
 			return nil, err
 		}
 		guard = g
@@ -212,6 +215,9 @@ func New(opts ...Option) (Cache, error) {
 	if err != nil {
 		if guard != nil {
 			guard.Close()
+		}
+		if probation != nil {
+			probation.Close()
 		}
 		return nil, err
 	}
@@ -287,6 +293,14 @@ func New(opts ...Option) (Cache, error) {
 				c.invalidator.Close()
 				c.replicator.Close()
 				c.handoff.Close()
+				// And what those did not cover: probation's relay
+				// goroutine and timer, the sweep ticker, and the group
+				// runtime. TestAFailedNewLeavesNothingRunning found them.
+				if probation != nil {
+					probation.Close()
+				}
+				c.ticker.Stop()
+				_ = groups.Close(context.Background())
 				return nil, fmt.Errorf("peercache: serving peers: %w", err)
 			}
 		}
@@ -742,6 +756,14 @@ func (c *cache) Close(ctx context.Context) error {
 		}
 
 		for _, ns := range namespaces {
+			// The L1 tier as well as the store: its cache library runs a
+			// maintenance goroutine, and leaving it open leaked one per
+			// namespace per closed cache.
+			if ns.l1 != nil {
+				if err := ns.l1.Close(); err != nil {
+					closeErr = errors.Join(closeErr, fmt.Errorf("closing namespace %q's L1 tier: %w", ns.name, err))
+				}
+			}
 			if ns.store == nil {
 				continue
 			}

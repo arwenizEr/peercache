@@ -1623,6 +1623,14 @@ mutate "a timer naming no function keeps its entry"   internal/actor/record.go  
 			delete(r.timers, gt.name)
 		}'   'TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup$' ./internal/actor/
 
+# Leaks found by the code review.
+mutate "Close leaves each L1 tier's goroutine running"   peercache.go   '			if ns.l1 != nil {
+				if err := ns.l1.Close(); err != nil {'   '			if false {
+				if err := ns.l1.Close(); err != nil {'   'TestCloseReleasesTheL1Tier$' .
+
+mutate "a failed New leaves the sweep ticker armed"   peercache.go   '				c.ticker.Stop()
+				_ = groups.Close(context.Background())'   '				_ = groups.Close(context.Background())'   'TestAFailedNewLeavesNothingRunning$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

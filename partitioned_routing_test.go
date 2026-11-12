@@ -2,11 +2,18 @@ package peercache_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/peercache/peercache"
+	"github.com/peercache/peercache/internal/clock"
+	"github.com/peercache/peercache/internal/core"
+	"github.com/peercache/peercache/internal/testkit"
 )
 
 // partitionedKey finds, in a three-node fabric, a key whose group is owned by
@@ -287,4 +294,68 @@ func TestALoadDoesNotOverwriteAWriteThatRacedIt(t *testing.T) {
 	if string(loaded) != "v2-written-after" {
 		t.Fatalf("GetOrLoad returned %q while the key held the newer value", loaded)
 	}
+}
+
+// TestCloseReleasesTheL1Tier: found by code review. Close closed each
+// namespace's owned store and not its L1 tier, whose cache library runs a
+// maintenance goroutine — one leaked per namespace per closed cache. Only a
+// cache with membership has an L1, so this builds one by hand.
+func TestCloseReleasesTheL1Tier(t *testing.T) {
+	before := goleak.IgnoreCurrent()
+
+	clk := clock.NewFake(clock.Epoch)
+	net := testkit.NewNetwork(clk, 1)
+	info := core.Node{ID: "n0", Addr: "n0:7946"}
+	m := testkit.NewMembership(info, net, clk, testkit.NewRegistry(), testkit.MembershipConfig{})
+	c, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(clk),
+		peercache.WithMembership(m), peercache.WithTransport(net.Transport(info)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		c.Namespace(fmt.Sprintf("l1-%d", i)) // each with an L1 tier
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	_ = net.Close()
+
+	goleak.VerifyNone(t, before)
+}
+
+// refusingTransport fails to serve, the way a transport whose port is taken
+// does, and never reports ready.
+type refusingTransport struct{ core.Transport }
+
+func (refusingTransport) Serve(net.Listener, core.Handler) error {
+	return errors.New("address already in use")
+}
+func (refusingTransport) Ready() <-chan struct{} { return make(chan struct{}) }
+
+// TestAFailedNewLeavesNothingRunning: found by code review. New's failure
+// paths closed the background workers but not join probation's relay
+// goroutine or the sweep ticker, and the transport-refused path left the
+// group runtime open. A process that retries New on a busy port leaked on
+// every attempt.
+func TestAFailedNewLeavesNothingRunning(t *testing.T) {
+	before := goleak.IgnoreCurrent()
+
+	clk := clock.NewFake(clock.Epoch)
+	network := testkit.NewNetwork(clk, 1)
+	info := core.Node{ID: "n0", Addr: "n0:7946"}
+	m := testkit.NewMembership(info, network, clk, testkit.NewRegistry(), testkit.MembershipConfig{})
+	_, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(clk),
+		peercache.WithMembership(m), peercache.WithJoinProbation(time.Minute),
+		peercache.WithTransport(refusingTransport{network.Transport(info)}))
+	if err == nil {
+		t.Fatal("New succeeded with a transport that cannot serve")
+	}
+	if pending := clk.Pending(); pending != 0 {
+		t.Errorf("a failed New left %d timer(s) armed on the clock", pending)
+	}
+	m.Close()
+	_ = network.Close()
+
+	goleak.VerifyNone(t, before)
 }
