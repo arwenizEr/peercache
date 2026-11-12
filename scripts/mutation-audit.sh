@@ -1212,6 +1212,74 @@ mutate "a failed catch-up still marks replicas current" \
 		c.readiness.markCurrent(epoch)' \
   'TestCatchUpReportsAPeerItCouldNotReach$' .
 
+# --- M9, part one: the memory budget (decision 0022) ---
+
+# The version floor is what keeps a shed-then-rewritten key above a replica's
+# copy without depending on the removal message arriving.
+mutate "shedding no longer raises the version floor" \
+  internal/store/store.go \
+  '			if e.version > sh.floor {
+				sh.floor = e.version
+			}' \
+  '' \
+  'TestARewriteAfterShedIsVersionedAboveWhatWasShed$' ./internal/store/
+
+# The removal sent to a shed key's replicas, which frees their memory.
+mutate "a shed owned key sends its replicas no removal" \
+  pressure.go \
+  '	if n.opts.ReplicationFactor < 2 {
+		return
+	}
+	targets' \
+  '	if true {
+		return
+	}
+	targets' \
+  'TestAShedKeyIsNeverServedAtAnOlderValue$' .
+
+# Replicas before owned data.
+mutate "owned data is shed while replicas could have been" \
+  pressure.go \
+  '	// 2. Replicas.
+	if excess > 0 {' \
+  '	// 2. Replicas.
+	if false {' \
+  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' .
+
+# L1 before everything.
+mutate "the L1 tier is never shed" \
+  pressure.go \
+  '		entries := ns.l1.Len()
+		excess -= ns.l1.Shed()' \
+  '		entries := 0
+		_ = ns.l1.Len()' \
+  'TestSheddingTakesL1AndReplicasBeforeOwnedData$' .
+
+mutate "catch-up ignores the memory budget" \
+  catchup.go \
+  '		if c.pressure.over() {' \
+  '		if false {' \
+  'TestCatchUpStopsAtTheMemoryBudget$' .
+
+mutate "local writes never check the budget" \
+  pressure.go \
+  '	p.check()
+}
+
+// check sheds' \
+  '}
+
+// check sheds' \
+  'TestASingleNodeStaysWithinItsMemoryBudget$' .
+
+# The inflow a failover produces is copies from peers, not local writes.
+mutate "replica arrivals never check the budget" \
+  handler.go \
+  '	h.cache.pressure.noteWrite(len(in.Value))
+	if conflict {' \
+  '	if conflict {' \
+  'TestAReplicaOnlyNodeStaysWithinItsBudget$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

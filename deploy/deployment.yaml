@@ -150,7 +150,9 @@ spec:
                 port: http
 
           # Size for the steady state plus the replicas inherited when a peer
-          # fails. See deploy/README.md.
+          # fails, and set the application's WithMemoryBudget to about three
+          # quarters of the memory limit so the node sheds before it is
+          # killed. See deploy/README.md.
           #
           # resources:
           #   requests: {memory: 2Gi, cpu: 500m}

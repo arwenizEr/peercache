@@ -219,6 +219,19 @@ type Stats struct {
 	// smaller than the factor, and every write to those namespaces is failing.
 	UnderReplicatedRefusals int64
 
+	// MemoryBudget is the configured budget in bytes, zero for none, and
+	// MemoryUsed the accounted size of the owned, replica and L1 tiers. The
+	// accounting is reported with or without a budget, so that one can be
+	// sized from it.
+	MemoryBudget int64
+	MemoryUsed   int64
+	// ShedL1, ShedReplicas and ShedOwned count entries dropped to stay within
+	// the budget, by tier. ShedOwned is data loss, by design and on purpose;
+	// a sustained rate means the budget is smaller than this node's share.
+	ShedL1       int64
+	ShedReplicas int64
+	ShedOwned    int64
+
 	// StateEscapes counts uses of a GroupState outside the turn that issued
 	// it. Any non-zero value is an application bug.
 	//

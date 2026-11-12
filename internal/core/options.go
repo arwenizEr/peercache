@@ -67,6 +67,9 @@ type Options struct {
 	// MaxActiveGroups caps concurrently activated groups. Zero takes the
 	// default; a negative value means unlimited.
 	MaxActiveGroups int
+	// MemoryBudget is the number of bytes this node's owned, replica and L1
+	// tiers may hold before it sheds. Zero means no budget.
+	MemoryBudget int64
 	// OnEvent receives lifecycle events. It runs on the emitting group's
 	// goroutine and must not block.
 	OnEvent func(Event)
@@ -99,6 +102,9 @@ func (o *Options) Validate() error {
 	}
 	if o.Logger == nil {
 		return fmt.Errorf("peercache: Logger must not be nil: %w", ErrInvalidOption)
+	}
+	if o.MemoryBudget < 0 {
+		return fmt.Errorf("peercache: memory budget %d must not be negative: %w", o.MemoryBudget, ErrInvalidOption)
 	}
 	return nil
 }

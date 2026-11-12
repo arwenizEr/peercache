@@ -141,6 +141,14 @@ cache; `Stats()` reports all three. Measure, then set limits with headroom for
 the replicas a node inherits when a peer fails — a pod sized for its steady
 state will be OOM-killed by its first failover.
 
+Then set `WithMemoryBudget` below that limit, at about three quarters of it, and
+`GOMEMLIMIT` between the two. The budget is what makes a failover cascade stop:
+a survivor over its budget sheds L1, then replicas, then owned data, instead of
+being killed and passing its share to the next. `peercache_memory_used_bytes`
+against `peercache_memory_budget_bytes` is the margin; a rising
+`peercache_shed_owned_total` means the budget, or the cluster, is too small for
+the working set.
+
 **A PodDisruptionBudget.** You want one. `maxUnavailable: 1` is right for
 replication factor 2, and 2 for factor 3, but the correct value depends on
 whether you can tolerate the loss window, so it is a decision rather than a

@@ -92,6 +92,12 @@ type shard struct {
 	// value plus [EntryOverhead]. Written only under mu, read without it by
 	// [Store.Bytes], hence atomic.
 	bytes atomic.Int64
+
+	// floor is the highest version this shard has shed, guarded by mu. A
+	// first write to an absent key starts above it, so a key shed and then
+	// rewritten is never versioned at or below a copy a replica may still
+	// hold. See [Store.Shed].
+	floor uint64
 }
 
 // size is what one entry is charged.
@@ -283,6 +289,9 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	sh.mu.Lock()
 	old, had := sh.entries[key]
 	version := old.version + 1
+	if !had && version <= sh.floor {
+		version = sh.floor + 1
+	}
 	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
 	delta := size(key, stored)
 	if had {
@@ -518,6 +527,19 @@ func (s *Store) Bytes() int64 {
 // removed from while expecting the entry to be present.
 //
 // Overshoot is at most one entry: Shed checks the target after each removal.
+//
+// # Why it raises a version floor
+//
+// A replica holds the owner's copy at the owner's version. If this store shed a
+// key at version 5 and then started its rewrite at version 1, as an ordinary
+// absent key does (open question 18), the replica would refuse the rewrite and a
+// failover would promote the shed value over the one last written. The caller
+// replicates a removal through visit, which would prevent that if it arrived —
+// but correctness must not depend on a message arriving (CLAUDE.md decision 6).
+// So each shard remembers the highest version it shed, and a first write to an
+// absent key in that shard starts above it. Delete and Sweep leave the floor
+// alone: a deletion replicates its own tombstone, and an expiry happens on every
+// holder alike.
 func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64 {
 	if target <= 0 {
 		return 0
@@ -537,6 +559,9 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 				break
 			}
 			delete(sh.entries, key)
+			if e.version > sh.floor {
+				sh.floor = e.version
+			}
 			n := size(key, e.val)
 			sh.bytes.Add(-n)
 			freed += n

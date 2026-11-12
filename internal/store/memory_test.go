@@ -206,3 +206,53 @@ func TestShedIsSafeAlongsideWrites(t *testing.T) {
 		t.Fatalf("after concurrent writes and sheds: Bytes = %d, contents add up to %d", got, want)
 	}
 }
+
+// TestARewriteAfterShedIsVersionedAboveWhatWasShed is what keeps a shed key
+// from being resurrected at an older value, independently of any message
+// arriving.
+//
+// A replica holds the owner's copy at the version the owner issued. If the
+// owner sheds the key and is asked to write it again, an ordinary restart at
+// version 1 would lose to the replica's copy — the rewrite would be refused
+// there — and a failover would promote the older value. The owner's removal
+// message to the replica would fix that if it arrived, but CLAUDE.md decision 6
+// says correctness must never depend on a message arriving. So the store
+// remembers, per shard, the highest version it ever shed, and a rewrite starts
+// above it.
+//
+// Delete and Sweep do not raise the floor: a deletion replicates its own
+// tombstone, and an expiry happens on every holder on the same schedule, so
+// question 18's restart is harmless for both and stays as it was.
+func TestARewriteAfterShedIsVersionedAboveWhatWasShed(t *testing.T) {
+	s, _ := newStore(t, func(o *store.Options) { o.Shards = 1 })
+	var v uint64
+	for i := 0; i < 5; i++ {
+		v = s.Set("k", []byte("old"), 0)
+	}
+	if v != 5 {
+		t.Fatalf("five writes produced version %d", v)
+	}
+	s.Shed(1<<40, func(string, uint64) {})
+	if s.Exists("k") {
+		t.Fatal("Shed of everything left k")
+	}
+	if got := s.Set("k", []byte("new"), 0); got <= 5 {
+		t.Fatalf("a rewrite after shedding version 5 got version %d; a replica still "+
+			"holding version 5 would refuse it", got)
+	}
+	// The floor is per shard, so it covers every key that shard ever shed,
+	// including ones never rewritten until later.
+	if got := s.Set("other", []byte("x"), 0); got <= 5 {
+		t.Fatalf("a first write to another key in a shard that shed version 5 got %d", got)
+	}
+
+	// Delete does not raise it: question 18 stands for deletions.
+	d, _ := newStore(t, func(o *store.Options) { o.Shards = 1 })
+	for i := 0; i < 5; i++ {
+		d.Set("k", []byte("old"), 0)
+	}
+	d.Delete("k")
+	if got := d.Set("k", []byte("new"), 0); got != 1 {
+		t.Fatalf("a rewrite after Delete got version %d, want 1: only shedding raises the floor", got)
+	}
+}

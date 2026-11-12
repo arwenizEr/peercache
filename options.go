@@ -133,6 +133,32 @@ func WithGroupIdleTimeout(d time.Duration) Option {
 	return func(o *core.Options) { o.GroupIdleTimeout = d }
 }
 
+// WithMemoryBudget caps the bytes this node's data tiers may hold, shedding
+// entries when it is exceeded. Zero, the default, means no cap.
+//
+// It counts the owned stores, the replica store and the L1 tier, at their keys'
+// and values' sizes plus a per-entry overhead estimated on the high side. It
+// does not count activated groups, which [WithMaxActiveGroups] bounds, or
+// buffers in flight. Set it below the container's memory limit with room for
+// those and for the Go runtime: a budget near the limit is an OOM kill with
+// extra steps.
+//
+// Over budget, the node sheds to nine tenths of it, cheapest tier first: the L1
+// tier whole, then replicas, then owned data. Shedding a replica lowers that
+// key's replication factor; shedding owned data loses the key, which a loader
+// rebuilds. Neither is silent: Stats().ShedL1, ShedReplicas and ShedOwned count
+// them, and peercache_memory_used_bytes shows how close the node runs.
+//
+// The case it exists for is a failover cascade. A node dies, its share moves to
+// the survivors, and a survivor sized for its steady state is now over its
+// container limit. Without a budget it is killed, its share moves on, and the
+// next one follows. With one, it sheds and keeps serving.
+//
+// A negative value is rejected with [ErrInvalidOption].
+func WithMemoryBudget(bytes int64) Option {
+	return func(o *core.Options) { o.MemoryBudget = bytes }
+}
+
 // WithMaxActiveGroups caps concurrently activated groups, evicting the
 // least-recently-activated when the cap is exceeded. The default is 20,000; a
 // negative value means unlimited.

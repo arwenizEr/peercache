@@ -169,6 +169,13 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 	after := ""
 
 	for {
+		// Checked before every page, not once. A node over budget would
+		// only shed what it pulled, so it stops and reports the catch-up
+		// as incomplete rather than pulling and shedding in a loop.
+		if c.pressure.over() {
+			// run names the namespace and peer when it collects this.
+			return fmt.Errorf("stopped after key %q: %w", after, ErrOverMemoryBudget)
+		}
 		var resp wire.CatchUpResponse
 		err := c.route.invoke(ctx, peer, transport.MethodCatchUp, &wire.CatchUpRequest{
 			Namespace:         ns.name,

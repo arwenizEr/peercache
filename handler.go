@@ -400,6 +400,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
 			h.cache.keysAdopted.Add(1)
 		}
+		h.cache.pressure.noteWrite(len(in.Value))
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 
@@ -409,6 +410,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		TTLNanos: in.TTLNanos,
 		From:     in.From,
 	})
+	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {
 		h.cache.splitBrain.Add(1)
 		h.cache.opts.Logger.Warn("conflicting replicated write",

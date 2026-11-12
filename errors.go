@@ -125,4 +125,15 @@ var (
 	// cluster, or because the cluster is smaller than the factor. See
 	// docs/decisions/open.md question 37.
 	ErrUnderReplicated = core.ErrUnderReplicated
+
+	// ErrOverMemoryBudget means [Cache.CatchUp] stopped pulling because this
+	// node is over the budget set by [WithMemoryBudget].
+	//
+	// Pulling on would only feed the shedding that the budget is already
+	// doing, so catch-up stops instead and says so. The replication factor is
+	// then below what the namespace asks for on this node, and
+	// Ready().ReplicasCurrent stays false — which is the truth. Retry once
+	// memory is available; a budget that is always exceeded is a budget
+	// smaller than this node's share of the working set.
+	ErrOverMemoryBudget = core.ErrOverMemoryBudget
 )

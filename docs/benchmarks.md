@@ -834,6 +834,29 @@ would be nearly free and a lock-based sketch would not.
 
 ---
 
+## M9 — memory budget
+
+Measured on Machine A, `-count 5`, medians. "Before" is `38e3a94`, the last commit
+before M9, built in a separate worktree on the same machine in the same session.
+
+### internal/store — what byte accounting costs the write path
+
+| Benchmark | before (ns/op) | after (ns/op) | runs, after |
+|---|---:|---:|---|
+| `BenchmarkSet` | 126.5 | 124.8 | 124.4, 124.8, 125.3, 127.8, 131.0 |
+| `BenchmarkSetParallel` | 21.6 | 20.9 | 20.72, 20.87, 20.89, 21.19, 21.84 |
+| `BenchmarkGetHot` | — | 25.6 | unchanged code path; recorded as a reference |
+
+**No measurable cost.** Set now reads the resident entry it was already
+replacing, adds one atomic to the shard's byte counter, and compares against the
+shard's shed floor — all inside a lock it already held. The difference is inside
+run-to-run noise in both directions. `BenchmarkSet` reads 124.8 ns here against
+238.2 ns in the M1 table above; that table was recorded on an earlier toolchain
+and is not comparable, which is why "before" was re-measured rather than quoted.
+
+The read path is unchanged by design: shedding is sampled rather than LRU so
+that Get records nothing.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

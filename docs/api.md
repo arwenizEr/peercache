@@ -19,6 +19,7 @@ and output-checked by `go test`:
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
+| `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
@@ -59,7 +60,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter the earlier milestones built is exported: `MetricsHandler` serves
-40 series in the Prometheus text exposition format, and PeerCache imports no
+45 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -652,6 +653,50 @@ graceful shutdown and losing that node's entire share.
 
 ---
 
+### `WithMemoryBudget` — shedding instead of being OOM-killed
+
+```go
+cache, err := peercache.New(
+    peercache.WithNodeID(podName),
+    peercache.WithMemoryBudget(3 << 30), // under a 4 GiB container limit
+)
+```
+
+Caps the bytes the owned stores, the replica store and the L1 tier may hold:
+keys and values, plus a per-entry overhead estimated on the high side. Activated
+groups are not counted — `WithMaxActiveGroups` bounds those — and neither are
+the Go runtime or buffers in flight, so leave room for them below the container
+limit. Off by default.
+
+Over budget, the node sheds down to nine tenths of it, cheapest first:
+
+| Tier | What shedding costs | Counted in |
+|---|---|---|
+| L1, whole | round trips for keys owned elsewhere; never data | `ShedL1` |
+| replicas | that key's replication factor, until it is next written or caught up | `ShedReplicas` |
+| owned data | the key, which a loader rebuilds | `ShedOwned` |
+
+The budget is checked every `PressureCheckInterval` writes, on any write of
+64 KiB or more, and once a second, so the accounted size can run past it by
+about 64 entries between checks. `Stats().MemoryUsed` and
+`peercache_memory_used_bytes` report the accounted size with or without a
+budget, which is how to size one.
+
+**A shed key is never served at an older value.** Shedding an owned key in a
+replicated namespace sends its replicas the same removal a `Delete` sends, which
+frees their memory too. If that message is lost, the owned store's version floor
+still makes a later rewrite of the key outrank the replica's copy, so a failover
+cannot promote the value that was shed over the one written after it.
+
+`CatchUp` checks the budget before every page and stops with
+`ErrOverMemoryBudget` instead of pulling what it would only shed;
+`ReplicasCurrent` then stays false, which is the truth.
+
+The case it exists for is a failover cascade: a node dies, its share moves to
+the survivors, and a survivor sized for its steady state goes over its container
+limit, is killed, and passes its share on. With a budget it sheds and keeps
+serving.
+
 ## Membership, transport, clock
 
 ```go
@@ -754,13 +799,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 40 series come out of it.
+format with the content type a scraper expects, and 45 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 40 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 45 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
@@ -848,6 +893,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrDuplicateRegistration` | Name registered twice. | no |
 | `ErrInvalidOption` | Option outside its range. | no |
 | `ErrNodeUnreachable` | Transport could not deliver. | yes |
+| `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
 | `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |
 
 `ErrGroupOverloaded` is backpressure working as designed. Blocking indefinitely

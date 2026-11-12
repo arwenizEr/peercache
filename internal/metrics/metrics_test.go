@@ -84,6 +84,13 @@ func hasMetricFor(field string, exported map[string]bool) bool {
 		// says. This test caught the mismatch, which is what it is for.
 		"CatchUpRuns":     "peercache_catchup_runs_total",
 		"CatchUpFailures": "peercache_catchup_failures_total",
+		// Prometheus names carry their unit. The Go field does not need to,
+		// because its doc comment and type already say bytes.
+		"MemoryBudget": "peercache_memory_budget_bytes",
+		"MemoryUsed":   "peercache_memory_used_bytes",
+		// L1 sheds whole, so the count is of entries, and the name says so
+		// to keep it apart from the replica and owned counts, which are keys.
+		"ShedL1": "peercache_shed_l1_entries_total",
 	}
 	if alias, ok := aliases[field]; ok {
 		return exported[alias]

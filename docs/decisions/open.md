@@ -1337,3 +1337,36 @@ sharp edge to the codec somebody names deliberately.
 — a key derived from a byte slice, a field carrying a protocol identifier, an
 encrypted or compressed blob stored as a `string` rather than a `[]byte`. For
 those, name `msgpack` today; it is one option and it has no such rule.
+
+---
+
+## 42. A dropped asynchronous Delete can resurrect an older value — M9, open
+
+Found while designing M9's shedding, which has the same shape and is protected
+against it; ordinary deletion is not.
+
+Under asynchronous replication a `Delete` sends its replicas a tombstone through
+the bounded replication queue. If the queue is full the tombstone is dropped and
+counted (`ReplicationsDropped`). The owner has removed the key; the replica still
+holds it at, say, version 5. A later `Set` of the key on the owner starts again at
+version 1 (question 18), the replica refuses it as older, and if the owner then
+dies the replica is promoted holding the value that was deleted *and then
+overwritten*. The caller's last write is lost and an older one served in its
+place.
+
+It needs three things at once — a full queue, a rewrite of the deleted key, and
+a failover before the key is written again — so it is rare. It is also exactly
+what CLAUDE.md decision 6 rules out: correctness depending on a message arriving.
+
+**The fix is the mechanism M9 already built.** `store.Shed` raises a per-shard
+version floor so a rewrite outranks any copy a replica may hold. Raising the same
+floor in `store.Delete` would close this too. It was not done in M9 because it
+changes question 18's documented behaviour for deletions, and
+`TestARewriteAfterShedIsVersionedAboveWhatWasShed` currently pins that Delete
+does not raise it.
+
+**Picked for now:** recorded, not fixed.
+
+**What would force it:** any deployment running asynchronous replication with a
+non-zero `peercache_replications_dropped_total` and deletes followed by rewrites.
+

@@ -272,6 +272,7 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	version := n.store.Set(key, n.encode(val), ttl)
 	stamp := n.stamp(version)
+	n.cache.pressure.noteWrite(len(val))
 
 	if err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false); err != nil {
 		// Only synchronous replication can fail here: asynchronous

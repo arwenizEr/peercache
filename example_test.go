@@ -595,3 +595,32 @@ func ExampleWithRequireReplicationFactor() {
 	// still held locally: v
 	// without sync: true
 }
+
+// ExampleWithMemoryBudget shows a node shedding rather than growing without
+// bound: a megabyte written into a 64 KiB budget leaves the node near the
+// budget, with the shed counted.
+func ExampleWithMemoryBudget() {
+	const budget = 64 << 10
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithMemoryBudget(budget))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	ns := cache.Namespace("sessions")
+	for i := 0; i < 1000; i++ {
+		_ = ns.Set(context.Background(), fmt.Sprintf("user:%d", i), make([]byte, 1024), 0)
+	}
+
+	st := cache.Stats()
+	// The budget is checked every PressureCheckInterval writes, so the node
+	// can be up to that many entries past it between checks.
+	fmt.Println("near the budget:", st.MemoryUsed < budget+peercache.PressureCheckInterval*2048)
+	fmt.Println("owned keys shed:", st.ShedOwned > 0)
+	fmt.Println("keys still held:", st.OwnedKeys > 0)
+	// Output:
+	// near the budget: true
+	// owned keys shed: true
+	// keys still held: true
+}

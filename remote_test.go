@@ -47,6 +47,10 @@ type fabric struct {
 	mcfg testkit.MembershipConfig
 	// activationDelay is kept for the same reason.
 	activationDelay time.Duration
+	// cacheOptions are extra options applied to every cache, revived ones
+	// included, and nodeOptions to one node each.
+	cacheOptions []peercache.Option
+	nodeOptions  map[string][]peercache.Option
 }
 
 // hardKill removes a node the way an ungraceful termination does: no
@@ -94,13 +98,13 @@ func (f *fabric) revive(t *testing.T, id string) {
 		t.Fatalf("rejoining %s: %v", id, err)
 	}
 
-	c, err := peercache.New(
+	c, err := peercache.New(append([]peercache.Option{
 		peercache.WithNodeID(id),
 		peercache.WithClock(f.clk),
 		peercache.WithMembership(m),
 		peercache.WithTransport(f.net.Transport(info)),
 		peercache.WithActivationDelay(f.activationDelay),
-	)
+	}, append(append([]peercache.Option(nil), f.cacheOptions...), f.nodeOptions[id]...)...)...)
 	if err != nil {
 		t.Fatalf("reviving %s: %v", id, err)
 	}
@@ -235,6 +239,24 @@ type fabricOption func(*fabricHooks)
 type fabricHooks struct {
 	wrapTransport  func(id string, tr core.Transport) core.Transport
 	wrapMembership func(id string, m core.MembershipAuthority) core.MembershipAuthority
+	cacheOptions   []peercache.Option
+	nodeOptions    map[string][]peercache.Option
+}
+
+// withNodeOptions applies extra options to one node only, revivals included.
+func withNodeOptions(id string, opts ...peercache.Option) fabricOption {
+	return func(h *fabricHooks) {
+		if h.nodeOptions == nil {
+			h.nodeOptions = map[string][]peercache.Option{}
+		}
+		h.nodeOptions[id] = append(h.nodeOptions[id], opts...)
+	}
+}
+
+// withCacheOptions applies extra options to every cache in the fabric,
+// including any later revived.
+func withCacheOptions(opts ...peercache.Option) fabricOption {
+	return func(h *fabricHooks) { h.cacheOptions = append(h.cacheOptions, opts...) }
 }
 
 // withWrappers injects transport and membership wrappers. Either may be nil.
@@ -277,6 +299,8 @@ func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipCo
 	}
 	f.mcfg = mcfg
 	f.activationDelay = activationDelay
+	f.cacheOptions = hooks.cacheOptions
+	f.nodeOptions = hooks.nodeOptions
 
 	memberships := make(map[string]*testkit.Membership, n)
 	for i := 0; i < n; i++ {
@@ -301,13 +325,13 @@ func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipCo
 		if hooks.wrapMembership != nil {
 			ma = hooks.wrapMembership(id, ma)
 		}
-		c, err := peercache.New(
+		c, err := peercache.New(append([]peercache.Option{
 			peercache.WithNodeID(id),
 			peercache.WithClock(clk),
 			peercache.WithMembership(ma),
 			peercache.WithTransport(tr),
 			peercache.WithActivationDelay(activationDelay),
-		)
+		}, append(append([]peercache.Option(nil), hooks.cacheOptions...), hooks.nodeOptions[id]...)...)...)
 		if err != nil {
 			t.Fatalf("peercache.New(%s): %v", id, err)
 		}

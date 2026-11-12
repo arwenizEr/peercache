@@ -64,6 +64,15 @@ the feature list rather than after it.
   these writes with `ErrUnderReplicated` instead — trading availability during a
   partition, and on any cluster smaller than the factor, for a `nil` that always
   means the factor was reached. Off by default.
+- **With a memory budget, a node over it sheds data rather than being
+  OOM-killed.** `WithMemoryBudget` caps the owned, replica and L1 tiers. Over it,
+  the node sheds to nine tenths: L1 first, then replicas, then owned data — the
+  last of which is data loss, by design, counted in `Stats().ShedOwned`. It is
+  what stops a failover cascade, where survivors inherit a dead node's share,
+  exceed their limits and die in turn. A shed key that is written again is never
+  served at its older value after a failover; that holds whether or not the
+  removal sent to its replicas arrives. No budget is the default, and then
+  nothing is shed.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write
   with *default* options — replication factor 1 — and options cannot be changed
@@ -194,6 +203,7 @@ handoff.go        Moves replicas on a membership change rather
 ready.go          Readiness, its three conditions, and whether
                   replicas are current for this view            (M6)
 observe.go        Stats and the metric series they export       (M7)
+pressure.go       The memory budget and the order it sheds in   (M9)
 
 internal/
   core/           Type definitions shared by the public and internal packages

@@ -226,6 +226,7 @@ func New(opts ...Option) (Cache, error) {
 	c.promoter = newPromoter(c)
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
+	c.pressure = newPressure(c, resolved.MemoryBudget)
 	if resolved.LatencyHistograms {
 		c.remoteLatency = &metrics.Histogram{}
 	}
@@ -366,6 +367,10 @@ type cache struct {
 	// underReplicated counts synchronous writes refused because fewer copies
 	// than the factor could be placed. See WithRequireReplicationFactor.
 	underReplicated atomic.Int64
+
+	// pressure enforces the memory budget. Never nil; with no budget it
+	// does nothing.
+	pressure *pressure
 
 	// serving tracks the goroutine running Transport.Serve, so that Close
 	// can wait for it rather than leaving it to notice on its own. M3 lost a
@@ -524,6 +529,7 @@ func (c *cache) Stats() Stats {
 		UnderReplicatedRefusals: c.underReplicated.Load(),
 		ReplicasCurrent:         c.replicasCurrent(),
 	}
+	stats.MemoryUsed, stats.MemoryBudget, stats.ShedL1, stats.ShedReplicas, stats.ShedOwned = c.pressure.counters()
 	if c.replicas != nil {
 		stats.VersionConflicts = c.replicas.VersionConflicts()
 	}
@@ -629,6 +635,9 @@ func (c *cache) sweepOnce() {
 			ns.store.Sweep(sweepShardsPerTick)
 		}
 	}
+	// The budget is checked here as well as on writes, because the L1 tier
+	// grows on reads and a read path has no business summing counters.
+	c.pressure.check()
 }
 
 func (c *cache) Close(ctx context.Context) error {
