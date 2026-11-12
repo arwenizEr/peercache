@@ -86,7 +86,6 @@ startup rather than on the first request. `WithNodeID` is required.
 | Option | Meaning |
 |---|---|
 | `WithNodeID(string)` | Cluster-unique, stable for the process lifetime. Ownership is derived from it, so a restart under a new ID moves that node's share of the keyspace. **Required.** |
-| `WithBindAddr(string)` | Address peers dial. May be empty for an in-process transport. |
 | `WithSeeds(...string)` | Addresses used to join an existing cluster. Empty means form a cluster of one. |
 | `WithClock(Clock)` | Time source. Defaults to the real clock. |
 | `WithLogger(Logger)` | Defaults to `NopLogger`, which discards everything. |
@@ -100,7 +99,6 @@ startup rather than on the first request. `WithNodeID` is required.
 ```go
 cache, err := peercache.New(
     peercache.WithNodeID("pod-0"),
-    peercache.WithBindAddr("10.0.0.1:7946"),
 )
 if err != nil {
     return err
@@ -417,8 +415,10 @@ nothing to wait for.
 
 **A `GroupState` is valid for one turn only.** Capturing one in a goroutine and
 using it later is a use-after-free in all but name. The implementation stamps
-each state with a generation and turns a violation into `ErrStateEscaped` —
-detected, not panicked, and not silently corrupting.
+each state with a generation; a method called on a stale state does nothing and
+increments `Stats().StateEscapes` — detected, not panicked, and not silently
+corrupting. There is no error for it: the goroutine misusing the state is not
+inside a call, so there is no caller to return one to.
 
 ---
 
@@ -758,7 +758,7 @@ Over budget, the node sheds down to nine tenths of it, cheapest first:
 | replicas | that key's replication factor, until it is next written or caught up | `ShedReplicas` |
 | owned data | the key, which a loader rebuilds | `ShedOwned` |
 
-The budget is checked every `PressureCheckInterval` writes, on any write of
+The budget is checked every 64 writes, on any write of
 64 KiB or more, and once a second, so the accounted size can run past it by
 about 64 entries between checks. `Stats().MemoryUsed` and
 `peercache_memory_used_bytes` report the accounted size with or without a
@@ -1065,7 +1065,6 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrStaleEpoch` | Ownership was resolved under a view this node has already replaced. | yes, after re-resolving |
 | `ErrNotOwner` | This node does not own the key's group. | yes, after re-resolving |
 | `ErrActivationPending` | This node owns the group but acquired it within `WithActivationDelay`. | yes, here, shortly |
-| `ErrStateEscaped` | A `GroupState` was used outside its turn. | no — it is a bug |
 | `ErrNoLoader` | `GetOrLoad` without `WithLoader`. | no |
 | `ErrLoaderPanic` | A registered loader panicked. | no — it is a bug |
 | `ErrGroupFuncPanic` | A registered group function panicked. The group keeps its state and stays usable. | no — it is a bug |

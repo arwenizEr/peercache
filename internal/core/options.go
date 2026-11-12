@@ -41,9 +41,6 @@ type Options struct {
 	// Nil is valid for a transport with nothing to listen on, such as the
 	// in-process one in internal/testkit.
 	Listener net.Listener
-	// BindAddr is the address peers dial. It may be empty for an
-	// in-process transport.
-	BindAddr string
 	// Seeds are addresses used to join an existing cluster.
 	Seeds []string
 

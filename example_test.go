@@ -19,7 +19,6 @@ import (
 func Example() {
 	cache, err := peercache.New(
 		peercache.WithNodeID("pod-0"),
-		peercache.WithBindAddr("10.0.0.1:7946"),
 	)
 	if err != nil {
 		fmt.Println("construction failed:", err)
@@ -54,7 +53,7 @@ func Example() {
 	// Output:
 	// Get: cart=3
 	// Missing: true
-	// Self: pod-0(10.0.0.1:7946)
+	// Self: pod-0
 }
 
 // ExampleWithLoader shows why GetOrLoad has no loader argument. The loader is
@@ -611,9 +610,9 @@ func ExampleWithMemoryBudget() {
 	}
 
 	st := cache.Stats()
-	// The budget is checked every PressureCheckInterval writes, so the node
-	// can be up to that many entries past it between checks.
-	fmt.Println("near the budget:", st.MemoryUsed < budget+peercache.PressureCheckInterval*2048)
+	// The budget is checked every 64 writes, so the node can be up to that
+	// many entries past it between checks.
+	fmt.Println("near the budget:", st.MemoryUsed < budget+64*2048)
 	fmt.Println("owned keys shed:", st.ShedOwned > 0)
 	fmt.Println("keys still held:", st.OwnedKeys > 0)
 	// Output:

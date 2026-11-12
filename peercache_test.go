@@ -69,10 +69,10 @@ func TestNewIgnoresNilOptions(t *testing.T) {
 }
 
 func TestStatsReportsSelf(t *testing.T) {
-	c, _ := newCache(t, peercache.WithBindAddr("n0:7946"))
+	c, _ := newCache(t)
 	stats := c.Stats()
-	if stats.Self.ID != "n0" || stats.Self.Addr != "n0:7946" {
-		t.Fatalf("Stats().Self = %v, want n0(n0:7946)", stats.Self)
+	if stats.Self.ID != "n0" || stats.Self.Addr != "" {
+		t.Fatalf("Stats().Self = %v, want n0 with no address: nothing here is dialled", stats.Self)
 	}
 	if stats.Members != 1 {
 		t.Fatalf("Stats().Members = %d, want 1", stats.Members)
@@ -340,7 +340,6 @@ func TestSentinelErrorsAreDistinct(t *testing.T) {
 		"ErrGroupOverloaded":       peercache.ErrGroupOverloaded,
 		"ErrStaleEpoch":            peercache.ErrStaleEpoch,
 		"ErrNotOwner":              peercache.ErrNotOwner,
-		"ErrStateEscaped":          peercache.ErrStateEscaped,
 		"ErrNoLoader":              peercache.ErrNoLoader,
 		"ErrLoaderPanic":           peercache.ErrLoaderPanic,
 		"ErrLoaderFailed":          peercache.ErrLoaderFailed,

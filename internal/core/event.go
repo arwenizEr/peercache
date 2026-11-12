@@ -14,9 +14,6 @@ const (
 	EventUpdate
 	// EventDelete is emitted when a key is removed explicitly.
 	EventDelete
-	// EventEvict is reserved: nothing emits it. Group state has no TTL
-	// and no capacity limit. See the root package's EventEvict.
-	EventEvict
 	// EventActivate is emitted when a group is activated on this node.
 	EventActivate
 	// EventDeactivate is emitted when a group is deactivated, whether
@@ -36,8 +33,6 @@ func (k EventKind) String() string {
 		return "update"
 	case EventDelete:
 		return "delete"
-	case EventEvict:
-		return "evict"
 	case EventActivate:
 		return "activate"
 	case EventDeactivate:

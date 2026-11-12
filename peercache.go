@@ -564,7 +564,7 @@ func (c *cache) Stats() Stats {
 
 	groups := c.groups.Stats()
 	stats := Stats{
-		Self:              Node{ID: c.opts.NodeID, Addr: c.opts.BindAddr},
+		Self:              c.self(),
 		Members:           1,
 		AddressableGroups: groups.Addressable,
 		ActiveGroups:      groups.Active,

@@ -33,7 +33,6 @@ func run() error {
 	// at startup rather than on the first request.
 	cache, err := peercache.New(
 		peercache.WithNodeID("pod-0"),
-		peercache.WithBindAddr("127.0.0.1:7946"),
 	)
 	if err != nil {
 		return fmt.Errorf("constructing the cache: %w", err)

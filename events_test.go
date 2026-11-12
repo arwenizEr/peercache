@@ -14,8 +14,8 @@ import (
 // test had ever configured. It drives one group through its whole life and
 // checks the events arrive, in order, on the handler.
 //
-// EventEvict is absent on purpose: nothing emits it. Group state has no TTL and
-// no capacity limit, so there is nothing to evict it for — see open question 43.
+// There is no eviction event: group state has no TTL and no capacity limit, so
+// there is nothing to evict — see open question 43.
 func TestEventHandlerSeesEveryLifecycleEvent(t *testing.T) {
 	var (
 		mu     sync.Mutex

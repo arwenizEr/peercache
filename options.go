@@ -22,12 +22,6 @@ func WithNodeID(id string) Option {
 	return func(o *core.Options) { o.NodeID = id }
 }
 
-// WithBindAddr sets the address peers dial. It may be left empty when the cache
-// runs on an in-process transport.
-func WithBindAddr(addr string) Option {
-	return func(o *core.Options) { o.BindAddr = addr }
-}
-
 // WithSeeds sets the addresses used to join an existing cluster. New passes them
 // to the membership authority's Join once the peer transport is serving, and
 // fails if the join does. An empty list means this node forms a cluster of one

@@ -70,7 +70,6 @@ func TestKindStringsAreStable(t *testing.T) {
 		core.EventCreate:     "create",
 		core.EventUpdate:     "update",
 		core.EventDelete:     "delete",
-		core.EventEvict:      "evict",
 		core.EventActivate:   "activate",
 		core.EventDeactivate: "deactivate",
 		core.EventCustom:     "custom",

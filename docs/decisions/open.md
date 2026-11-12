@@ -948,7 +948,7 @@ exists to catch mistakes must be loud when it cannot.
 
 ---
 
-## 36. ErrStateEscaped is exported and unreachable — M8, documented
+## 36. ErrStateEscaped is exported and unreachable — M8, removed before v1
 
 `ErrStateEscaped` is returned by nothing, and nothing can return it: the
 goroutine using a stale `GroupState` is not inside a `Call`, so there is no
@@ -963,6 +963,11 @@ Kept rather than deleted: removing a sentinel breaks anyone matching on it, and
 it is the canonical name for a condition the documentation needs to refer to.
 Both comments now say it is unreachable. Reversible if a future API ever has a
 caller to return it to.
+
+**Removed before v1.** The reason for keeping it was compatibility with callers
+that matched on it, and before the first public release there are none. A
+sentinel nothing can return is a promise the API cannot keep; the counter is the
+signal, and `docs/api.md` names the condition without it.
 
 ---
 
@@ -1401,7 +1406,7 @@ for an entry the sweeper reclaims, where every holder expires it alike.
 
 ---
 
-## 43. EventEvict is exported, documented, and never emitted — post-M9, documented
+## 43. EventEvict is exported, documented, and never emitted — post-M9, removed before v1
 
 Found by the first test of `WithEventHandler`, which no test had configured.
 `EventEvict` was documented as "emitted when a key is removed by TTL or capacity
@@ -1419,6 +1424,10 @@ life produces, so an emission added later is a visible change to that test.
 **What would force a change:** group state gaining a TTL or a limit, at which
 point the event has something to mean; or a request for events on namespace
 data, which would be a new event source rather than this constant.
+
+**Removed before v1**, with question 36's sentinel and for the same reason: the
+compatibility it was kept for has no one to protect before the first public
+release. An eviction event, if group state ever gains a TTL, is a new constant.
 
 ---
 

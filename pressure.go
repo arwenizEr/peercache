@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 )
 
-// PressureCheckInterval is how many writes pass between two inline checks of
+// pressureCheckInterval is how many writes pass between two inline checks of
 // the memory budget.
 //
 // Checking on every write would mean summing every tier's counters on the
@@ -15,7 +15,7 @@ import (
 // plus one write of any size, because a write of [pressureLargeWrite] bytes or
 // more checks immediately. The periodic sweep also checks, once a second, which
 // covers growth that is not a write at all — the L1 tier filling on reads.
-const PressureCheckInterval = 64
+const pressureCheckInterval = 64
 
 // pressureLargeWrite is the value size at which a write checks the budget at
 // once rather than waiting for its turn.
@@ -99,7 +99,7 @@ func (p *pressure) noteWrite(size int) {
 	if !p.enabled() {
 		return
 	}
-	if size < pressureLargeWrite && p.writes.Add(1)%PressureCheckInterval != 0 {
+	if size < pressureLargeWrite && p.writes.Add(1)%pressureCheckInterval != 0 {
 		return
 	}
 	p.check()

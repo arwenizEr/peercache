@@ -20,8 +20,7 @@ import (
 //
 // It is deliberately not an error return. The goroutine holding an escaped
 // state is not inside a Call, so there is no caller to return one to — see
-// internal/actor/state.go. [ErrStateEscaped] exists for callers that matched on
-// it and is never returned by this package; the counter is the signal.
+// internal/actor/state.go. The counter is the signal.
 type GroupState interface {
 	ID() string
 	Get(key string) ([]byte, bool)
