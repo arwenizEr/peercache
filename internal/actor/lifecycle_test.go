@@ -276,9 +276,20 @@ func TestReschedulingATimerReplacesIt(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
+	pending := 0
 	for i := 0; i < 5; i++ {
 		if _, err := rt.Call(context.Background(), "g", "schedule", nil); err != nil {
 			t.Fatalf("Call: %v", err)
+		}
+		// Replacing a timer stops the old one. The in-turn identity check
+		// would also stop a stale one from running, so the fire count below
+		// cannot tell the two apart; the clock can. A replaced timer left
+		// armed is a timer per reschedule held until it comes due.
+		if i == 0 {
+			pending = fc.Pending()
+		} else if got := fc.Pending(); got != pending {
+			t.Fatalf("after %d schedules of one name the clock holds %d timers, "+
+				"after one it held %d; a replaced timer was left armed", i+1, got, pending)
 		}
 	}
 
