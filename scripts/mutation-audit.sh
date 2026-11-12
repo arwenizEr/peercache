@@ -1588,6 +1588,22 @@ mutate "a misconfigured namespace's nil store is reachable from a peer"   handle
 	if !existed {'   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
 	if !existed {'   'TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash$' .
 
+# Compression across nodes: the wire and L1 carry plain values, the stores
+# framed ones. Each side once got the other's form.
+mutate "a remote Get unframes a value the owner already unframed"   namespace.go   '		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+	}
+	return value, nil
+}
+
+'   '		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+	}
+	return n.decode(value)
+}
+
+'   'TestCompressedValuesSurviveEveryRemotePath$' .
+
+mutate "an adopted hand-off is framed a second time"   handler.go   '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {'   '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {'   'TestACompressedHandOffIsNotFramedTwice$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

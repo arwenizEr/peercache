@@ -430,7 +430,10 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	// to save. A mutation audit found that, by way of a test that passed
 	// while drain did nothing at all.
 	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && ns.err == nil && h.ownsKey(ns, in.Key) {
-		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
+		// in.Value is the sender's stored form, framed already, as every
+		// replicated copy is; framing it again stored a frame inside a
+		// frame and handed the header back to the next reader.
+		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {
 			h.cache.keysAdopted.Add(1)
 		}
 		h.cache.pressure.noteWrite(len(in.Value))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/peercache/peercache"
 )
@@ -149,6 +150,105 @@ func TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash(t *testing.T) {
 	} {
 		if err := op(); err == nil {
 			t.Fatalf("%s against a key whose owner has the namespace misconfigured returned nil", name)
+		}
+	}
+}
+
+// TestCompressedValuesSurviveEveryRemotePath: found by code review.
+// Compression had been tested on one node only. Across nodes the owner's
+// handler already unframed a value and the caller unframed it again, so a
+// remote read failed as a corrupt frame — or, for a value whose first byte
+// happened to be a valid frame code, silently lost bytes — and a hand-off
+// stored an already framed value framed a second time.
+func TestCompressedValuesSurviveEveryRemotePath(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+	loader := peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
+		return []byte("loaded " + key), 0, nil
+	})
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("compressed",
+			peercache.WithCompression("lz4", 0), // every value framed
+			peercache.WithL1TTL(-1), loader)
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.settle(t)
+
+	via := f.ids[0]
+	remote := func(prefix string) string {
+		for i := 0; i < 200; i++ {
+			if k := fmt.Sprintf("%s/%d", prefix, i); f.ownerOf(t, k) != via {
+				return k
+			}
+		}
+		t.Fatalf("no remote key for %s", prefix)
+		return ""
+	}
+
+	// Values whose first byte is 'h', 0x00 and 0x01 — an unknown frame code,
+	// and two that look like frame codes.
+	for i, val := range [][]byte{[]byte("hello"), {0x00, 'a', 'b'}, {0x01, 'x'}} {
+		key := remote(fmt.Sprintf("c%d", i))
+		if err := openNS(via).Set(ctx, key, val, 0); err != nil {
+			t.Fatalf("Set %s: %v", key, err)
+		}
+		got, err := openNS(via).Get(ctx, key)
+		if err != nil || string(got) != string(val) {
+			t.Fatalf("remote Get %s = %q, %v; want %q", key, got, err, val)
+		}
+		batch, err := openNS(via).BatchGet(ctx, []string{key})
+		if err != nil || string(batch[key]) != string(val) {
+			t.Fatalf("remote BatchGet %s = %q, %v; want %q", key, batch[key], err, val)
+		}
+	}
+
+	lkey := remote("load")
+	got, err := openNS(via).GetOrLoad(ctx, lkey)
+	if err != nil || string(got) != "loaded "+lkey {
+		t.Fatalf("remote GetOrLoad %s = %q, %v", lkey, got, err)
+	}
+}
+
+// TestACompressedHandOffIsNotFramedTwice: a draining node sends each key in its
+// stored, framed form, and the receiver adopting it framed it a second time, so
+// a later read unframed once and returned the inner frame instead of the value.
+func TestACompressedHandOffIsNotFramedTwice(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("handoff-compressed",
+			peercache.WithCompression("lz4", 0), peercache.WithL1TTL(-1))
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.settle(t)
+
+	want := map[string]string{}
+	for i := 0; i < 60; i++ {
+		key := fmt.Sprintf("hc/%d", i)
+		want[key] = fmt.Sprintf("value-%d-%s", i, "padding so lz4 has something to do")
+		if err := openNS(f.ids[i%3]).Set(ctx, key, []byte(want[key]), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	leaver := f.ids[2]
+	if err := f.caches[leaver].Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if f.caches[leaver].Stats().KeysHandedOff == 0 {
+		t.Fatal("the drain handed nothing off")
+	}
+	f.hardKill(t, leaver)
+	f.clk.Advance(2 * time.Second)
+	f.settle(t)
+
+	for key, w := range want {
+		got, err := readWithRetryFrom(t, f, openNS, f.ids[0], key)
+		if err != nil || got != w {
+			t.Fatalf("after the drain, %s = %q, %v; want %q", key, got, err, w)
 		}
 	}
 }

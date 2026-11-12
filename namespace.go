@@ -221,9 +221,13 @@ func (n *namespace) localGet(key string) ([]byte, error) {
 // disagreement means membership is genuinely unsettled, and retrying into that
 // turns a brownout into a storm.
 func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retry bool) ([]byte, error) {
+	// What crosses the network, and what the L1 tier holds, is the plain
+	// value: the owner unframes it before answering. Only the owned and
+	// replica stores hold the framed form. Decoding here again, as an earlier
+	// version did, failed every remote read of a compressed namespace.
 	if n.l1 != nil {
 		if val, _, ok := n.l1.Get(key); ok {
-			return n.decode(val)
+			return val, nil
 		}
 	}
 
@@ -249,7 +253,7 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 	if n.l1 != nil {
 		n.l1.Put(key, value, stamp, n.opts.L1TTL)
 	}
-	return n.decode(value)
+	return value, nil
 }
 
 func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
@@ -607,11 +611,7 @@ func (n *namespace) remoteBatchGet(ctx context.Context, batch *ownerBatch, out m
 		wanted = wanted[:0:0]
 		for _, key := range batch.keys {
 			if val, _, ok := n.l1.Get(key); ok {
-				decoded, err := n.decode(val)
-				if err != nil {
-					return err
-				}
-				out[key] = decoded
+				out[key] = val // plain; see remoteGet
 				continue
 			}
 			wanted = append(wanted, key)
@@ -626,11 +626,7 @@ func (n *namespace) remoteBatchGet(ctx context.Context, batch *ownerBatch, out m
 		return err
 	}
 	for _, e := range entries {
-		val, err := n.decode(e.Value)
-		if err != nil {
-			return err
-		}
-		out[e.Key] = val
+		out[e.Key] = e.Value // plain; see remoteGet
 		if n.l1 != nil {
 			n.l1.Put(e.Key, e.Value, e.Stamp, n.opts.L1TTL)
 		}
@@ -747,7 +743,7 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string, retry bool) ([]byte, error) {
 	if n.l1 != nil {
 		if val, _, ok := n.l1.Get(key); ok {
-			return n.decode(val)
+			return val, nil // plain; see remoteGet
 		}
 	}
 
@@ -768,7 +764,7 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 	if n.l1 != nil {
 		n.l1.Put(key, value, stamp, n.opts.L1TTL)
 	}
-	return n.decode(value)
+	return value, nil
 }
 
 var _ Namespace = (*namespace)(nil)
