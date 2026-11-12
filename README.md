@@ -76,6 +76,12 @@ the feature list rather than after it.
   and 1152 of 1500 keys readable, where without a budget all 1500 survived on
   nodes holding 1.9× the budget — which in a real pod is three OOM kills. No budget is the default, and then
   nothing is shed.
+- **With join probation, a crashlooping pod moves no keys.** `WithJoinProbation`
+  keeps a node out of the ownership ranking until it has been up for the given
+  time, so a pod that restarts every few seconds is never ranked and its
+  restarts cause no rebalancing and no "not found" for data the healthy nodes
+  hold. A new pod carries no share for that long; a cold start, where every node
+  is young, ranks them all. Off by default.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write
   with *default* options — replication factor 1 — and options cannot be changed
@@ -207,6 +213,7 @@ ready.go          Readiness, its three conditions, and whether
                   replicas are current for this view            (M6)
 observe.go        Stats and the metric series they export       (M7)
 pressure.go       The memory budget and the order it sheds in   (M9)
+probation.go      Keeps young nodes out of the ranking          (M9)
 
 internal/
   core/           Type definitions shared by the public and internal packages

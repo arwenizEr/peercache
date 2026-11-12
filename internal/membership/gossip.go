@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashicorp/memberlist"
 
+	"github.com/peercache/peercache/internal/clock"
 	"github.com/peercache/peercache/internal/core"
 )
 
@@ -84,6 +85,9 @@ type Gossip struct {
 	// meta is republished when the epoch changes, so peers can see how
 	// far along this node's view is.
 	meta atomic.Pointer[nodeMeta]
+	// started is when this Gossip was created, which for a pod is when its
+	// process started. Published in meta for join probation.
+	started int64
 }
 
 // nodeMeta is what this node advertises about itself through gossip.
@@ -100,15 +104,18 @@ type nodeMeta struct {
 	// means the caller supplied no transport address, in which case peers
 	// fall back to the gossip address.
 	RPCAddr string
+	// Started is when this process started, in Unix nanoseconds. Join
+	// probation measures a node's age by it; see [core.MetaStartedKey].
+	Started int64
 }
 
-// encode renders the metadata for the wire as "epoch|rpcaddr".
+// encode renders the metadata for the wire as "epoch|rpcaddr|started".
 //
 // Deliberately hand-rolled and tiny. memberlist caps node metadata at 512
 // bytes and gossips it with every probe, so this is one of the few places where
 // a compact encoding is worth more than a self-describing one.
 func (m nodeMeta) encode() string {
-	return strconv.FormatUint(uint64(m.Epoch), 10) + "|" + m.RPCAddr
+	return strconv.FormatUint(uint64(m.Epoch), 10) + "|" + m.RPCAddr + "|" + strconv.FormatInt(m.Started, 10)
 }
 
 // decodeNodeMeta parses what encode produced.
@@ -125,7 +132,15 @@ func decodeNodeMeta(raw string) nodeMeta {
 	}
 	out := nodeMeta{Epoch: core.Epoch(epoch)}
 	if found {
-		out.RPCAddr = addr
+		// A third field is the start time, from builds that publish
+		// one. Its absence is an older peer, not an error.
+		rpc, started, hasStarted := strings.Cut(addr, "|")
+		out.RPCAddr = rpc
+		if hasStarted {
+			if v, err := strconv.ParseInt(started, 10, 64); err == nil {
+				out.Started = v
+			}
+		}
 	}
 	return out
 }
@@ -148,7 +163,8 @@ func New(opts Options) (*Gossip, error) {
 		stopConsume: make(chan struct{}),
 		consumeDone: make(chan struct{}),
 	}
-	g.meta.Store(&nodeMeta{})
+	g.started = clock.Real().Now().UnixNano()
+	g.meta.Store(&nodeMeta{Started: g.started})
 
 	cfg := opts.Config
 	if cfg == nil {
@@ -194,7 +210,11 @@ func New(opts Options) (*Gossip, error) {
 	if g.self.Addr == "" {
 		g.self.Addr = g.localAddr
 	}
-	g.meta.Store(&nodeMeta{RPCAddr: g.self.Addr})
+	g.meta.Store(&nodeMeta{RPCAddr: g.self.Addr, Started: g.started})
+	if g.self.Meta == nil {
+		g.self.Meta = map[string]string{}
+	}
+	g.self.Meta[core.MetaStartedKey] = strconv.FormatInt(g.started, 10)
 	g.members[g.self.ID] = g.self.Clone()
 
 	go g.consume(events)
@@ -252,7 +272,7 @@ func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
 		epoch := core.Epoch(g.epoch.Load())
 		if transition {
 			epoch = core.Epoch(g.epoch.Add(1))
-			g.meta.Store(&nodeMeta{Epoch: epoch, RPCAddr: g.self.Addr})
+			g.meta.Store(&nodeMeta{Epoch: epoch, RPCAddr: g.self.Addr, Started: g.started})
 			if g.list != nil {
 				// Best effort: republishing is how peers learn
 				// our epoch, and failing is not fatal.
@@ -279,6 +299,9 @@ func (g *Gossip) consume(events <-chan memberlist.NodeEvent) {
 			if meta.RPCAddr != "" {
 				node.Addr = meta.RPCAddr
 				node.Meta[metaRPCAddrKey] = meta.RPCAddr
+			}
+			if meta.Started != 0 {
+				node.Meta[core.MetaStartedKey] = strconv.FormatInt(meta.Started, 10)
 			}
 		}
 		g.apply(kind, node)

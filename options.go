@@ -159,6 +159,37 @@ func WithMemoryBudget(bytes int64) Option {
 	return func(o *core.Options) { o.MemoryBudget = bytes }
 }
 
+// WithJoinProbation keeps a node out of the ownership ranking until it has been
+// up for d. Zero, the default, ranks a node as soon as it joins.
+//
+// It exists for a pod in CrashLoopBackOff. Without it every restart is a join:
+// every peer ranks the new node at once, a share of the keyspace moves to a node
+// holding nothing, and reads of that share report ErrNotFound until the node
+// catches up — which a crashlooping node never does, because it dies first. Then
+// the share moves back, and the next restart moves it again. With a probation
+// longer than the pod survives, its restarts move nothing.
+//
+// A node's age is measured from the start time its membership authority
+// publishes; the built-in gossip and the test harness both do. A node that
+// publishes none — a peer on an older build — is treated as established, so a
+// rolling upgrade is not held up by it. A cluster where every node is younger
+// than d, which is a cold start, ranks them all, since excluding them all would
+// leave nothing to own anything.
+//
+// The cost is that a new pod takes no share of the keyspace for its first d.
+// Readiness reflects that: the node sees a ranked view without itself and
+// serves by routing. Set d longer than a crashing pod lives and shorter than
+// you are willing to wait for a new one to carry load; 30 seconds suits most.
+// Stats().MembersOnProbation counts the nodes currently waiting.
+//
+// It requires every node to have a roughly synchronised clock, which Kubernetes
+// nodes do; skew shows up as a node being ranked a little earlier on some peers
+// than others, which the activation delay already absorbs. A negative value is
+// rejected with [ErrInvalidOption].
+func WithJoinProbation(d time.Duration) Option {
+	return func(o *core.Options) { o.JoinProbation = d }
+}
+
 // WithMaxActiveGroups caps concurrently activated groups, evicting the
 // least-recently-activated when the cap is exceeded. The default is 20,000; a
 // negative value means unlimited.

@@ -141,6 +141,12 @@ cache; `Stats()` reports all three. Measure, then set limits with headroom for
 the replicas a node inherits when a peer fails — a pod sized for its steady
 state will be OOM-killed by its first failover.
 
+Use `WithJoinProbation(30 * time.Second)` as well. A pod in CrashLoopBackOff
+otherwise rejoins on every restart, takes a share of the keyspace it never
+holds, and makes reads of that share report not-found until it dies again;
+with a probation longer than it survives, its restarts move nothing.
+`peercache_members_on_probation` shows it waiting.
+
 Then set `WithMemoryBudget` below that limit, at about three quarters of it, and
 `GOMEMLIMIT` between the two. The budget is what makes a failover cascade stop:
 a survivor over its budget sheds L1, then replicas, then owned data, instead of

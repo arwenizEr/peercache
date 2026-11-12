@@ -60,7 +60,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter the earlier milestones built is exported: `MetricsHandler` serves
-45 series in the Prometheus text exposition format, and PeerCache imports no
+46 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -714,6 +714,44 @@ held that copy, the key goes with it. No owned key was shed. Size the budget for
 the failures you want to survive without loss; the budget decides what happens
 past that.
 
+### `WithJoinProbation` — containing a crashloop
+
+```go
+cache, err := peercache.New(
+    peercache.WithNodeID(podName),
+    peercache.WithJoinProbation(30 * time.Second),
+)
+```
+
+Keeps a node out of the ownership ranking until it has been up for the given
+time. Without it, every restart of a pod in CrashLoopBackOff is a join: every
+peer ranks it at once, a share of the keyspace moves to a node holding nothing,
+reads of that share report `ErrNotFound` for data the healthy nodes have, and
+the share moves back when it dies. With a probation longer than the pod lives,
+its restarts move nothing. `TestACrashloopingNodeIsNeverRanked` restarts a node
+every 2 seconds for 30 rounds and counts zero missing reads.
+
+The rule is a pure function of the member list and the time, so every node
+applies it alike:
+
+- a node is ranked once it has been up for the probation, measured from the
+  start time its membership authority publishes (the built-in gossip and the
+  test harness both publish one);
+- a node that publishes none — a peer on an older build — is ranked, so a
+  rolling upgrade is not held up;
+- if no member has been up that long, which is a cold start, all are ranked.
+
+A young node applies it to itself as well: it does not rank itself while its
+peers do not, so it never acts as owner of keys they route elsewhere. It serves
+by routing until its probation ends, and then joins like any other node — catch
+up before relying on it.
+
+The cost is that a new pod takes no load for that long. `Stats().MembersOnProbation`
+and `peercache_members_on_probation` count the nodes waiting; one that keeps
+reappearing there is a crashlooping pod. Clocks need to be roughly synchronised,
+as Kubernetes nodes are; skew moves the moment a node is ranked by that much on
+some peers, which the activation delay absorbs. Off by default.
+
 ## Membership, transport, clock
 
 ```go
@@ -816,13 +854,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 45 series come out of it.
+format with the content type a scraper expects, and 46 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 45 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 46 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

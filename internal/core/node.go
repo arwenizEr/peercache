@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strconv"
 )
 
 // Epoch is a monotonically increasing membership version. Ownership decisions
@@ -39,6 +40,27 @@ func (n Node) Clone() Node {
 // IsZero reports whether n names no node. Ownership lookups return a zero Node
 // alongside an error rather than a sentinel "unknown" member.
 func (n Node) IsZero() bool { return n.ID == "" }
+
+// MetaStartedKey is the [Node.Meta] key under which a membership authority
+// publishes when a node's process started, as Unix nanoseconds in decimal.
+//
+// It is what join probation measures a node's age by. An authority that does
+// not publish it is not wrong — the node is then treated as established — so
+// a peer running an older build stays ranked during a rolling upgrade.
+const MetaStartedKey = "peercache.started"
+
+// StartedAt returns the start time a node advertised, and whether it did.
+func (n Node) StartedAt() (int64, bool) {
+	raw, ok := n.Meta[MetaStartedKey]
+	if !ok {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
 
 // String implements [fmt.Stringer].
 func (n Node) String() string {

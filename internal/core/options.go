@@ -70,6 +70,9 @@ type Options struct {
 	// MemoryBudget is the number of bytes this node's owned, replica and L1
 	// tiers may hold before it sheds. Zero means no budget.
 	MemoryBudget int64
+	// JoinProbation is how long a node must have been up before its peers
+	// rank it. Zero means no probation.
+	JoinProbation time.Duration
 	// OnEvent receives lifecycle events. It runs on the emitting group's
 	// goroutine and must not block.
 	OnEvent func(Event)
@@ -102,6 +105,9 @@ func (o *Options) Validate() error {
 	}
 	if o.Logger == nil {
 		return fmt.Errorf("peercache: Logger must not be nil: %w", ErrInvalidOption)
+	}
+	if o.JoinProbation < 0 {
+		return fmt.Errorf("peercache: join probation %v must not be negative: %w", o.JoinProbation, ErrInvalidOption)
 	}
 	if o.MemoryBudget < 0 {
 		return fmt.Errorf("peercache: memory budget %d must not be negative: %w", o.MemoryBudget, ErrInvalidOption)

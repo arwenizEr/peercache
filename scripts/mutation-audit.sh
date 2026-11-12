@@ -1280,6 +1280,29 @@ mutate "replica arrivals never check the budget" \
   '	if conflict {' \
   'TestAReplicaOnlyNodeStaysWithinItsBudget$' .
 
+# --- M9, part two: join probation (decision 0023) ---
+
+mutate "probation hides nobody" \
+  probation.go \
+  '		if !ok || now-started >= int64(period) {' \
+  '		if true {' \
+  'TestACrashloopingNodeIsNeverRanked$' .
+
+mutate "a probation ending never reaches the ranking" \
+  probation.go \
+  '	before := p.lastIDs
+	p.refreshLocked()' \
+  '	return
+	before := p.lastIDs
+	p.refreshLocked()' \
+  'TestAProbationedNodeIsRankedOnceItHasLasted$' .
+
+mutate "a cold start ranks nobody" \
+  probation.go \
+  '	if len(established) == 0 {' \
+  '	if false {' \
+  'TestColdStartRanksEveryNode$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

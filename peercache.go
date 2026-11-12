@@ -172,6 +172,14 @@ func New(opts ...Option) (Cache, error) {
 		return nil, err
 	}
 
+	// Probation wraps the authority before anything reads it, so that the
+	// guard, catch-up, drain and readiness all see the same ranked view.
+	var probation *probationAuthority
+	if resolved.JoinProbation > 0 && resolved.Membership != nil {
+		probation = newProbationAuthority(resolved.Membership, resolved.Clock, resolved.JoinProbation)
+		resolved.Membership = probation
+	}
+
 	// Ownership is only meaningful with a membership authority. Without one
 	// this is a single node that owns everything, and a guard that always
 	// says yes is the correct answer rather than a special case.
@@ -227,6 +235,7 @@ func New(opts ...Option) (Cache, error) {
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
 	c.pressure = newPressure(c, resolved.MemoryBudget)
+	c.probation = probation
 	if resolved.LatencyHistograms {
 		c.remoteLatency = &metrics.Histogram{}
 	}
@@ -371,6 +380,10 @@ type cache struct {
 	// pressure enforces the memory budget. Never nil; with no budget it
 	// does nothing.
 	pressure *pressure
+
+	// probation hides young members from the ranking. Nil without
+	// WithJoinProbation.
+	probation *probationAuthority
 
 	// serving tracks the goroutine running Transport.Serve, so that Close
 	// can wait for it rather than leaving it to notice on its own. M3 lost a
@@ -530,6 +543,9 @@ func (c *cache) Stats() Stats {
 		ReplicasCurrent:         c.replicasCurrent(),
 	}
 	stats.MemoryUsed, stats.MemoryBudget, stats.ShedL1, stats.ShedReplicas, stats.ShedOwned = c.pressure.counters()
+	if c.probation != nil {
+		stats.MembersOnProbation = c.probation.onProbation()
+	}
 	if c.replicas != nil {
 		stats.VersionConflicts = c.replicas.VersionConflicts()
 	}
@@ -663,6 +679,9 @@ func (c *cache) Close(ctx context.Context) error {
 		// already closing.
 		if c.guard != nil {
 			c.guard.Close()
+		}
+		if c.probation != nil {
+			c.probation.Close()
 		}
 		// Then the invalidation queue, which holds a reference to the
 		// cache and dials peers.

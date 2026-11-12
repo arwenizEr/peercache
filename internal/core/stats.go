@@ -232,6 +232,11 @@ type Stats struct {
 	ShedReplicas int64
 	ShedOwned    int64
 
+	// MembersOnProbation counts members this node can see but does not yet
+	// rank, because they have been up for less than WithJoinProbation. A node
+	// that stays here and keeps reappearing is a pod in CrashLoopBackOff.
+	MembersOnProbation int
+
 	// StateEscapes counts uses of a GroupState outside the turn that issued
 	// it. Any non-zero value is an application bug.
 	//

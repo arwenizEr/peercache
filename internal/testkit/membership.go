@@ -3,6 +3,7 @@ package testkit
 import (
 	"context"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -119,6 +120,15 @@ func (r *Registry) all() []*Membership {
 // says so, after JoinDelay.
 func NewMembership(self core.Node, n *Network, clk clock.Clock, reg *Registry, cfg MembershipConfig) *Membership {
 	cfg.withDefaults()
+	// The process start, as a real authority publishes it: a restarted node
+	// is a new Membership and therefore young again.
+	self = self.Clone()
+	if self.Meta == nil {
+		self.Meta = map[string]string{}
+	}
+	if _, set := self.Meta[core.MetaStartedKey]; !set {
+		self.Meta[core.MetaStartedKey] = strconv.FormatInt(clk.Now().UnixNano(), 10)
+	}
 	m := &Membership{
 		self:        self.Clone(),
 		net:         n,
