@@ -365,3 +365,29 @@ func TestConcurrentDrainAndPut(t *testing.T) {
 		}
 	}
 }
+
+// TestEvictWhereSeesTheEntry: the RF=1 reconciliation needs to know who sent a
+// copy, not only its key, to tell a hand-off still in flight from a surplus
+// copy.
+func TestEvictWhereSeesTheEntry(t *testing.T) {
+	s := replication.NewStore()
+	s.Put("ns", "from-a", entry("a", 1, 1, "x"))
+	s.Put("ns", "from-b", entry("b", 1, 1, "y"))
+
+	dropped := s.EvictWhere("ns", func(key string, e replication.Entry) bool { return e.From == "a" })
+	if dropped != 1 {
+		t.Fatalf("EvictWhere dropped %d, want 1", dropped)
+	}
+	if _, ok := s.Get("ns", "from-a"); !ok {
+		t.Fatal("the kept entry is gone")
+	}
+	if _, ok := s.Get("ns", "from-b"); ok {
+		t.Fatal("the evicted entry is still held")
+	}
+	if got := s.Bytes(); got != charge("from-a", entry("a", 1, 1, "x")) {
+		t.Fatalf("Bytes = %d after EvictWhere, want the kept entry's charge", got)
+	}
+	if n := s.EvictWhere("absent", func(string, replication.Entry) bool { return false }); n != 0 {
+		t.Fatalf("EvictWhere on an unknown namespace dropped %d", n)
+	}
+}

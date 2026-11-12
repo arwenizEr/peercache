@@ -1567,6 +1567,15 @@ mutate "typed signatures are never recorded" \
   '		_ = cc' \
   'TestATypedGroupFuncRunsOnTheOwnerAcrossNodes$' .
 
+# --- Code review findings ---
+
+# The handler checked ownership by the raw key; callers route by group key.
+mutate "the peer handler checks ownership by the raw key" \
+  handler.go \
+  '		groupKey = ns.groupKeyFor(key)' \
+  '		_ = ns' \
+  'TestAPartitionedNamespaceServesRemoteCallers$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

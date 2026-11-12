@@ -96,6 +96,20 @@ type thawingTransport struct {
 	fired      atomic.Bool
 }
 
+// Ready forwards the wrapped transport's readiness. New waits on it before
+// returning; a wrapper that hides it lets New return before the node is
+// serving, the fabric then advances the clock past the join delay with this
+// node's endpoint not yet registered, and the node is never admitted. That made
+// these tests fail in most runs without -race and in none with it.
+func (tr *thawingTransport) Ready() <-chan struct{} {
+	if r, ok := tr.Transport.(interface{ Ready() <-chan struct{} }); ok {
+		return r.Ready()
+	}
+	ready := make(chan struct{})
+	close(ready)
+	return ready
+}
+
 func (tr *thawingTransport) Dial(node core.Node) (core.PeerClient, error) {
 	c, err := tr.Transport.Dial(node)
 	if err != nil {

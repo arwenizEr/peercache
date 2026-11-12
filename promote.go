@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/peercache/peercache/internal/ownership"
+	"github.com/peercache/peercache/internal/replication"
 )
 
 // promoter reacts to membership changes by reconciling what this node holds
@@ -134,22 +135,7 @@ func (p *promoter) reconcile() {
 			owner, _, err := c.guard.Table().Owner(ns.groupKeyFor(key))
 			return err == nil && owner.ID == self
 		})
-		now := c.opts.Clock.Now().UnixNano()
-		for key, e := range taken {
-			left, live := e.Remaining(now)
-			if !live {
-				// Expired on the owner's schedule while held here.
-				// Restoring it would bring back a key every other holder
-				// has already let go of.
-				continue
-			}
-			if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {
-				p.promoted.Add(1)
-			}
-			// A refused Restore means a newer value was written here
-			// while the drain ran. The replica copy is correctly
-			// discarded; it is older by definition.
-		}
+		p.restore(ns, taken)
 
 		// Hand off rather than evict.
 		//
@@ -176,16 +162,31 @@ func (p *promoter) reconcile() {
 			// every hand-off would fail, restore the copy, and orphan it
 			// again on the next reconciliation.
 			//
-			// This branch is reasoned, not measured, and says so.
-			// TestAReplicaInANonReplicatingNamespaceIsDroppedNotHandedOff
-			// states the property and skips: a drain at RF=1 pushes to two
-			// targets, and in that harness both receivers adopt their own
-			// share, so the surplus copy this branch exists for never
-			// appears. The handler comment in handler.go describes that copy
-			// as a case M6 saw, so the condition is real — it is just not one
-			// the public API produces on demand. Recorded here rather than
-			// covered by a test that would not execute it.
-			p.evicted.Add(int64(c.replicas.Evict(name, func(string) bool { return false })))
+			// Except a copy whose sender this node still ranks as the key's
+			// owner. That is a hand-off in flight: a draining node announces
+			// its departure and then pushes its keys, and a receiver whose
+			// view has not yet caught up files them here rather than in its
+			// owned store. Dropping them at that moment loses the only copy
+			// of an RF=1 key in a graceful shutdown. Kept, they are promoted
+			// by the reconciliation that follows the receiver's view
+			// catching up, or dropped by it if another node now owns them.
+			// TestDrainSavesDataWithoutReplication lost one key in about one
+			// run in a hundred to this before it was kept.
+			//
+			// And never a copy of a key this node owns. Promotion above has
+			// already run, so such a copy arrived after it — between the two
+			// passes of this reconciliation — and is promoted by the
+			// replicate handler's own check or by the next reconciliation.
+			// Logging every eviction found exactly that: two keys in 1,500
+			// runs, each owned by the node that dropped it.
+			table := c.guard.Table()
+			p.evicted.Add(int64(c.replicas.EvictWhere(name, func(key string, e replication.Entry) bool {
+				owner, _, err := table.Owner(ns.groupKeyFor(key))
+				if err != nil {
+					return true
+				}
+				return owner.ID == self || (e.From != "" && owner.ID == e.From)
+			})))
 			continue
 		}
 
@@ -197,6 +198,35 @@ func (p *promoter) reconcile() {
 			c.handoff.enqueue(handoffWork{namespace: name, key: key, entry: e})
 		}
 	}
+}
+
+// restore moves promoted replicas into the namespace's owned store, continuing
+// the previous owner's version sequence.
+func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
+	now := p.cache.opts.Clock.Now().UnixNano()
+	for key, e := range taken {
+		left, live := e.Remaining(now)
+		if !live {
+			// Expired on the owner's schedule while held here. Restoring it
+			// would bring back a key every other holder has already let go of.
+			continue
+		}
+		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {
+			p.promoted.Add(1)
+		}
+		// A refused Restore means a newer value was written here while the
+		// drain ran. The replica copy is correctly discarded; it is older by
+		// definition.
+	}
+}
+
+// promoteKey promotes one replica this node has just found it owns, without
+// waiting for the next reconciliation. See the replicate handler.
+func (p *promoter) promoteKey(ns *namespace, key string) {
+	if ns.store == nil {
+		return
+	}
+	p.restore(ns, p.cache.replicas.Drain(ns.name, func(k string) bool { return k == key }))
 }
 
 // stillReplicaFor reports whether this node ranks as a replica for a group key

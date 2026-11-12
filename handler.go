@@ -117,7 +117,7 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	h.noteEpoch(in.Epoch)
-	if err := h.assertOwned(in.Key); err != nil {
+	if err := h.assertOwned(in.Namespace, in.Key); err != nil {
 		return nil, err
 	}
 
@@ -158,7 +158,7 @@ func (h *peerHandler) load(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	h.noteEpoch(in.Epoch)
-	if err := h.assertOwned(in.Key); err != nil {
+	if err := h.assertOwned(in.Namespace, in.Key); err != nil {
 		return nil, err
 	}
 
@@ -194,7 +194,7 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	h.noteEpoch(in.Epoch)
-	if err := h.assertOwned(in.Key); err != nil {
+	if err := h.assertOwned(in.Namespace, in.Key); err != nil {
 		return nil, err
 	}
 
@@ -247,7 +247,7 @@ func (h *peerHandler) delete(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	h.noteEpoch(in.Epoch)
-	if err := h.assertOwned(in.Key); err != nil {
+	if err := h.assertOwned(in.Namespace, in.Key); err != nil {
 		return nil, err
 	}
 	// Same reasoning as set: a deletion arriving over the network has to
@@ -282,7 +282,7 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := h.assertOwned(key); err != nil {
+		if err := h.assertOwned(in.Namespace, key); err != nil {
 			// One misrouted key does not spoil the batch: the
 			// caller resolved it, so the caller can re-resolve it.
 			// Omitting it looks like a miss, which is the outcome
@@ -424,6 +424,15 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		h.cache.opts.Logger.Warn("conflicting replicated write",
 			"namespace", in.Namespace, "key", in.Key, "from", in.From)
 	}
+	// Ownership is checked again after the copy is filed. The check above
+	// and the Put are not atomic with a membership change: if this node's
+	// view moved between them, the reconciliation that the move triggered
+	// may already have run and found nothing to promote, and the copy would
+	// sit in the replica store, unreadable, until the next tick. A hand-off
+	// from a draining node is exactly that race.
+	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && h.ownsKey(ns, in.Key) {
+		h.cache.promoter.promoteKey(ns, in.Key)
+	}
 	return wire.Encode(&wire.ReplicateResponse{Conflict: conflict})
 }
 
@@ -542,11 +551,22 @@ func (h *peerHandler) ownsKey(ns *namespace, key string) bool {
 //
 // The check is by key, not by namespace: ownership is per group, and a
 // namespace's keys are spread across every node in the cluster.
-func (h *peerHandler) assertOwned(key string) error {
+//
+// Ownership is decided by the key's group, which the namespace's partitioner
+// derives from it. Callers route by that group key, so the check must use it
+// too: checked by the raw key, a partitioned namespace's owner refused every
+// remote request whose key happened to hash elsewhere. A namespace this node
+// has not opened falls back to the key itself, which is the default
+// partitioner and what an implicitly created namespace would use.
+func (h *peerHandler) assertOwned(namespace, key string) error {
 	if h.cache.guard == nil {
 		return nil
 	}
-	return h.cache.guard.CanActivate(key)
+	groupKey := key
+	if ns, ok := h.localNamespace(namespace); ok && ns.err == nil {
+		groupKey = ns.groupKeyFor(key)
+	}
+	return h.cache.guard.CanActivate(groupKey)
 }
 
 // stamp pairs a store version with this node's current epoch.

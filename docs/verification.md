@@ -2111,6 +2111,46 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### The code review, and two drain races it led to
+
+An independent review of the whole library at high effort reported fourteen
+findings from reading alone, nothing executed. Each is being confirmed with a
+failing test before it is fixed.
+
+**Confirmed and fixed: ownership checked by the raw key.** The peer handler
+asked whether this node owned the *key*; callers route by the key's *group*,
+which a partitioner derives. In a namespace with `PartitionByPrefix`, the
+group's owner refused every remote request whose raw key hashed elsewhere.
+`TestAPartitionedNamespaceServesRemoteCallers` failed with ErrNotOwner from the
+true owner, and passes now. No earlier test sent a remote request into a
+partitioned namespace.
+
+**Found on the way, not by the review: two races in a graceful drain at RF=1.**
+Running the suite after that fix, `TestDrainSavesDataWithoutReplication` — long
+recorded here as flaky — failed more often. Logging adoption and eviction in
+failing runs separated two mechanisms:
+
+1. *A copy stranded in the replica store.* A receiver checked whether it owned
+   the key against its old view, the view changed and its reconciliation ran,
+   and only then was the copy filed as a replica — after the one pass that would
+   have promoted it. Unreadable until the next tick. The handler now checks
+   ownership again after filing, and promotes the key at once if it is its own.
+2. *A copy dropped.* At RF=1 reconciliation dropped every replica, including a
+   hand-off whose receiver had not yet seen the sender leave — the only copy of
+   the key. It now keeps a copy whose sender it still ranks as the owner, and
+   never a copy of a key it owns itself; the second rule was found by logging
+   every eviction across 1,500 runs and catching two, each of a key owned by the
+   node that dropped it.
+
+The rate went from 27 failures in 250 runs to 0 in 1,500. These are timing
+races, so the mutation audit — one run per entry — cannot hold them, and they
+are not in it; the evidence is the repetition count, recorded here.
+
+**Also fixed: a harness bug.** `ownership_move_test.go`'s transport wrapper hid
+`Ready`, so `New` returned before the node was serving and the node was
+sometimes never admitted: 40 failures in 60 runs without `-race`, none with it.
+The two older wrappers already forwarded it.
+
 ### A latency test that passed for the wrong reason
 
 `TestLatencyHistogramsRecordRemoteOperations`, written in the coverage sweep,

@@ -433,6 +433,33 @@ func (s *Store) Shed(target int64) int64 {
 	return freed
 }
 
+// EvictWhere removes every replica in a namespace for which keep returns false,
+// reporting how many it dropped. It is [Store.Evict] with the entry visible to
+// the predicate, for decisions that depend on who sent a copy and not only on
+// its key.
+func (s *Store) EvictWhere(namespace string, keep func(key string, e Entry) bool) int {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+
+	dropped := 0
+	for key, e := range nr.entries {
+		if keep(key, e) {
+			continue
+		}
+		delete(nr.entries, key)
+		s.bytes.Add(-size(key, e))
+		dropped++
+	}
+	return dropped
+}
+
 // Keys returns the keys held for a namespace, sorted for determinism.
 //
 // Used by catch-up, which compares what a node holds against what it should
