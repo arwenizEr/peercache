@@ -1150,6 +1150,33 @@ mutate "a synchronous write below the replication factor is not counted" \
   '	if false {' \
   'TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy' .
 
+# --- Question 37, options 2 and 3: WithRequireReplicationFactor ---
+#
+# Decision 0021. Each entry was applied and reverted by hand before being
+# written here.
+
+# The opt-in refusal itself. Without it the strict namespace acknowledges the
+# isolated write exactly as the default one does, which is the behaviour the
+# option exists to change.
+mutate "a namespace requiring its factor still acknowledges below it"   namespace.go   'return n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'return false && n.opts.RequireReplicationFactor && n.opts.SyncReplication &&'   'TestRequireReplicationFactorRefusesAnIsolatedWrite$' .
+
+# The refusal after a partial placement. An isolated node has no targets and
+# takes the other branch, so only a cluster with some replicas but not enough
+# reaches this one.
+mutate "a write placed on some replicas but not enough is acknowledged"   namespace.go   '	// and takes precedence: it is the more specific diagnosis.
+	if n.underFactor(len(targets)) {'   '	// and takes precedence: it is the more specific diagnosis.
+	if false {'   'TestRequireReplicationFactorRefusesThroughAForwardedWrite$' .
+
+# The sentinel has to survive gRPC, or a write through any non-owner sees a
+# generic unreachable error and the distinction exists only for local writes.
+mutate "ErrUnderReplicated stops surviving the gRPC hop"   internal/transport/client.go   '	case codes.Internal:
+		// gRPC raises Internal itself'   '	case codes.DataLoss:
+		// gRPC raises Internal itself'   'TestSentinelErrorsSurviveTheHop$' ./internal/transport/
+
+# Requiring the factor under asynchronous replication cannot be honoured. Letting
+# it through would be an option that silently does nothing.
+mutate "requiring the factor without sync replication is accepted"   internal/core/options.go   'if o.RequireReplicationFactor && !o.SyncReplication {'   'if false {'   'TestNamespaceOptionValidationSurfaces$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

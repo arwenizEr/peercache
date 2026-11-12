@@ -2,6 +2,7 @@ package peercache_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -254,5 +255,154 @@ func TestSyncReplicationRefusesWhenReplicasAreUnreachable(t *testing.T) {
 		t.Fatal("every synchronous write was acknowledged while the writer could reach " +
 			"none of its replicas. Synchronous replication exists to place copies " +
 			"before returning; if it cannot, it must say so")
+	}
+}
+
+// TestRequireReplicationFactorRefusesAnIsolatedWrite is option 3 of open
+// question 37, opt-in: the same isolation as
+// TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy, on a namespace that asked
+// for its replication factor to be honoured.
+//
+// The write must not be acknowledged. It must say why, distinguishably from an
+// unreachable replica, so a caller can tell "this node is cut off" from "a peer
+// is slow". And the value must be held locally — the same contract as every
+// other synchronous failure, because there is no rollback in this system.
+func TestRequireReplicationFactorRefusesAnIsolatedWrite(t *testing.T) {
+	f := newFabricFull(t, 5, false, testkit.MembershipConfig{
+		FailureTimeout: 300 * time.Millisecond,
+		JoinDelay:      200 * time.Millisecond,
+	}, ownership.DefaultActivationDelay)
+	ctx := context.Background()
+
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("strict",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication(),
+			peercache.WithRequireReplicationFactor())
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+
+	isolated := f.ids[0]
+	f.net.Partition([]string{isolated}, append([]string(nil), f.ids[1:]...))
+	t.Cleanup(func() { f.net.Heal() })
+
+	f.clk.Advance(4 * testkit.DefaultFailureTimeout)
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	waitForCache(t, "the isolated node to see a cluster of one", func() bool {
+		return f.caches[isolated].Stats().Members == 1
+	})
+
+	const key = "strict/only-copy"
+	err := openNS(isolated).Set(ctx, key, []byte("held"), 0)
+	if !errors.Is(err, peercache.ErrUnderReplicated) {
+		t.Fatalf("Set on a node whose view holds 1 member, under RF=3 sync with "+
+			"WithRequireReplicationFactor, returned %v; want ErrUnderReplicated. "+
+			"Returning nil is the acknowledgement question 37 is about", err)
+	}
+	if errors.Is(err, peercache.ErrNodeUnreachable) {
+		t.Fatalf("Set returned %v, which also matches ErrNodeUnreachable. The two "+
+			"call for different responses and must be distinguishable", err)
+	}
+
+	got, gerr := openNS(isolated).Get(ctx, key)
+	if gerr != nil || string(got) != "held" {
+		t.Fatalf("Get after a refused write = %q, %v; want the value held locally. "+
+			"A refused synchronous write is reported, not rolled back", got, gerr)
+	}
+
+	if n := f.caches[isolated].Stats().DegradedWrites; n != 0 {
+		t.Fatalf("DegradedWrites = %d after a write that was refused. The counter "+
+			"means acknowledged below the factor, and this one was not acknowledged", n)
+	}
+	if n := f.caches[isolated].Stats().UnderReplicatedRefusals; n != 1 {
+		t.Fatalf("UnderReplicatedRefusals = %d after one refused write, want 1", n)
+	}
+	assertMetric(t, f.caches[isolated], "peercache_under_replicated_refusals_total")
+
+	// Deletes go through the same fan-out and carry the same promise.
+	if err := openNS(isolated).Delete(ctx, key); !errors.Is(err, peercache.ErrUnderReplicated) {
+		t.Fatalf("Delete on the isolated node returned %v; want ErrUnderReplicated", err)
+	}
+}
+
+// TestRequireReplicationFactorRefusesThroughAForwardedWrite covers the path
+// where the caller is not the owner. The refusal happens on the owner and has
+// to survive the hop back, or a caller writing through any other pod would see
+// a generic failure and the distinction would exist only for local writes.
+//
+// Two nodes cannot hold three copies however healthy they are, so this needs no
+// partition at all.
+func TestRequireReplicationFactorRefusesThroughAForwardedWrite(t *testing.T) {
+	f := newFabric(t, 2)
+	ctx := context.Background()
+
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("strict2",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication(),
+			peercache.WithRequireReplicationFactor())
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+
+	forwarded := 0
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("strict2/%d", i)
+		via := f.ids[i%2]
+		before := f.caches[via].Stats().UnderReplicatedRefusals
+		err := openNS(via).Set(ctx, key, []byte("v"), 0)
+		if !errors.Is(err, peercache.ErrUnderReplicated) {
+			t.Fatalf("Set %s via %s on a two-node cluster at RF=3 returned %v; want "+
+				"ErrUnderReplicated", key, via, err)
+		}
+		// The refusal is counted where it happened. If the node the write
+		// was sent to did not count it, the owner did, and the error
+		// crossed the hop.
+		if f.caches[via].Stats().UnderReplicatedRefusals == before {
+			forwarded++
+		}
+	}
+	if forwarded == 0 {
+		t.Fatal("all 20 writes were refused by the node they were sent to; none was " +
+			"forwarded to its owner, so the hop this test is about was never exercised")
+	}
+}
+
+// TestRequireReplicationFactorAcceptsWhenTheFactorIsMet is the option's other
+// half. A namespace that refuses healthy writes is one nobody will enable.
+func TestRequireReplicationFactorAcceptsWhenTheFactorIsMet(t *testing.T) {
+	f := newFabric(t, 5)
+	ctx := context.Background()
+
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("strict-healthy",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication(),
+			peercache.WithRequireReplicationFactor())
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("strict-healthy/%d", i)
+		via := f.ids[i%len(f.ids)]
+		if err := openNS(via).Set(ctx, key, []byte("v"), 0); err != nil {
+			t.Fatalf("Set %s via %s on a settled five-node cluster at RF=3: %v", key, via, err)
+		}
+	}
+	for _, id := range f.ids {
+		if n := f.caches[id].Stats().UnderReplicatedRefusals; n != 0 {
+			t.Fatalf("%s refused %d writes on a cluster large enough for its factor", id, n)
+		}
 	}
 }

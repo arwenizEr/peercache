@@ -951,7 +951,7 @@ caller to return it to.
 
 ---
 
-## 37. Synchronous replication acknowledges writes below the replication factor — M8, open
+## 37. Synchronous replication acknowledges writes below the replication factor — M8, resolved post-M8
 
 Found by the deterministic simulation, seed `243287519653701681`, reduced to
 `TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy`.
@@ -1021,6 +1021,32 @@ correctness under failure — counting is reversible, refusing is not, and the
 counter now makes the window visible enough to decide on evidence rather than on
 argument. What would settle it is a deployment's `degraded_writes` rate: if it is
 zero outside genuine partitions, option 3 costs nothing anyone will notice.
+
+**Resolved: options 2 and 3, opt-in per namespace.** See
+`docs/decisions/0021-refusing-writes-below-the-factor-is-opt-in.md`.
+
+Reading the write path showed the two options are one. A synchronous write is
+stored on the owner before it fans out and nothing rolls it back — an unreachable
+replica already makes `Set` fail with the value held locally — so "refuse" can
+only mean "report as not confirmed". What was left to decide was the default.
+
+`WithRequireReplicationFactor()` makes a synchronous write below the factor fail
+with `ErrUnderReplicated`, counted in `Stats().UnderReplicatedRefusals` and
+`peercache_under_replicated_refusals_total`. Without it, behaviour is unchanged
+and `DegradedWrites` counts as before. It is off by default because the same
+check, on everywhere, refuses every write on a cluster smaller than the factor —
+including a single development node and a pod that has not yet joined — and a
+node cannot tell those from isolation.
+
+Pinned by `TestRequireReplicationFactorRefusesAnIsolatedWrite`,
+`TestRequireReplicationFactorRefusesThroughAForwardedWrite`,
+`TestRequireReplicationFactorAcceptsWhenTheFactorIsMet`, the
+`ErrUnderReplicated` case of `TestSentinelErrorsSurviveTheHop`, and
+`ExampleWithRequireReplicationFactor`. The pre-existing
+`TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy` still pins the default.
+
+**What would reopen it:** evidence that `degraded_writes` is non-zero only during
+genuine partitions, which would make flipping the default cheap.
 
 ---
 

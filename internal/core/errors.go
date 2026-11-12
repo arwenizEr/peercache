@@ -101,4 +101,9 @@ var (
 	// It wraps nothing about why; the cause is attached with %w by the
 	// transport.
 	ErrNodeUnreachable = errors.New("peercache: node unreachable")
+
+	// ErrUnderReplicated means a synchronous write could not be placed on as
+	// many nodes as its namespace's replication factor asks for, and the
+	// namespace was configured to refuse rather than acknowledge it.
+	ErrUnderReplicated = errors.New("peercache: write held by fewer nodes than its replication factor")
 )

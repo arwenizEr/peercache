@@ -390,6 +390,7 @@ func TestSentinelErrorsSurviveTheHop(t *testing.T) {
 		{"group overloaded", core.ErrGroupOverloaded},
 		{"func not registered", core.ErrFuncNotRegistered},
 		{"invalid option", core.ErrInvalidOption},
+		{"under replicated", core.ErrUnderReplicated},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

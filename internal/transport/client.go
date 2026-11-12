@@ -196,6 +196,11 @@ func toStatus(err error) error {
 		code = codes.InvalidArgument
 	case errors.Is(err, core.ErrClosed):
 		code = codes.Unavailable
+	case errors.Is(err, core.ErrUnderReplicated):
+		// No gRPC code means "written, but not to enough nodes", and
+		// borrowing one would mislead anything that reads codes alone.
+		// Internal plus the sentinel's text, recovered by fromStatus.
+		code = codes.Internal
 	}
 	return status.Error(code, err.Error())
 }
@@ -242,6 +247,14 @@ func fromStatus(err error, node core.Node) error {
 		// the message decides and the default is unreachable.
 		if containsSentinel(st.Message(), core.ErrActivationPending.Error()) {
 			sentinel = core.ErrActivationPending
+		} else {
+			sentinel = core.ErrNodeUnreachable
+		}
+	case codes.Internal:
+		// gRPC raises Internal itself for a broken stream, so it stays
+		// unreachable unless the message names the sentinel.
+		if containsSentinel(st.Message(), core.ErrUnderReplicated.Error()) {
+			sentinel = core.ErrUnderReplicated
 		} else {
 			sentinel = core.ErrNodeUnreachable
 		}

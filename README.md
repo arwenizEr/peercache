@@ -60,7 +60,10 @@ the feature list rather than after it.
   separates it from a healthy write — **alert on any non-zero value**. The
   neighbouring case is correct and worth knowing: while the writer still *sees*
   its replicas but cannot reach them, the write fails rather than being
-  acknowledged.
+  acknowledged. A namespace opened with `WithRequireReplicationFactor()` refuses
+  these writes with `ErrUnderReplicated` instead — trading availability during a
+  partition, and on any cluster smaller than the factor, for a `nil` that always
+  means the factor was reached. Off by default.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write
   with *default* options — replication factor 1 — and options cannot be changed
@@ -146,8 +149,9 @@ what they had missed. It found three things worth naming: a five-byte frame that
 could allocate 4 GiB on any node that received it, a partition heal that
 discarded replicas instead of moving them, and a synchronous write that reports
 success while holding one copy of three. The first two are fixed; the third is
-counted and documented, because refusing it is an availability decision rather
-than a bug fix. `docs/verification.md` has the full account.
+counted by default and refused on request (`WithRequireReplicationFactor`),
+because refusing it everywhere is an availability decision rather than a bug
+fix. `docs/verification.md` has the full account.
 
 `ErrNotImplemented` no longer marks unbuilt scaffolding — nothing returns it for
 that reason any more. It remains reachable in two places

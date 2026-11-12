@@ -2083,6 +2083,34 @@ convert an available system into an unavailable one during a partition, which is
 an AP/CP decision that should be taken deliberately and on evidence rather than
 as a side effect of tidying up a metric.
 
+### After M8: question 37's cure, opt-in
+
+Decision 0021 added `WithRequireReplicationFactor`, which refuses the same write
+with `ErrUnderReplicated`. The default is unchanged and the existing
+`TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy` still pins it.
+
+Four mutation entries were applied by hand on the working tree and reverted
+from a copy, before the script could run them on a clean one:
+
+| Mutation | Caught by |
+|---|---|
+| the strict namespace acknowledges below the factor | `TestRequireReplicationFactorRefusesAnIsolatedWrite` |
+| the refusal after a partial placement is removed | `TestRequireReplicationFactorRefusesThroughAForwardedWrite` |
+| `ErrUnderReplicated` stops surviving the gRPC hop | `TestSentinelErrorsSurviveTheHop` |
+| the option is accepted without sync replication | `TestNamespaceOptionValidationSurfaces` |
+
+All four caught. The second one needs its own test: an isolated node has no
+replica targets at all and takes the other branch, so only a cluster with some
+replicas but not enough — two nodes at RF=3 — reaches it.
+
+**The example found a bug the tests did not.** `ExampleWithRequireReplicationFactor`
+runs a single node with no membership, the plainest case of a write below its
+factor, and expected `DegradedWrites` to read 1. It read 0. `Stats()` filled the
+counter only inside its membership block, so a cache without membership counted
+the write and reported nothing. Every existing test used a fabric with membership
+and could not see it. Both counters now sit outside that block, beside
+`MailboxRejections`, for the reason its comment already gave.
+
 ---
 
 ## The acceptance map

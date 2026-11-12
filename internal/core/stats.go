@@ -198,9 +198,21 @@ type Stats struct {
 	// copy lands, so counting them would produce a number equal to the write
 	// rate; the async window is measured in docs/benchmarks.md instead.
 	//
-	// See docs/decisions/open.md question 37 for why this is counted rather
-	// than refused.
+	// Counted, not refused, unless the namespace was opened with
+	// WithRequireReplicationFactor; such writes are refused and counted in
+	// UnderReplicatedRefusals instead. See docs/decisions/open.md question 37.
 	DegradedWrites int64
+
+	// UnderReplicatedRefusals counts synchronous writes refused with
+	// [ErrUnderReplicated] because this node could not place as many copies
+	// as the namespace's replication factor asked for, in a namespace that
+	// requires it. It is the refusing counterpart of DegradedWrites: the same
+	// event, on a namespace configured to fail it rather than acknowledge it.
+	//
+	// The caller was told, so this is not a silent failure. It is still worth
+	// watching: a sustained rate means a node is cut off, or the cluster is
+	// smaller than the factor, and every write to those namespaces is failing.
+	UnderReplicatedRefusals int64
 
 	// StateEscapes counts uses of a GroupState outside the turn that issued
 	// it. Any non-zero value is an application bug.

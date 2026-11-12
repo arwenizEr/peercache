@@ -194,6 +194,44 @@ func WithSyncReplication() NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.SyncReplication = true }
 }
 
+// WithRequireReplicationFactor makes a synchronous write that cannot reach the
+// namespace's replication factor fail with [ErrUnderReplicated] rather than
+// succeed with fewer copies.
+//
+// Without it, synchronous replication places every copy this node's membership
+// view allows and reports success. Normally that is every copy. But a node cut
+// off from the cluster eventually sees itself alone, ranks itself the owner of
+// everything, and acknowledges each write holding the single copy it has — for
+// as long as the partition lasts. Stats().DegradedWrites counts those, and the
+// caller cannot tell them apart from a healthy write.
+//
+// With it, those writes fail instead. That is a choice of correctness over
+// availability for this namespace, and it has two costs worth stating before
+// turning it on:
+//
+//   - A cluster smaller than the factor refuses every write. That includes one
+//     node running alone in development, and a pod that has started but not
+//     yet joined anyone.
+//   - An isolated node stops accepting writes for this namespace until it can
+//     see enough peers again, rather than accepting them and losing them if
+//     it dies.
+//
+// A refused write is still held by its owner. There is no rollback, which is
+// also true of a synchronous write refused because a replica did not answer.
+//
+// This does not make writes agree on anything across nodes. A node that can
+// see enough peers to place its copies accepts the write whether or not those
+// peers agree with each other about membership, and the two-activation window
+// of a partition is unchanged. What it changes is that a nil return now always
+// means the factor was reached from where the writer stood.
+//
+// It requires [WithSyncReplication], because an asynchronous write returns
+// before it can know how many copies landed. Using it without that is rejected
+// with [ErrInvalidOption]. At replication factor 1 it has no effect.
+func WithRequireReplicationFactor() NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.RequireReplicationFactor = true }
+}
+
 // WithReplicationFactor sets the number of copies held for each key, from 1 to
 // 3. One means the owner only. A value outside the range is rejected at
 // construction with [ErrInvalidOption].

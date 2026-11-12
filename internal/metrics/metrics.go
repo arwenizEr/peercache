@@ -107,6 +107,10 @@ func Collect(s core.Stats) []Metric {
 			"Synchronous writes acknowledged holding fewer copies than the namespace's replication factor asked for. " +
 				"Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns success. Any non-zero value means a caller was told a write reached RF nodes when it did not.",
 			float64(s.DegradedWrites)},
+		{"peercache_under_replicated_refusals_total", Counter,
+			"Synchronous writes refused with ErrUnderReplicated because fewer copies than the replication factor could be placed, in namespaces opened with WithRequireReplicationFactor. " +
+				"The caller was told. A sustained rate means a node is cut off from the cluster, or the cluster is smaller than the factor, and every write to those namespaces is failing.",
+			float64(s.UnderReplicatedRefusals)},
 		{"peercache_state_escapes_total", Counter,
 			"Uses of a group state outside the turn that issued it. " +
 				"Any non-zero value is an application bug: a group function retained its state and used it later, and those calls silently did nothing. There is no error for this — the caller is not inside a Call — so this counter is the only way it is ever visible.",

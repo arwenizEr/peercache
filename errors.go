@@ -107,4 +107,22 @@ var (
 	// ErrNodeUnreachable means the transport could not deliver to a peer.
 	// The underlying cause is wrapped.
 	ErrNodeUnreachable = core.ErrNodeUnreachable
+
+	// ErrUnderReplicated means a synchronous write reached fewer nodes than
+	// its namespace's replication factor, in a namespace opened with
+	// [WithRequireReplicationFactor]. Without that option the same write is
+	// acknowledged and counted in Stats().DegradedWrites instead.
+	//
+	// The value is held by the owner, and by whichever replicas this node
+	// could place it on. Like every synchronous failure it is reported, not
+	// rolled back: a Get on the owner may return it. Retrying is safe for
+	// Set and Delete, which are idempotent, and will keep failing until this
+	// node's membership view is large enough for the factor again.
+	//
+	// It is distinct from [ErrNodeUnreachable]. That means a replica this
+	// node believes in did not answer; this means this node does not believe
+	// in enough replicas — usually because it has been cut off from the
+	// cluster, or because the cluster is smaller than the factor. See
+	// docs/decisions/open.md question 37.
+	ErrUnderReplicated = core.ErrUnderReplicated
 )

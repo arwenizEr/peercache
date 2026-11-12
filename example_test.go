@@ -548,3 +548,50 @@ func ExampleCache_WriteMetrics() {
 	// peercache_owned_keys 1
 	// peercache_split_brain_detections_total 0
 }
+
+// ExampleWithRequireReplicationFactor shows what the option changes, on the
+// smallest cluster that exposes it: one node, a namespace asking for three
+// copies.
+//
+// Without the option the write succeeds holding one copy, and only
+// Stats().DegradedWrites says so. With it the write fails with
+// ErrUnderReplicated — and the value is still held, because a refused
+// synchronous write is reported rather than rolled back.
+func ExampleWithRequireReplicationFactor() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	ctx := context.Background()
+
+	lenient := cache.Namespace("lenient",
+		peercache.WithReplicationFactor(3),
+		peercache.WithSyncReplication())
+	strict := cache.Namespace("strict",
+		peercache.WithReplicationFactor(3),
+		peercache.WithSyncReplication(),
+		peercache.WithRequireReplicationFactor())
+
+	fmt.Println("lenient Set:", lenient.Set(ctx, "k", []byte("v"), 0))
+	fmt.Println("degraded writes:", cache.Stats().DegradedWrites)
+
+	err = strict.Set(ctx, "k", []byte("v"), 0)
+	fmt.Println("strict Set refused:", errors.Is(err, peercache.ErrUnderReplicated))
+	held, _ := strict.Get(ctx, "k")
+	fmt.Printf("still held locally: %s\n", held)
+
+	// Asynchronous replication cannot know how many copies landed, so asking
+	// it to refuse is a configuration error.
+	async := cache.Namespace("async",
+		peercache.WithReplicationFactor(3),
+		peercache.WithRequireReplicationFactor())
+	fmt.Println("without sync:", errors.Is(async.Set(ctx, "k", nil, 0), peercache.ErrInvalidOption))
+	// Output:
+	// lenient Set: <nil>
+	// degraded writes: 1
+	// strict Set refused: true
+	// still held locally: v
+	// without sync: true
+}

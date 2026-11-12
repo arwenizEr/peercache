@@ -295,9 +295,14 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 	// neither is tested.
 	targets, _, err := n.cache.replicaTargets(n.groupKeyFor(key), n.opts.ReplicationFactor)
 	if err != nil || len(targets) == 0 {
-		// No resolvable replicas is not a write failure. It means this
-		// node is alone, or membership is not settled, and refusing the
-		// write would make a single-node cluster unable to accept one.
+		// No resolvable replicas is not a write failure by default. It
+		// means this node is alone, or membership is not settled, and
+		// refusing the write would make a single-node cluster unable to
+		// accept one. A namespace that asked for its factor to be honoured
+		// gets that refusal anyway; it chose it.
+		if n.underFactor(len(targets)) {
+			return n.refuseUnderFactor(len(targets))
+		}
 		n.countDegraded(len(targets))
 		return nil
 	}
@@ -312,8 +317,30 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 	}); err != nil {
 		return err
 	}
+	// The copies that could be placed are placed before refusing, so a
+	// refused write is held as widely as this node's view allowed rather
+	// than only by the owner. An unreachable replica fails the write above
+	// and takes precedence: it is the more specific diagnosis.
+	if n.underFactor(len(targets)) {
+		return n.refuseUnderFactor(len(targets))
+	}
 	n.countDegraded(len(targets))
 	return nil
+}
+
+// underFactor reports whether a synchronous write that placed `placed` replica
+// copies must be refused, because its namespace requires the factor and the
+// writer's own copy plus those does not reach it.
+func (n *namespace) underFactor(placed int) bool {
+	return n.opts.RequireReplicationFactor && n.opts.SyncReplication &&
+		1+placed < n.opts.ReplicationFactor
+}
+
+// refuseUnderFactor counts and reports a write refused by underFactor.
+func (n *namespace) refuseUnderFactor(placed int) error {
+	n.cache.underReplicated.Add(1)
+	return fmt.Errorf("peercache: namespace %q: %d of %d copies placed (this node sees %d members): %w",
+		n.name, 1+placed, n.opts.ReplicationFactor, n.cache.memberCount(), ErrUnderReplicated)
 }
 
 // countDegraded records a synchronous write that was acknowledged holding fewer

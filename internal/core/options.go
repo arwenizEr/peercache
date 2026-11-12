@@ -120,6 +120,11 @@ type NamespaceOptions struct {
 	// its slowest replica, because the group's single activation holds
 	// while the fan-out completes.
 	SyncReplication bool
+	// RequireReplicationFactor makes a synchronous write that cannot be
+	// placed on ReplicationFactor nodes fail with [ErrUnderReplicated]
+	// instead of succeeding below the factor. Requires SyncReplication.
+	// See docs/decisions/open.md question 37.
+	RequireReplicationFactor bool
 	// ReplicationFactor is the number of copies, between 1 and 3. 1 means
 	// the owner only.
 	ReplicationFactor int
@@ -195,6 +200,10 @@ func (o *NamespaceOptions) Validate() error {
 	if o.ReplicationFactor < 1 || o.ReplicationFactor > MaxReplicationFactor {
 		return fmt.Errorf("peercache: replication factor %d out of range 1..%d: %w",
 			o.ReplicationFactor, MaxReplicationFactor, ErrInvalidOption)
+	}
+	if o.RequireReplicationFactor && !o.SyncReplication {
+		return fmt.Errorf("peercache: requiring the replication factor needs synchronous replication; "+
+			"an asynchronous write returns before it knows how many copies landed: %w", ErrInvalidOption)
 	}
 	if o.L1TTL == 0 {
 		return fmt.Errorf("peercache: L1 TTL must be positive, got %v: %w", o.L1TTL, ErrInvalidOption)

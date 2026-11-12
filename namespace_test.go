@@ -613,6 +613,9 @@ func TestNamespaceOptionValidationSurfaces(t *testing.T) {
 		"unknown codec":               peercache.WithCodec("no-such-codec"),
 		"unknown compressor":          peercache.WithCompression("no-such-compressor", 64),
 		"negative threshold":          peercache.WithCompression("lz4", -1),
+		// Asynchronous replication cannot know how many copies landed
+		// when it returns, so it has nothing to refuse with.
+		"require factor without sync": peercache.WithRequireReplicationFactor(),
 	}
 	for name, opt := range tests {
 		t.Run(name, func(t *testing.T) {

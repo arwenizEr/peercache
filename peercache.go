@@ -363,6 +363,10 @@ type cache struct {
 	// than the namespace's replication factor asked for. See open question 37.
 	degradedWrites atomic.Int64
 
+	// underReplicated counts synchronous writes refused because fewer copies
+	// than the factor could be placed. See WithRequireReplicationFactor.
+	underReplicated atomic.Int64
+
 	// serving tracks the goroutine running Transport.Serve, so that Close
 	// can wait for it rather than leaving it to notice on its own. M3 lost a
 	// milestone to a Close that only signalled; this one waits.
@@ -513,6 +517,11 @@ func (c *cache) Stats() Stats {
 		// still has groups, still has mailboxes, and can still saturate one.
 		MailboxRejections: groups.Rejections,
 		StateEscapes:      groups.Escapes,
+		// Also outside it, for the same reason. A single node asked for three
+		// copies is the plainest case of a write below its factor; inside the
+		// block, the counter rose and Stats reported zero.
+		DegradedWrites:          c.degradedWrites.Load(),
+		UnderReplicatedRefusals: c.underReplicated.Load(),
 	}
 	if c.replicas != nil {
 		stats.VersionConflicts = c.replicas.VersionConflicts()
@@ -546,7 +555,6 @@ func (c *cache) Stats() Stats {
 		stats.KeysHandedOff = c.keysHandedOff.Load()
 		stats.KeysAdopted = c.keysAdopted.Load()
 		stats.ImplicitNamespaces = c.implicitNamespaces.Load()
-		stats.DegradedWrites = c.degradedWrites.Load()
 		rehomed, returned := c.handoff.counters()
 		stats.ReplicasRehomed = rehomed
 		stats.ReplicasRetained = returned
