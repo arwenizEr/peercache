@@ -174,7 +174,12 @@ func toStatus(err error) error {
 	if err == nil {
 		return nil
 	}
-	code := codes.Internal
+	// Unknown, not Internal, for an error this mapping does not recognise:
+	// it is the handler's own failure — a loader whose backend is down — and
+	// the peer did answer. gRPC raises Internal itself for a broken stream,
+	// which fromStatus reads as unreachable; sharing that code made every
+	// application error look like a network fault.
+	code := codes.Unknown
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		code = codes.DeadlineExceeded
@@ -250,6 +255,11 @@ func fromStatus(err error, node core.Node) error {
 		} else {
 			sentinel = core.ErrNodeUnreachable
 		}
+	case codes.Unknown:
+		// The handler failed for a reason of its own and said so. No
+		// sentinel: there is nothing to match on but the message, which
+		// is kept whole. Not unreachable — the peer answered.
+		return fmt.Errorf("transport: %s: %s", node.ID, st.Message())
 	case codes.Internal:
 		// gRPC raises Internal itself for a broken stream, so it stays
 		// unreachable unless the message names the sentinel.

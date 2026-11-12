@@ -711,3 +711,29 @@ func settle() {
 		runtime.Gosched()
 	}
 }
+
+// TestAnApplicationErrorIsNotReportedAsUnreachable: a handler that fails for a
+// reason of its own — a loader whose database is down — must not reach the
+// caller as ErrNodeUnreachable. The peer answered. A caller told it did not
+// would retry elsewhere, or alert on a network that is fine.
+func TestAnApplicationErrorIsNotReportedAsUnreachable(t *testing.T) {
+	a := newPeer(t, "node-a", nil)
+	b := newPeer(t, "node-b", nil)
+	b.handler.respond = func(context.Context, string, []byte) ([]byte, error) {
+		return nil, errors.New("backend unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+
+	_, err := dial(t, a, b).Invoke(ctx, transport.MethodGet, []byte("k"))
+	if err == nil {
+		t.Fatal("the handler failed and Invoke returned nil")
+	}
+	if errors.Is(err, core.ErrNodeUnreachable) {
+		t.Fatalf("a handler's own failure came back as %v, which wraps ErrNodeUnreachable: "+
+			"the peer answered", err)
+	}
+	if !strings.Contains(err.Error(), "backend unavailable") {
+		t.Fatalf("the handler's message was lost: %v", err)
+	}
+}

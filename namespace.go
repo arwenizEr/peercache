@@ -650,6 +650,15 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 	if err := n.status(); err != nil {
 		return nil, err
 	}
+	// Checked before routing. The loader is namespace configuration, the
+	// same on every pod, so a namespace without one has no loader anywhere —
+	// and asking the owner anyway came back as "not found", which told the
+	// caller the key did not exist when what was missing was the loader. A
+	// test of the remote path found that; the local path always said
+	// ErrNoLoader.
+	if n.opts.Loader == nil {
+		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
+	}
 
 	p, err := n.cache.route.locate(n.groupKeyFor(key))
 	if err != nil {

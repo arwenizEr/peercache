@@ -1325,6 +1325,86 @@ mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExp
 
 mutate "a replica at its deadline still counts as live"   internal/replication/replica.go   '	return left, left > 0'   '	return left, left >= 0'   'TestRemainingAndDeadline$' ./internal/replication/
 
+# --- The coverage sweep: paths that had never run ---
+
+mutate "a Set gives up when ownership moved under it" \
+  namespace.go \
+  '			return n.cache.route.remoteSet(ctx, next, n.name, key, val, ttl)
+		}' \
+  '			return err
+		}' \
+  'TestASetFollowsOwnershipThatMovedUnderIt$' .
+
+mutate "a Call gives up when ownership moved under it" \
+  group.go \
+  '	return g.cache.route.remoteCall(ctx, next, g.id, fn, arg)
+}' \
+  '	return nil, err
+}' \
+  'TestAGroupCallFollowsOwnershipThatMovedUnderIt$' .
+
+mutate "GetOrLoad without a loader asks the owner anyway" \
+  namespace.go \
+  '	if n.opts.Loader == nil {
+		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
+	}
+
+	p, err := n.cache.route.locate' \
+  '	p, err := n.cache.route.locate' \
+  'TestRemoteGetOrLoadWithoutALoaderOnTheOwner$' .
+
+mutate "a peer's own failure is reported as unreachable" \
+  internal/transport/client.go \
+  '	code := codes.Unknown' \
+  '	code := codes.Internal' \
+  'TestAnApplicationErrorIsNotReportedAsUnreachable$' ./internal/transport/
+
+mutate "probation swallows the departure announcement" \
+  probation.go \
+  'func (p *probationAuthority) Leave(ctx context.Context) error { return p.inner.Leave(ctx) }' \
+  'func (p *probationAuthority) Leave(ctx context.Context) error { return nil }' \
+  'TestDrainUnderJoinProbationAnnouncesTheDeparture$' .
+
+mutate "a second Drain hands everything off again" \
+  drain.go \
+  '	if !c.readiness.draining.CompareAndSwap(false, true) {' \
+  '	if c.readiness.draining.Swap(true) && false {' \
+  'TestASecondDrainDoesNothing$' .
+
+mutate "Drain hides a failed departure announcement" \
+  drain.go \
+  '		problems = errors.Join(problems, fmt.Errorf("peercache: announcing departure: %w", err))' \
+  '		_ = fmt.Errorf("peercache: announcing departure: %w", err)' \
+  'TestDrainReportsAFailedDepartureAndStillHandsOff$' .
+
+mutate "a remote BatchGet returns nothing" \
+  handler.go \
+  '		out.Entries = append(out.Entries, wire.BatchEntry{' \
+  '		_ = append(out.Entries, wire.BatchEntry{' \
+  'TestBatchGetAcrossNodes$' .
+
+mutate "a remote Exists is always false" \
+  namespace.go \
+  '	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrNotFound):' \
+  '	case err == nil:
+		return false, nil
+	case errors.Is(err, ErrNotFound):' \
+  'TestExistsAcrossNodes$' .
+
+mutate "remote latency is never observed" \
+  remote.go \
+  '			r.cache.remoteLatency.Observe(uint64(elapsed))' \
+  '			_ = elapsed' \
+  'TestLatencyHistogramsRecordRemoteOperations$' .
+
+mutate "lifecycle events are never delivered" \
+  internal/actor/record.go \
+  '		r.rt.opts.OnEvent(e)' \
+  '		_ = e' \
+  'TestEventHandlerSeesEveryLifecycleEvent$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

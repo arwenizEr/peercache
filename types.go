@@ -79,8 +79,12 @@ const (
 	EventUpdate = core.EventUpdate
 	// EventDelete is emitted when a key is removed by a caller.
 	EventDelete = core.EventDelete
-	// EventEvict is emitted when a key is removed by TTL or capacity
-	// pressure rather than by a caller.
+	// EventEvict is reserved and never emitted. It was documented as
+	// "emitted when a key is removed by TTL or capacity pressure", but
+	// events describe group state, and group state has neither a TTL nor a
+	// capacity limit — so there is nothing to evict. It stays exported
+	// because removing a constant breaks anyone who switched on it. Do not
+	// write code that waits for it. See docs/decisions/open.md question 43.
 	EventEvict = core.EventEvict
 	// EventActivate is emitted when a group activates on this node.
 	EventActivate = core.EventActivate

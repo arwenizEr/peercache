@@ -988,6 +988,12 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
 | `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |
 
+**A peer's own failure is not `ErrNodeUnreachable`.** When the peer answered and
+the answer was a failure — a loader whose database is down, say — the error
+carries the peer's message and no sentinel. `ErrNodeUnreachable` means the peer
+did not answer. Until the coverage sweep after M9 the two were the same over
+gRPC, so a backend outage behind one owner looked like a network fault.
+
 `ErrGroupOverloaded` is backpressure working as designed. Blocking indefinitely
 would convert one slow group into a cluster-wide stall.
 

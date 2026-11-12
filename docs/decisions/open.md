@@ -1370,3 +1370,24 @@ does not raise it.
 **What would force it:** any deployment running asynchronous replication with a
 non-zero `peercache_replications_dropped_total` and deletes followed by rewrites.
 
+---
+
+## 43. EventEvict is exported, documented, and never emitted — post-M9, documented
+
+Found by the first test of `WithEventHandler`, which no test had configured.
+`EventEvict` was documented as "emitted when a key is removed by TTL or capacity
+pressure rather than by a caller". Nothing emits it. Events describe *group*
+state — the keys a registered function sets on a `GroupState` — and group state
+has no TTL and no capacity limit. M9's shedding removes namespace data, which
+emits no events at all.
+
+**Picked:** the same treatment as question 36's `ErrStateEscaped`. The constant
+stays, because removing an exported constant breaks any caller that switched on
+it; its documentation now says it is reserved and never emitted.
+`TestEventHandlerSeesEveryLifecycleEvent` asserts the exact sequence a group's
+life produces, so an emission added later is a visible change to that test.
+
+**What would force a change:** group state gaining a TTL or a limit, at which
+point the event has something to mean; or a request for events on namespace
+data, which would be a new event source rather than this constant.
+

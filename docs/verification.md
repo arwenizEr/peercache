@@ -2111,6 +2111,39 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### The rest of the coverage sweep: four more paths, three more findings
+
+After the TTL fix, the remaining zero-count blocks were worked through in order
+of what a failure there would cost. Eleven tests, eleven mutation entries, all
+caught by hand.
+
+- **Ownership moving under a write.** `Set` and `Group.Call` re-resolve once on
+  `ErrNotOwner` and send to the new owner. No test had reached the branch that
+  follows a *changed* answer, because ordinary gossip never makes a caller stale
+  on the first attempt and fresh on the second. `ownership_move_test.go` freezes
+  one node's view, revives a node so the rest re-rank, and thaws the view from
+  inside the transport at the first `ErrNotOwner`. The first version passed for
+  `Call` and failed for `Set`: the chosen key was the stale caller's own under
+  the old view, so it wrote locally and asked nobody. The test now tries keys
+  until one reaches a stale owner.
+- **Remote `GetOrLoad` with no loader said `ErrNotFound`.** Locally it said
+  `ErrNoLoader`. The owner's handler answers "absent" when it has no loader, and
+  the caller asked it even though its own namespace — configured identically on
+  every pod — had none. A caller was told the key did not exist when the loader
+  did not. Checked before routing now.
+- **A peer's own failure crossed gRPC as `ErrNodeUnreachable`.** An unrecognised
+  handler error was sent as `codes.Internal`, which gRPC also raises for a broken
+  stream and which the client therefore maps to unreachable. A loader whose
+  backend was down looked like a network fault. Sent as `codes.Unknown` now and
+  surfaced with its message and no sentinel.
+- **`EventEvict` is never emitted.** Documented as emitted on TTL or capacity
+  eviction; group state has neither. Documented as reserved, open question 43.
+
+Also covered for the first time: remote `BatchGet` and `Exists`, latency
+histograms (benchmarked in M7, never tested), `WithEventHandler`, a second
+`Drain`, `Drain` under join probation — whose wrapper forwards the departure
+announcement — and `Drain` when that announcement fails.
+
 ### After M9: a coverage sweep, and a key that came back from the dead
 
 Asked to test what was untested, the first step was to measure rather than

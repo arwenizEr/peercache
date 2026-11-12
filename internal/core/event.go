@@ -14,8 +14,8 @@ const (
 	EventUpdate
 	// EventDelete is emitted when a key is removed explicitly.
 	EventDelete
-	// EventEvict is emitted when a key is removed by TTL or capacity
-	// pressure rather than by a caller.
+	// EventEvict is reserved: nothing emits it. Group state has no TTL
+	// and no capacity limit. See the root package's EventEvict.
 	EventEvict
 	// EventActivate is emitted when a group is activated on this node.
 	EventActivate
