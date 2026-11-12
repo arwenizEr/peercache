@@ -1,37 +1,205 @@
 # PeerCache
 
-An embedded distributed cache and stateful aggregation engine for Go services
-deployed as N replicas.
+[![Go Reference](https://pkg.go.dev/badge/github.com/arwenizEr/peercache.svg)](https://pkg.go.dev/github.com/arwenizEr/peercache)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Every pod embeds the library; there is no separate cache tier. Each key belongs
-to exactly one pod, chosen by rendezvous hashing over the live membership. Reads
-hit local memory when the data is owned locally or recently cached, and route to
-the owner otherwise. Mutations and registered computations execute on the owner,
-so a working set is never shipped to the caller.
+An embedded, partitioned, in-memory state layer for Go services that run as
+several replicas — with no separate cache tier.
+
+Every pod embeds the library. Each key belongs to exactly one pod, chosen by
+rendezvous hashing over the live membership. Reads hit local memory when the
+data is owned locally or recently cached, and go to the owner otherwise.
+Mutations and registered computations run on the owner, so a working set is
+never shipped to the caller: computation moves to the data.
+
+It is meant for state that is hot, shared and rebuildable — sessions, per-user
+or per-tenant aggregates, rate-limit counters, workflow state — where a network
+hop to Redis on every access is the cost you want to remove.
+
+```
+go get github.com/arwenizEr/peercache
+```
+
+Go 1.25 or later.
+
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Groups: computation on the owner](#groups-computation-on-the-owner)
+- [Running a cluster](#running-a-cluster)
+- [Guarantees](#guarantees)
+- [What this is not](#what-this-is-not)
+- [Observability](#observability)
+- [Status](#status)
+- [Repository layout](#repository-layout)
+- [Development](#development)
+- [Documentation](#documentation)
+- [License](#license)
+
+---
+
+## Quick start
+
+A single node needs nothing but an ID. Everything below works unchanged when the
+cache is part of a cluster; only construction differs.
 
 ```go
-cache, err := peercache.New(
-    peercache.WithNodeID(os.Getenv("POD_NAME")),
-    peercache.WithBindAddr(os.Getenv("POD_IP") + ":7946"),
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/arwenizEr/peercache"
 )
-defer cache.Close(ctx)
 
-// Computation moves to the data, not the other way round.
-cache.RegisterGroupFunc("apply", func(ctx context.Context, s peercache.GroupState, arg []byte) ([]byte, error) {
-    current, _ := s.Get("total")
-    s.Set("total", add(current, arg))
-    return nil, nil
-})
+type Session struct {
+	UserID string
+	Cart   []string
+}
 
-_, err = cache.Group("tenant:acme").Call(ctx, "apply", payload)
+func main() {
+	ctx := context.Background()
+
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cache.Close(ctx)
+
+	// A typed namespace encodes values with msgpack. Open every namespace at
+	// startup, on every node, with the same options.
+	sessions := peercache.NamespaceOf[Session](cache, "sessions",
+		peercache.WithReplicationFactor(2))
+
+	if err := sessions.Set(ctx, "s:123", Session{UserID: "u1", Cart: []string{"book"}}, 30*time.Minute); err != nil {
+		log.Fatal(err)
+	}
+	s, err := sessions.Get(ctx, "s:123")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(s.UserID, s.Cart)
+}
 ```
+
+A namespace with a loader reconstructs missing keys on their owner, once,
+however many callers miss at the same moment:
+
+```go
+users := peercache.NamespaceOf[User](cache, "users",
+	peercache.WithTypedLoader(func(ctx context.Context, key string) (User, time.Duration, error) {
+		u, err := db.LoadUser(ctx, key)
+		return u, 10 * time.Minute, err
+	}))
+
+u, err := users.GetOrLoad(ctx, "user:42")
+```
+
+`cache.Namespace(name)` is the same API over `[]byte` values, for callers that
+bring their own encoding. Missing keys are `peercache.ErrNotFound`; every error
+the library returns is matched with `errors.Is`.
+
+## Groups: computation on the owner
+
+A group is a virtual actor: addressable at all times, activated lazily on its
+owner, deactivated when idle. While active it runs on a single goroutine, fed by
+a bounded mailbox, so every call on one group is serialized — which is why there
+is no lock API.
+
+Functions are registered by name at startup and called by name; closures never
+cross the network. Every pod must run the same binary and register the same
+functions.
+
+```go
+err := peercache.RegisterTypedGroupFunc(cache, "add",
+	func(ctx context.Context, s peercache.GroupState, n int) (int, error) {
+		total := 0
+		if b, ok := s.Get("total"); ok {
+			total, _ = strconv.Atoi(string(b))
+		}
+		total += n
+		s.Set("total", []byte(strconv.Itoa(total)))
+		return total, nil
+	})
+
+// Runs on whichever pod owns "tenant:acme", wherever this call is made.
+total, err := peercache.CallTyped[int, int](ctx, cache.Group("tenant:acme"), "add", 5)
+```
+
+`peercache.NewRouter` batches queue messages by owning group, so ten thousand
+messages across three owners become at most three requests per flush.
+
+## Running a cluster
+
+A cluster needs a peer transport (gRPC) and a membership authority (gossip over
+memberlist). Both are public packages so the application wires them, and both
+listen on their own port.
+
+```go
+import (
+	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/membership"
+	"github.com/arwenizEr/peercache/transport"
+)
+
+self := peercache.Node{ID: os.Getenv("NODE_ID"), Addr: os.Getenv("DATA_ADDR")}
+
+l, err := net.Listen("tcp", self.Addr) // gRPC between caches
+if err != nil {
+	return err
+}
+tr, err := transport.New(transport.Options{Self: self})
+if err != nil {
+	return err
+}
+gossip, err := membership.New(membership.Options{
+	Self:     self,
+	BindAddr: os.Getenv("GOSSIP_ADDR"), // memberlist
+})
+if err != nil {
+	return err
+}
+
+cache, err := peercache.New(
+	peercache.WithNodeID(self.ID),
+	peercache.WithTransport(tr),
+	peercache.WithListener(l),
+	peercache.WithMembership(gossip),
+	peercache.WithSeeds(seeds...), // gossip addresses of existing peers
+	peercache.WithActivationDelay(3*time.Second),
+)
+if err != nil {
+	return err
+}
+
+// Open namespaces and register group functions here, then:
+if err := cache.CatchUp(ctx); err != nil { // pull the replicas this node should hold
+	return err
+}
+if err := cache.WaitReady(ctx); err != nil {
+	return err
+}
+// ...serve traffic. On shutdown (a PreStop hook), cache.Drain(ctx) hands this
+// node's keys to their new owners before the pod stops.
+```
+
+In Kubernetes, seeds come from a headless service, readiness comes from
+`cache.Ready()`, and the PreStop hook calls `Drain`. [`deploy/`](deploy) has a
+Deployment and a StatefulSet with the probes, ports and hooks filled in, and its
+[README](deploy/README.md) explains the five things that must be right.
+`transport.Options.TLS` enables mutual TLS between peers.
 
 ---
 
 ## Guarantees
 
 This section is the most useful documentation in the project, so it comes before
-the feature list rather than after it.
+everything else that follows.
 
 - **Operations on a single group are serialized while that group has one
   activation.** Serialization is structural — one goroutine per activated group,
@@ -74,8 +242,8 @@ the feature list rather than after it.
   removal sent to its replicas arrives. The trade is data for liveness: in the
   cascade test, three deaths of five at RF=2 left two survivors under budget
   and 1152 of 1500 keys readable, where without a budget all 1500 survived on
-  nodes holding 1.9× the budget — which in a real pod is three OOM kills. No budget is the default, and then
-  nothing is shed.
+  nodes holding 1.9× the budget — which in a real pod is three OOM kills. No
+  budget is the default, and then nothing is shed.
 - **With join probation, a crashlooping pod moves no keys.** `WithJoinProbation`
   keeps a node out of the ownership ranking until it has been up for the given
   time, so a pod that restarts every few seconds is never ranked and its
@@ -101,8 +269,8 @@ the feature list rather than after it.
   came back — while the ownership ranking hands it back its keys immediately. It
   will answer "not found", with total confidence, for data sitting safely on the
   node that covered for it. In the chaos test that presented as 558 of 600 keys
-  lost, none of them actually gone. Call `CatchUp` after readiness and before
-  serving.
+  lost, none of them actually gone. Readiness stays false until `CatchUp` has
+  run, so a readiness probe wired to `Ready()` keeps traffic away until then.
 - **A key's TTL holds across failover, drain and catch-up.** Replicas hold the
   owner's deadline, not a duration, so a promoted, drained or caught-up key
   expires when it was written to, and a key that expired on its owner does not
@@ -131,9 +299,7 @@ the feature list rather than after it.
   `Ready().ReplicasCurrent`, exported as `peercache_replicas_current`, says when
   a node has done so under the view it holds now. It sits beside readiness rather
   than inside it, because a node can serve correctly long before the cluster is
-  back at its factor. A test that
-  skipped this reported the loss as a failure of RF=3, roughly one run in seven,
-  and the cache was behaving exactly as documented.
+  back at its factor.
 - **A membership change moves replicas rather than discarding them.** When the
   ranking reassigns a key, the node holding a copy hands it to the nodes that now
   rank for it before dropping its own; if it cannot place it anywhere, it keeps
@@ -145,54 +311,43 @@ the feature list rather than after it.
   a node every two seconds while taking three to notice never converges. This is
   a deployment constraint the library cannot fix.
 - **Throughput degrades to single-pod capacity for a single hot group.** Group
-  sharding for hot-key mitigation is deliberately not in v1.
+  sharding for hot-key mitigation is not implemented.
 
 The words "strong" and "quorum" do not appear in this API, deliberately.
 
-### What this is not
+## What this is not
 
-- Not a database.
-- Not a general distributed transaction system. There are no cross-group
-  transactions, ever.
+- Not a database. Nothing is written to disk.
+- Not a general distributed transaction system. There are no cross-key or
+  cross-group transactions.
 - Not a Redis replacement for pub/sub, streams, or Lua scripting.
 - Not multi-region. Single Kubernetes cluster, single failure domain.
 
 ---
 
+## Observability
+
+PeerCache imports no metrics client library. `cache.MetricsHandler()` serves the
+Prometheus text format, `cache.Metrics()` returns plain values for any other
+backend, and `cache.Stats()` is the same data as a struct. Beside the usual
+throughput and latency series it exports the correctness counters — split-brain
+detections, stale-epoch refusals, version conflicts, degraded writes, implicit
+namespaces — because a window in a guarantee that is not counted cannot be told
+apart from one that does not exist. [`docs/api.md`](docs/api.md) lists every
+series and which ones to alert on.
+
 ## Status
 
-Built milestone by milestone. Each is complete, tested and benchmarked before
-the next begins.
+Pre-1.0: the API is complete for what is described here, and may still change
+before `v1.0.0`.
 
-| | Milestone | Status |
-|---|---|---|
-| M0 | Test harness and skeleton | **complete** |
-| M1 | Single-node core | **complete** |
-| M2 | Group actor runtime | **complete** |
-| M3 | Membership and ownership | **complete** |
-| M4 | Transport and remote routing | **complete** |
-| M5 | Replication and failure handling | **complete** |
-| M6 | Rebalancing and Kubernetes lifecycle | **complete** |
-| M7 | Observability and hardening | **complete** |
-| M8 | Adversarial verification | **complete** |
-| M9 | Resilience under resource pressure | **complete** |
-| M10 | Typed namespaces | **complete** |
-
-All seven SPEC milestones are done, and M8 — linearizability checking, a
-deterministic fault simulation and exhaustive protocol fuzzing — went looking for
-what they had missed. It found three things worth naming: a five-byte frame that
-could allocate 4 GiB on any node that received it, a partition heal that
-discarded replicas instead of moving them, and a synchronous write that reports
-success while holding one copy of three. The first two are fixed; the third is
-counted by default and refused on request (`WithRequireReplicationFactor`),
-because refusing it everywhere is an availability decision rather than a bug
-fix. `docs/verification.md` has the full account.
-
-`ErrNotImplemented` no longer marks unbuilt scaffolding — nothing returns it for
-that reason any more. It remains reachable in two places
-that are not about milestones at all: an RPC method this binary does not
-recognise, which is what a rolling upgrade to a newer peer looks like, and a
-cache configured without a transport being asked to reach another node.
+Beyond unit and integration tests, the library is checked by a linearizability
+checker over group histories, a deterministic fault simulation (partitions, hard
+kills, revivals) run across thousands of seeds nightly, fuzzing of every protocol
+message, chaos and rolling-upgrade tests, and a mutation audit that breaks each
+guarded behaviour on purpose and confirms a named test fails.
+[`docs/verification.md`](docs/verification.md) maps every acceptance criterion
+in [`docs/design.md`](docs/design.md) to the test that proves it.
 
 ---
 
@@ -211,60 +366,59 @@ types.go          Shared public types
 errors.go         Sentinel errors
 options.go        Functional options and partitioners
 context.go        Nil-context guard at every API boundary
+typed.go          NamespaceOf[T]: values as a Go type
+typed_group.go    Typed group function arguments and results
 
-router.go         Queue-message routing with owner batching     (M4)
-remote.go         Owner lookup and the remote read/write path   (M4)
-handler.go        Server side: dispatches an inbound RPC        (M4)
-replicate.go      Replica fan-out, sync and async               (M5)
-promote.go        Reconciles held state against membership      (M5)
-catchup.go        Pulls the replicas this node should hold      (M5)
-invalidate.go     Best-effort L1 invalidation broadcast         (M5)
-drain.go          Hands work away without closing               (M6)
+router.go         Queue-message routing with owner batching
+remote.go         Owner lookup and the remote read/write path
+handler.go        Server side: dispatches an inbound RPC
+replicate.go      Replica fan-out, sync and async
+promote.go        Reconciles held state against membership
+catchup.go        Pulls the replicas this node should hold
+invalidate.go     Best-effort L1 invalidation broadcast
+drain.go          Hands work away without closing
 handoff.go        Moves replicas on a membership change rather
-                  than dropping them                            (M8)
+                  than dropping them
 ready.go          Readiness, its three conditions, and whether
-                  replicas are current for this view            (M6)
-observe.go        Stats and the metric series they export       (M7)
-pressure.go       The memory budget and the order it sheds in   (M9)
-probation.go      Keeps young nodes out of the ranking          (M9)
-typed.go          NamespaceOf[T]: values as a Go type          (M10)
-typed_group.go    Typed group function arguments and results  (M10)
+                  replicas are current for this view
+observe.go        Stats and the metric series they export
+pressure.go       The memory budget and the order it sheds in
+probation.go      Keeps young nodes out of the ranking
 
-membership/       Gossip membership over memberlist. Public: an
-                  application builds its cluster with it      (M3)
-transport/        gRPC client and server. Public, for the same
-                  reason                                      (M4)
+membership/       Gossip membership over memberlist (public)
+transport/        gRPC client and server, optional mTLS (public)
 
 internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
   testkit/        In-process cluster harness with fault injection
-  store/          Sharded owned store, TTL, versions          (M1)
-  l1/             Non-owned cache, TTL and version discipline (M1)
-  l1/eval/        Cache-library comparison (nested module)    (M1)
-  codec/          Codec registry, LZ4 framing                 (M1)
-  singleflight/   Collapses concurrent loads of one key       (M1)
-  actor/          Group activation, mailbox, lifecycle        (M2)
-                  Records persist state; activations hold the goroutine
-  ownership/      Rendezvous hashing, ring epochs             (M3)
+  store/          Sharded owned store, TTL, versions
+  l1/             Non-owned cache, TTL and version discipline
+  l1/eval/        Cache-library comparison (nested module)
+  codec/          Codec registry, LZ4 framing
+  singleflight/   Collapses concurrent loads of one key
+  actor/          Group activation, mailbox, lifecycle
+  ownership/      Rendezvous hashing, membership epochs
   wire/           Protocol messages, bounded decoders, frame
                   validation. The only code here that interprets
-                  bytes it did not write.                     (M4)
-  replication/    Replica fan-out, promotion, catch-up        (M5)
-  rebalance/      Move planning and streaming transfer        (M6)
-  metrics/        Metric collection, text format, histograms  (M7)
+                  bytes it did not write.
+  replication/    Replica store, version stamps, conflict detection
+  rebalance/      Move planning
+  metrics/        Metric collection, text format, histograms
 
-proto/            gRPC service definitions                   (M4)
-examples/         One runnable example per milestone, m0 through m8
-deploy/           Kubernetes manifests and the operational guide (M6)
+proto/            gRPC service definitions
+examples/         Runnable programs, one per feature: lifecycle, namespace,
+                  groups, ownership, remote, replication, rolling-upgrade,
+                  observability, failure-guarantees
+deploy/           Kubernetes manifests and the operational guide
 scripts/          mutation-audit.sh, clean/ (the `make clean` implementation)
-docs/             api.md, benchmarks.md, verification.md, decisions/
+docs/             design.md, api.md, benchmarks.md, verification.md, decisions/
 .github/          ci.yml per commit, nightly.yml for the long runs
 ```
 
 ---
 
-## Testing
+## Development
 
 Everything is deterministic. Time only moves when a test moves it, randomness
 comes from a seed that is printed on failure, and no test sleeps.
@@ -286,66 +440,51 @@ The long-running verification is nightly rather than per-commit, in
 `.github/workflows/nightly.yml`: two thousand simulation seeds, repeated
 linearizability checks, an hour of soak, ten minutes per fuzz target, and the
 mutation audit. A failure there prints the seed or commits the crasher, so it
-reproduces with one command.
-
-On Windows without GNU make, `mingw32-make` works, or run the `go` commands
-directly.
-
-To reproduce a failure:
+reproduces with one command:
 
 ```bash
 PEERCACHE_SEED=1234 go test ./... -run TestThatFailed
 ```
 
-### The harness
+On Windows without GNU make, `mingw32-make` works, or run the `go` commands
+directly.
 
 `internal/testkit` builds N in-process nodes over a fake network and a fake
 clock, with fault injection for drop, delay, reorder, partition, isolation,
-graceful kill, hard kill and revival. Teardown asserts three things a harness is
-uniquely placed to check: no clock misuse, no timer left armed, and no leaked
-goroutine.
+graceful kill, hard kill and revival. Simulated time is free: five nodes, a 3/2
+partition and an hour advanced on each side of a heal run in about **1.5 ms** of
+wall clock.
 
-Simulated time is free. The M0 acceptance scenario — five nodes, a 3/2
-partition, an hour advanced on each side of a heal — runs in about **1.5 ms** of
-wall clock against a 50 ms budget.
-
-### Rules the tests enforce on themselves
-
-`discipline_test.go` reads the repository as text and fails the build on:
-
-- any `time.Sleep`, anywhere;
-- any direct `time.Now`, `time.After`, `time.NewTimer`, `time.NewTicker` or
-  `time.AfterFunc` outside `internal/clock`;
-- any `context.WithTimeout` or `context.WithDeadline` outside `internal/clock`,
-  because both read the wall clock and make deadline behaviour untestable;
-- the `log` package;
-- an `internal/` package importing the root package;
-- a package without a `doc.go`;
-- a leftover TODO marker.
+`discipline_test.go` reads the repository as text and fails the build on any
+`time.Sleep`; any direct `time.Now`, `time.After`, timer, ticker or
+`context.WithTimeout` outside `internal/clock`; the `log` package; an
+`internal/` package importing the root package; a package without a `doc.go`;
+an undocumented exported symbol; a dependency outside the budget; and a leftover
+TODO marker. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rest.
 
 ---
 
 ## Documentation
 
-- [`docs/api.md`](docs/api.md) — the public API, with runnable examples
+- [pkg.go.dev](https://pkg.go.dev/github.com/arwenizEr/peercache) — API reference
+- [`docs/api.md`](docs/api.md) — the public API, with runnable examples and the
+  metrics to alert on
+- [`deploy/README.md`](deploy/README.md) — running it in Kubernetes
+- [`docs/design.md`](docs/design.md) — the design and the order it was built in
 - [`docs/benchmarks.md`](docs/benchmarks.md) — numbers, with the machine they
   were measured on
-- [`docs/verification.md`](docs/verification.md) — which acceptance criteria
-  were mutation-tested, and how each failed when the behaviour was broken on
-  purpose
-- [`docs/decisions/`](docs/decisions/) — one file per significant choice, plus
-  `open.md` for everything still guessed at
-- [`docs/design.md`](docs/design.md) — the build plan
-- [`CLAUDE.md`](CLAUDE.md) — the non-negotiable constraints
+- [`docs/verification.md`](docs/verification.md) — how each acceptance criterion
+  is proven, and how each test failed when the behaviour was broken on purpose
+- [`docs/decisions/`](docs/decisions/) — one record per significant choice, plus
+  `open.md` for the questions still open
+- [`CHANGELOG.md`](CHANGELOG.md), [`CONTRIBUTING.md`](CONTRIBUTING.md),
+  [`SECURITY.md`](SECURITY.md)
 
----
+Go 1.25 is the floor because memberlist's transitive graph (`x/net`, `x/sys`,
+`miekg/dns`) has moved past older releases, and holding those back would mean
+pinning the modules that receive security patches; see
+[`docs/decisions/0013-go-floor-raised-to-1.25.md`](docs/decisions/0013-go-floor-raised-to-1.25.md).
 
-## Requirements
+## License
 
-Go 1.25 or later.
-
-The floor was 1.23 until M3. Adding memberlist raised it: its transitive graph
-(`x/net`, `x/sys`, `miekg/dns`) has moved past 1.23, and holding those back to
-keep the older floor would mean pinning the modules that receive security
-patches. [`docs/decisions/0013-go-floor-raised-to-1.25.md`](docs/decisions/0013-go-floor-raised-to-1.25.md)
-records the trade.
+Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
