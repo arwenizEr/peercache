@@ -72,3 +72,48 @@ func TestAPartitionedNamespaceServesRemoteCallers(t *testing.T) {
 		t.Fatalf("the remote Delete of %s did not reach the group's owner %s", key, owner)
 	}
 }
+
+// TestBatchSetRoutesEachKeyToItsOwner: found by code review. BatchSet wrote
+// every pair into the calling node's own store, with no routing, replication
+// or invalidation, so on a cluster a key owned elsewhere landed where no read
+// would ever look for it.
+func TestBatchSetRoutesEachKeyToItsOwner(t *testing.T) {
+	f := newFabric(t, 3)
+	ctx := context.Background()
+	openNS := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("batchset",
+			peercache.WithReplicationFactor(2), peercache.WithSyncReplication(),
+			peercache.WithL1TTL(-1))
+	}
+	for _, id := range f.ids {
+		openNS(id)
+	}
+	f.settle(t)
+
+	kv := map[string][]byte{}
+	for i := 0; i < 30; i++ {
+		kv[fmt.Sprintf("batchset/%d", i)] = []byte(fmt.Sprintf("v%d", i))
+	}
+	if err := openNS("n0").BatchSet(ctx, kv, 0); err != nil {
+		t.Fatalf("BatchSet: %v", err)
+	}
+	for _, via := range f.ids {
+		for key, want := range kv {
+			got, err := openNS(via).Get(ctx, key)
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("Get %s via %s after a BatchSet through n0 = %q, %v", key, via, got, err)
+			}
+		}
+	}
+	// And they were replicated: no node holds them all as its own.
+	if st := f.caches["n0"].Stats(); st.OwnedKeys == int64(len(kv)) {
+		t.Fatalf("n0 owns all %d keys of its BatchSet; they were not routed", st.OwnedKeys)
+	}
+	var replicas int64
+	for _, id := range f.ids {
+		replicas += f.caches[id].Stats().ReplicaKeys
+	}
+	if replicas < int64(len(kv)) {
+		t.Fatalf("%d replica copies for %d keys at RF=2; BatchSet did not replicate", replicas, len(kv))
+	}
+}

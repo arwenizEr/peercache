@@ -160,9 +160,11 @@ type Namespace interface {
 A missing key returns `ErrNotFound`, never a nil value, so that a key holding
 zero bytes stays distinguishable from a key holding nothing.
 
-Batch calls group keys by owner and issue one request per owner, so cost scales
-with the number of distinct owners rather than the number of keys. They are not
-atomic across owners, and no cross-group transaction exists to make them so.
+`BatchGet` groups keys by owner and issues one request per owner, so its cost
+scales with the number of distinct owners rather than the number of keys.
+`BatchSet` routes each pair to its owner as `Set` would, one request per key; it
+is not yet coalesced per owner. Neither is atomic across owners, and no
+cross-group transaction exists to make them so.
 
 ### Namespace options
 

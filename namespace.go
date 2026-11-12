@@ -64,9 +64,12 @@ type Namespace interface {
 	// non-nil error.
 	BatchGet(ctx context.Context, keys []string) (map[string][]byte, error)
 
-	// BatchSet stores every pair in kv with the same ttl, batched per
-	// owner. It is not atomic across owners, and there is no cross-group
-	// transaction that would make it so.
+	// BatchSet stores every pair in kv with the same ttl. Each pair goes to
+	// its key's owner exactly as Set would — routed, replicated and
+	// invalidated — one request per key; unlike BatchGet it is not yet
+	// coalesced into one request per owner. It is not atomic: a failure
+	// returns the first error, and the pairs written before it stay written.
+	// There is no cross-group transaction that would make it otherwise.
 	BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error
 
 	// GetOrLoad returns the value for key, invoking the namespace's
@@ -644,17 +647,16 @@ func (n *namespace) BatchSet(ctx context.Context, kv map[string][]byte, ttl time
 		return err
 	}
 
-	i := 0
+	// Through Set, so that each pair is routed to its owner, replicated,
+	// invalidated and counted against the memory budget. Writing straight
+	// into this node's store, as an earlier version did, put every key owned
+	// elsewhere where no read would look for it.
 	for key, val := range kv {
-		if i%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				// Partial application is visible. There is no
-				// cross-key atomicity here and never will be.
-				return err
-			}
+		if err := n.Set(ctx, key, val, ttl); err != nil {
+			// Partial application is visible. There is no cross-key
+			// atomicity here and never will be.
+			return err
 		}
-		n.store.Set(key, n.encode(val), ttl)
-		i++
 	}
 	return nil
 }
