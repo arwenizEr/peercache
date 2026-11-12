@@ -107,25 +107,19 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
 
-      # -count=2 is not padding. It catches state that survives between runs of
-      # the same test, which is the failure mode a harness with shared fakes is
-      # most likely to introduce.
+      # Every package, under the race detector, once. The -count=2 pass that
+      # catches state surviving between runs of one test is in nightly.yml and
+      # in `make test-race`, not here, and the reason is arithmetic: one race
+      # pass of the root package takes ~215s on the 20-core reference machine
+      # and several times that on a 4-vCPU hosted runner. The first CI run on
+      # one, at -count=2 -timeout 900s, hit the timeout inside the second
+      # package-wide pass with TestRollingUpgradeLosesNoRequests progressing
+      # normally (84s locally under -race, minutes on the runner).
       #
-      # The timeout is 900s, not the 300s the other steps use, and the two are
-      # different for a reason worth stating. `-timeout` applies per test binary,
-      # so this step has to fit *two* race passes of the root package inside it.
-      # One pass measures ~215s on Machine A; 300s could not hold two, which
-      # running this exact command confirmed, and getting `panic: test timed
-      # out after 5m0s` with a test running normally at the alarm. The corrected
-      # gate measures 527s end-to-end, so the margin here is 1.7x — it was 2.0x
-      # before the simulation tests landed. Re-measure it rather than inherit it.
-      #
-      # A timeout here is a deadlock detector, not a performance budget. 900s
-      # still turns a hang into a failure rather than a job that runs until the
-      # runner's own limit; what 300s had quietly become was a budget the suite
-      # outgrew without anybody deciding it should.
+      # A timeout here is a deadlock detector, not a performance budget, so it
+      # is set well above a pass on the runner rather than at it.
       - name: test -race
-        run: go test ./... -race -count=2 -timeout 900s
+        run: go test ./... -race -count=1 -timeout 30m
 
   bench:
     name: bench

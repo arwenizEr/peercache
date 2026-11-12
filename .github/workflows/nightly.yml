@@ -49,6 +49,26 @@ jobs:
           PEERCACHE_SIM_SEEDS: ${{ github.event.inputs.sim_seeds || '2000' }}
         run: go test . -run TestSimulation -count=1 -timeout 170m
 
+  race-twice:
+    name: test -race -count=2
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # -count=2 is not padding. It catches state that survives between runs
+      # of the same test, which is the failure mode a harness with shared
+      # fakes is most likely to introduce. It runs here rather than per push
+      # because two race passes of the root package do not fit a hosted
+      # runner's per-push budget; see the race job in ci.yml.
+      - name: test -race -count=2
+        run: go test ./... -race -count=2 -timeout 80m
+
   simulation-race:
     name: deterministic simulation (race)
     runs-on: ubuntu-latest
