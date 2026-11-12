@@ -59,9 +59,11 @@ jobs:
         # Alone, and without the race detector. A sub-microsecond budget
         # measured while other packages' gRPC servers and gossip clusters
         # compete for the same cores reports the runner's load, not the cache's
-        # latency. See the skip in TestLocalGetP99AtOneMillionKeys.
+        # latency. See the skip in TestLocalGetP99AtOneMillionKeys. "shared"
+        # holds the remote budgets as a regression ceiling: a hosted runner
+        # is not the reference machine the criterion was measured on.
         env:
-          PEERCACHE_LATENCY_GATE: "1"
+          PEERCACHE_LATENCY_GATE: shared
         run: go test . -run 'TestLocalGetP99AtOneMillionKeys|TestRemoteGetThroughputAndLatency' -count=1 -p 1
 
       # A separate invocation, not another name in the -run above. This test
@@ -73,7 +75,7 @@ jobs:
       # then never named by any step that sets it.
       - name: async replication loss window
         env:
-          PEERCACHE_LATENCY_GATE: "1"
+          PEERCACHE_LATENCY_GATE: shared
         run: go test . -run 'TestAsyncLossWindowOverGRPC' -count=1 -p 1
 
       - name: examples run

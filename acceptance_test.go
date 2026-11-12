@@ -16,7 +16,27 @@ import (
 // Local-read acceptance parameters, from docs/design.md section 4.
 // latencyGateEnv opts a run into the latency assertion. See the skip in
 // TestLocalGetP99AtOneMillionKeys for why it is not on by default.
+//
+// "1" asserts the acceptance budgets, which were measured on the reference
+// machine in docs/benchmarks.md. "shared" is for a shared CI runner: the same
+// tests run, but the remote budgets become a ceiling that catches a collapse
+// rather than the criterion. A GitHub-hosted runner measured remote p99 at
+// 3.7ms where the reference machine measures 0.33ms under the same load — the
+// runner's noisy neighbours, not the cache — so holding it to 2ms would make
+// the step fail on every push and teach everyone to ignore it.
 const latencyGateEnv = "PEERCACHE_LATENCY_GATE"
+
+// latencyGate reports whether the latency tests should run, and whether they
+// run on a shared runner.
+func latencyGate() (on, shared bool) {
+	switch os.Getenv(latencyGateEnv) {
+	case "1":
+		return true, false
+	case "shared":
+		return true, true
+	}
+	return false, false
+}
 
 const (
 	acceptanceKeys      = 1_000_000
@@ -130,7 +150,7 @@ func TestLocalGetP99AtOneMillionKeys(t *testing.T) {
 		// this criterion.
 		t.Skip("latency budgets are meaningless under the race detector")
 	}
-	if os.Getenv(latencyGateEnv) != "1" {
+	if on, _ := latencyGate(); !on {
 		// The same argument as the one above, for the same reason.
 		//
 		// `go test ./...` runs packages concurrently. That means

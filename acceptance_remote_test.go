@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -38,6 +37,12 @@ import (
 
 const m4RemoteBudgetP99 = 2 * time.Millisecond
 const m4RemoteBudgetP999 = 10 * time.Millisecond
+
+// sharedRunnerFactor scales the remote budgets under PEERCACHE_LATENCY_GATE=shared.
+// Five times the criterion leaves ~2.7x headroom over the 3.7ms p99 a
+// GitHub-hosted runner measured, and still fails on the order-of-magnitude
+// regression the step exists to catch.
+const sharedRunnerFactor = 5
 
 // m4TargetRPS is the offered load the criterion names.
 const m4TargetRPS = 50_000
@@ -166,7 +171,8 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	if raceEnabled {
 		t.Skip("latency budgets are meaningless under the race detector")
 	}
-	if os.Getenv(latencyGateEnv) != "1" {
+	on, shared := latencyGate()
+	if !on {
 		t.Skipf("latency gate is opt-in; run `make latency` or set %s=1", latencyGateEnv)
 	}
 
@@ -353,12 +359,19 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 		p(0.99).Round(time.Microsecond), p(0.999).Round(time.Microsecond),
 		merged[len(merged)-1].Round(time.Microsecond))
 
-	// The latency budgets are the criterion and are asserted unconditionally.
-	if got := p(0.99); got > m4RemoteBudgetP99 {
-		t.Errorf("p99 %v exceeds the %v budget", got.Round(time.Microsecond), m4RemoteBudgetP99)
+	// The latency budgets are the criterion and are asserted unconditionally —
+	// scaled on a shared runner, where they are a regression ceiling instead.
+	budgetP99, budgetP999, what := m4RemoteBudgetP99, m4RemoteBudgetP999, "budget"
+	if shared {
+		budgetP99 *= sharedRunnerFactor
+		budgetP999 *= sharedRunnerFactor
+		what = "shared-runner ceiling"
 	}
-	if got := p(0.999); got > m4RemoteBudgetP999 {
-		t.Errorf("p99.9 %v exceeds the %v budget", got.Round(time.Microsecond), m4RemoteBudgetP999)
+	if got := p(0.99); got > budgetP99 {
+		t.Errorf("p99 %v exceeds the %v %s", got.Round(time.Microsecond), budgetP99, what)
+	}
+	if got := p(0.999); got > budgetP999 {
+		t.Errorf("p99.9 %v exceeds the %v %s", got.Round(time.Microsecond), budgetP999, what)
 	}
 
 	// The rate is reported rather than asserted, and deliberately so. 50k rps

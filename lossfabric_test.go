@@ -3,7 +3,6 @@ package peercache_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sort"
 	"testing"
@@ -217,7 +216,7 @@ func TestAsyncLossWindowOverGRPC(t *testing.T) {
 	if raceEnabled {
 		t.Skip("timing under the race detector describes the detector")
 	}
-	if os.Getenv(latencyGateEnv) != "1" {
+	if on, _ := latencyGate(); !on {
 		t.Skipf("timing gate is opt-in; run `make latency` or set %s=1", latencyGateEnv)
 	}
 

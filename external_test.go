@@ -95,13 +95,31 @@ func TestAnExternalModuleCanBuildACluster(t *testing.T) {
 		}
 	}
 
+	goEnv := func(name string) string {
+		out, err := exec.Command(goBin, "env", name).Output()
+		if err != nil {
+			t.Fatalf("go env %s: %v", name, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	cacheURL := "file:///" + strings.TrimPrefix(
+		filepath.ToSlash(filepath.Join(goEnv("GOMODCACHE"), "cache", "download")), "/")
+	proxy := cacheURL
+	if upstream := goEnv("GOPROXY"); upstream != "" && upstream != "off" {
+		proxy += "," + upstream
+	}
+
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command(goBin, args...)
 		cmd.Dir = dir
-		// Offline: every dependency is already in the module cache, because
-		// this repository's own build put it there.
-		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GOWORK=off")
+		// The local module cache first, then whatever proxy this machine
+		// uses. Resolving the external module's graph needs go.mod files
+		// that no build in this repository reads — memberlist's go-metrics
+		// predates graph pruning, so tidy walks to datadog-go and beyond —
+		// and a fresh cache, as on CI, does not have them. This was
+		// GOPROXY=off, which passed only where a warm cache hid that.
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off", "GOPROXY="+proxy)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go %s in an external module failed: %v\n%s",
