@@ -782,6 +782,35 @@ in heap terms until it is severe, and this project has shipped one — M3's goss
 event loop, found only because it slowed an unrelated latency test. Exactly 23
 before and after twenty million operations.
 
+### The soak, an hour (after M8)
+
+Re-run on Machine A after M8 and the question 37 change, for an hour split
+between the two soak tests and run one after the other — the first local run
+longer than two minutes. **Still an hour, not twenty-four.**
+
+| | `TestSoakMemoryStaysFlat` | `TestSoakGoroutinesStayFlat` |
+|---|---|---|
+| `PEERCACHE_SOAK` | 50m | 10m |
+| Operations | **728,173,249** | — |
+| Throughput | 242,724 ops/sec | — |
+| Non-retryable failures | **0** | — |
+| Live heap, baseline → final | 5.2 MiB → 6.9 MiB | — |
+| Live heap samples | 5.2, 6.8 ×4, 6.9 ×5 | — |
+| Goroutines | — | **23 → 23** |
+
+Same workload as above: three nodes, RF=2 synchronous, 2,000-key working set.
+That is 36 times as many operations as the two-minute run. The heap stays flat in
+the sense defined above: after the first sample it moves from 6.8 to 6.9 MiB over
+forty-five minutes and does not move again. A leak proportional to operations
+would have shown as tens of megabytes at this count. Throughput is higher than in
+M7 — 243k against 168k ops/sec — on the same machine. That was not investigated
+and is not claimed as an improvement: a 50-minute run averages over
+machine-level noise that a 2-minute one does not.
+
+The split exists because `PEERCACHE_SOAK` is per test, and `-run TestSoak` selects
+both tests. The nightly job had been sized as if it selected one, and could
+never have finished; see `TestNightlySoakFitsItsTimeouts`.
+
 ### internal/metrics — instrumentation cost
 
 | Benchmark | ns/op | B/op | allocs/op |
