@@ -2146,6 +2146,31 @@ The rate went from 27 failures in 250 runs to 0 in 1,500. These are timing
 races, so the mutation audit — one run per entry — cannot hold them, and they
 are not in it; the evidence is the repetition count, recorded here.
 
+**The rest of the fourteen.** Twelve were confirmed — ten with a test that
+failed first, two from source — and fixed; one was a documentation gap; one is
+reasoned:
+
+| Finding | How it was confirmed | Test or evidence |
+|---|---|---|
+| BatchSet wrote locally, unrouted | failing test | `TestBatchSetRoutesEachKeyToItsOwner` |
+| a misconfigured namespace's nil store crashed the pod | panic in `store.Set(nil)` | `TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash` |
+| compressed values decoded twice remotely, framed twice on hand-off | failing tests | `TestCompressedValuesSurviveEveryRemotePath`, `TestACompressedHandOffIsNotFramedTwice` |
+| a load overwrote a write that raced it | failing test | `TestALoadDoesNotOverwriteAWriteThatRacedIt` |
+| a stale tombstone deleted a newer replica | failing test | `TestAStaleTombstoneDoesNotDeleteANewerReplica` |
+| a timer due on a full mailbox was lost and pinned its group | failing tests | `TestATimerDueWhileTheMailboxIsFullStillFires`, `TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup` |
+| Close leaked each L1 tier's goroutine | goleak | `TestCloseReleasesTheL1Tier` |
+| a failed New leaked probation, the ticker and the runtime | armed timers, goleak | `TestAFailedNewLeavesNothingRunning` |
+| a snapshot page copied the whole store | 10.4 MB for one entry | `TestASnapshotPageAllocatesOnlyItsPage` |
+| refused activations left empty records forever | 1000 left by 1000 calls | `TestARefusedActivationLeavesNoRecord` |
+| gossip could deadlock republishing its epoch | memberlist source: a blocking send under the node lock | not reproducible below ~64 real nodes |
+| Group's direct accessors fail on non-owners | by design; the interface did not say so | documentation fixed |
+| a membership change briefly skipped the activation delay | reasoned: two adjacent atomic stores | not stageable without a hook |
+
+Two of the timer tests hung in their first form on their own harness — a
+probe that blocked on the busy group, and a wait that never moved the fake
+clock — and were rewritten so that nothing in them can block. Every fix has an
+audit entry except the activation-delay order, which no test can distinguish.
+
 **Also fixed: a harness bug.** `ownership_move_test.go`'s transport wrapper hid
 `Ready`, so `New` returned before the node was serving and the node was
 sometimes never admitted: 40 failures in 60 runs without `-race`, none with it.
