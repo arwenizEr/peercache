@@ -328,6 +328,38 @@ the theoretically required key count ±10%.
 - `docs/api.md` complete, examples runnable, README with an honest guarantees
   section including the failure modes.
 
+### M9 — Resilience under resource pressure
+
+Added after M8. The failure modes a Kubernetes operator actually sees —
+OOMKilled, CrashLoopBackOff, CPU throttling — each turn one pod's problem into
+the cluster's unless the library contains it.
+
+- **Memory budget.** A per-cache byte budget covering the owned stores, the
+  replica store and the L1 tier. Over budget, entries are shed in that order of
+  preference: L1 first, then replicas, then owned data — sampled, not LRU, so
+  the read path pays nothing. State is lossy by design (CLAUDE.md decision 4), so
+  shedding is legitimate; it is never silent, and every tier has a counter.
+- **No stale resurrection.** Shedding an owned key in a replicated namespace
+  sheds its replicas too, as a replicated deletion. Dropping only the owner's
+  copy would leave replicas holding an older value that a later write could not
+  displace and a later failover would promote.
+- **Catch-up respects the budget.** A node over budget stops pulling rather than
+  pulling and shedding in a loop, and reports the catch-up as incomplete.
+- **Crashloop containment.** A node is not ranked by its peers until it has
+  declared itself rankable, so a pod that joins and dies repeatedly does not
+  repeatedly take ownership of keys it never holds.
+- **CPU starvation.** A throttled node is slow, not dead: it must not flap the
+  membership, and callers of other nodes must not wait on it.
+
+**Acceptance:** in a 5-node harness with a per-node budget, killing nodes one at
+a time until two remain never takes any node's accounted memory above its
+budget by more than one shedding step, and every shed is counted by tier; a key
+shed by its owner and then rewritten is never served at an older value, before
+or after a failover; a node restarted every 2 seconds for 60 seconds causes no
+key held by the healthy nodes to be reported missing; a node whose every message
+is delayed by 200 ms produces no split-brain detections and no change in p99 for
+keys owned elsewhere.
+
 ---
 
 ## 5. Deliberately deferred

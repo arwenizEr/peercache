@@ -2,6 +2,7 @@ package replication
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -48,6 +49,29 @@ type Store struct {
 	// wants to know: reordering under load, or a replica being fed through a
 	// path that keeps redelivering stale copies. A steady low rate is normal.
 	versionConflicts atomic.Int64
+
+	// bytes is the accounted size of every held replica: key, value and
+	// sender ID, plus [EntryOverhead] each. Changed only under the owning
+	// namespace's lock.
+	bytes atomic.Int64
+	// shed counts replicas dropped by [Store.Shed], and shedCursor rotates
+	// which namespace the next Shed starts from.
+	shed       atomic.Int64
+	shedCursor atomic.Uint64
+}
+
+// EntryOverhead is what the store charges for one replica beyond its key, value
+// and sender ID.
+//
+// An estimate, on the high side for the same reason as the owned store's: a map
+// slot holding a string header and an Entry (a slice, a stamp, a TTL and a
+// string — about 80 bytes on 64-bit), bucket overhead, and the value's allocation
+// rounding.
+const EntryOverhead int64 = 128
+
+// size is what one replica is charged.
+func size(key string, e Entry) int64 {
+	return int64(len(key)+len(e.Value)+len(e.From)) + EntryOverhead
 }
 
 // namespaceReplicas is one namespace's worth of replicated keys.
@@ -136,6 +160,11 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 		}
 	}
 	nr.entries[key] = e
+	delta := size(key, e)
+	if held {
+		delta -= size(key, existing)
+	}
+	s.bytes.Add(delta)
 	return true, conflict
 }
 
@@ -165,10 +194,12 @@ func (s *Store) Delete(namespace, key string) bool {
 
 	nr.mu.Lock()
 	defer nr.mu.Unlock()
-	if _, held := nr.entries[key]; !held {
+	e, held := nr.entries[key]
+	if !held {
 		return false
 	}
 	delete(nr.entries, key)
+	s.bytes.Add(-size(key, e))
 	return true
 }
 
@@ -239,6 +270,7 @@ func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]E
 		}
 		taken[key] = e
 		delete(nr.entries, key)
+		s.bytes.Add(-size(key, e))
 	}
 	return taken
 }
@@ -273,14 +305,74 @@ func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 	defer nr.mu.Unlock()
 
 	dropped := 0
-	for key := range nr.entries {
+	for key, e := range nr.entries {
 		if stillMine(key) {
 			continue
 		}
 		delete(nr.entries, key)
+		s.bytes.Add(-size(key, e))
 		dropped++
 	}
 	return dropped
+}
+
+// Bytes returns the accounted size of every replica held, across namespaces.
+func (s *Store) Bytes() int64 { return s.bytes.Load() }
+
+// ShedCount returns how many replicas [Store.Shed] has dropped.
+func (s *Store) ShedCount() int64 { return s.shed.Load() }
+
+// Shed drops replicas until it has freed at least target bytes, or none are
+// left, and returns how many bytes it freed.
+//
+// It is the memory budget's middle tier. Dropping a replica lowers that key's
+// replication factor until the owner next writes it or this node next catches
+// up; it never loses the key while the owner holds it, which is why replicas are
+// shed before owned data. Nothing is sent anywhere: the owner's copy is the
+// authority and is untouched.
+//
+// Namespaces are visited from a rotating start and entries taken in map
+// iteration order, so repeated small sheds spread across the keyspace rather
+// than emptying one namespace. Overshoot is at most one entry.
+func (s *Store) Shed(target int64) int64 {
+	if target <= 0 {
+		return 0
+	}
+	s.mu.RLock()
+	names := make([]string, 0, len(s.ns))
+	for name := range s.ns {
+		names = append(names, name)
+	}
+	s.mu.RUnlock()
+	if len(names) == 0 {
+		return 0
+	}
+	// Map order is random; sort so that the rotating cursor means something.
+	sort.Strings(names)
+
+	var freed int64
+	start := s.shedCursor.Add(1) - 1
+	for i := 0; i < len(names) && freed < target; i++ {
+		s.mu.RLock()
+		nr := s.ns[names[(start+uint64(i))%uint64(len(names))]]
+		s.mu.RUnlock()
+		if nr == nil {
+			continue
+		}
+		nr.mu.Lock()
+		for key, e := range nr.entries {
+			if freed >= target {
+				break
+			}
+			delete(nr.entries, key)
+			n := size(key, e)
+			s.bytes.Add(-n)
+			s.shed.Add(1)
+			freed += n
+		}
+		nr.mu.Unlock()
+	}
+	return freed
 }
 
 // Keys returns the keys held for a namespace, sorted for determinism.

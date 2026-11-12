@@ -32,6 +32,18 @@ const (
 	DefaultSweepShardsPerTick = 8
 )
 
+// EntryOverhead is what the store charges for one entry beyond its key and
+// value bytes, in [Store.Bytes].
+//
+// It is an estimate, not a measurement, and it is deliberately on the high side.
+// One entry costs a map slot (the key's string header and the entry struct,
+// about 56 bytes on 64-bit), the slot's share of bucket and tophash overhead
+// at Go's load factor, and the value's own allocation header and size-class
+// rounding. 96 covers that for small values and overstates it for large ones,
+// where the value's length dominates anyway. Overstating is the safe direction
+// for a figure a memory budget is enforced against.
+const EntryOverhead int64 = 96
+
 // Options configures a [Store].
 type Options struct {
 	// Shards is the number of independently locked partitions. It is
@@ -74,6 +86,17 @@ type shard struct {
 	sets    atomic.Int64
 	deletes atomic.Int64
 	expired atomic.Int64
+	shed    atomic.Int64
+
+	// bytes is the shard's accounted size: every resident entry's key and
+	// value plus [EntryOverhead]. Written only under mu, read without it by
+	// [Store.Bytes], hence atomic.
+	bytes atomic.Int64
+}
+
+// size is what one entry is charged.
+func size(key string, val []byte) int64 {
+	return int64(len(key)+len(val)) + EntryOverhead
 }
 
 // Store is the owned, in-memory, sharded key/value store.
@@ -89,6 +112,8 @@ type Store struct {
 	// cursor is the next shard the sweeper will visit. It is only touched
 	// by Sweep, which may be called concurrently, so it is atomic.
 	cursor atomic.Uint64
+	// shedCursor is the shard the next Shed starts from, for the same reason.
+	shedCursor atomic.Uint64
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -256,8 +281,14 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 
 	sh := s.shardFor(key)
 	sh.mu.Lock()
-	version := sh.entries[key].version + 1
+	old, had := sh.entries[key]
+	version := old.version + 1
 	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	delta := size(key, stored)
+	if had {
+		delta -= size(key, old.val)
+	}
+	sh.bytes.Add(delta)
 	sh.mu.Unlock()
 
 	sh.sets.Add(1)
@@ -359,10 +390,16 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version uint6
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	if existing, ok := sh.entries[key]; ok && existing.version >= version {
+	existing, ok := sh.entries[key]
+	if ok && existing.version >= version {
 		return false
 	}
 	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	delta := size(key, stored)
+	if ok {
+		delta -= size(key, existing.val)
+	}
+	sh.bytes.Add(delta)
 	sh.sets.Add(1)
 	return true
 }
@@ -379,6 +416,7 @@ func (s *Store) Delete(key string) bool {
 	e, ok := sh.entries[key]
 	if ok {
 		delete(sh.entries, key)
+		sh.bytes.Add(-size(key, e.val))
 	}
 	sh.mu.Unlock()
 
@@ -425,6 +463,8 @@ type Counters struct {
 	Expired int64
 	// Entries is [Store.Len] at the time of the snapshot.
 	Entries int64
+	// Shed counts entries removed by [Store.Shed] to relieve memory pressure.
+	Shed int64
 }
 
 // Stats returns a snapshot of the counters.
@@ -440,12 +480,83 @@ func (s *Store) Stats() Counters {
 		c.Sets += sh.sets.Load()
 		c.Deletes += sh.deletes.Load()
 		c.Expired += sh.expired.Load()
+		c.Shed += sh.shed.Load()
 
 		sh.mu.RLock()
 		c.Entries += int64(len(sh.entries))
 		sh.mu.RUnlock()
 	}
 	return c
+}
+
+// Bytes returns the store's accounted size: every resident entry's key and
+// value, plus [EntryOverhead] each.
+//
+// Expired entries the sweeper has not reclaimed are counted, because they are
+// still holding the memory. The figure is the sum of per-shard counters read
+// independently, so under concurrent writes it is approximate in the same way
+// [Store.Stats] is, and exact at rest.
+func (s *Store) Bytes() int64 {
+	var total int64
+	for _, sh := range s.shards {
+		total += sh.bytes.Load()
+	}
+	return total
+}
+
+// Shed removes entries until it has freed at least target bytes, or the store
+// is empty, and returns how many bytes it freed.
+//
+// It is the memory budget's pressure valve, and it is not an eviction policy:
+// entries are taken in map iteration order, which Go randomises, starting from a
+// shard that rotates on every call. An LRU would need every read to record an
+// access, and the read path is the one this store exists to keep cheap.
+//
+// visit is called once per removed entry with its key and version, after the
+// shard's lock is released, so it may do real work — the caller uses it to
+// replicate the removal. It must not call back into this store's shard it was
+// removed from while expecting the entry to be present.
+//
+// Overshoot is at most one entry: Shed checks the target after each removal.
+func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64 {
+	if target <= 0 {
+		return 0
+	}
+	type removed struct {
+		key     string
+		version uint64
+	}
+	var freed int64
+	start := s.shedCursor.Add(1) - 1
+	for i := 0; i < len(s.shards) && freed < target; i++ {
+		sh := s.shards[(start+uint64(i))&s.mask]
+		var out []removed
+		sh.mu.Lock()
+		for key, e := range sh.entries {
+			if freed >= target {
+				break
+			}
+			delete(sh.entries, key)
+			n := size(key, e.val)
+			sh.bytes.Add(-n)
+			freed += n
+			out = append(out, removed{key, e.version})
+		}
+		sh.mu.Unlock()
+		sh.shed.Add(int64(len(out)))
+		if visit != nil {
+			for _, r := range out {
+				visit(r.key, r.version)
+			}
+		}
+	}
+	return freed
+}
+
+// ShardOf returns the index of the shard holding key. It exists so that tests
+// can observe how work spreads across shards.
+func (s *Store) ShardOf(key string) int {
+	return int(xxhash.Sum64String(key) & s.mask)
 }
 
 // Sweep visits the next n shards in rotation and removes expired entries,
@@ -471,6 +582,7 @@ func (s *Store) Sweep(n int) int {
 		for key, e := range sh.entries {
 			if e.expiresAt != 0 && now >= e.expiresAt {
 				delete(sh.entries, key)
+				sh.bytes.Add(-size(key, e.val))
 				fromShard++
 			}
 		}

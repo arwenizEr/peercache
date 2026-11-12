@@ -40,6 +40,15 @@ const (
 	DefaultTTL = 5 * time.Second
 )
 
+// EntryOverhead is what the tier charges for one entry beyond its key and value
+// bytes, in [Cache.Bytes]. An estimate on the high side: the entry struct (a
+// slice, a stamp and a deadline), the library's node and its policy metadata,
+// and the value's allocation rounding.
+const EntryOverhead int64 = 128
+
+// size is what one entry is charged.
+func size(key string, e entry) int64 { return int64(len(key)+len(e.val)) + EntryOverhead }
+
 // Options configures a [Cache].
 type Options struct {
 	// Capacity is the maximum number of entries. Defaults to
@@ -84,6 +93,15 @@ type Cache struct {
 	expiries atomic.Int64
 	puts     atomic.Int64
 	rejects  atomic.Int64
+	shed     atomic.Int64
+
+	// bytes is the tier's accounted size. Puts add to it directly; removals
+	// are reported by the library's deletion listener, which runs on its
+	// maintenance goroutine, so the figure lags a removal briefly and never
+	// lags an addition. That errs towards overstating, the safe direction
+	// for a budget. It is a pointer because the listener is built before the
+	// Cache that owns it.
+	bytes *atomic.Int64
 }
 
 // New returns a [Cache].
@@ -116,11 +134,20 @@ func New(opts Options) (*Cache, error) {
 		opts.DefaultTTL = opts.MaxTTL
 	}
 
-	inner, err := otter.MustBuilder[string, entry](opts.Capacity).Build()
+	bytes := new(atomic.Int64)
+	inner, err := otter.MustBuilder[string, entry](opts.Capacity).
+		// Every cause is a removal of the reported value, including
+		// Replaced: the listener is told about the old value, and the
+		// Put that replaced it charged the new one.
+		DeletionListener(func(key string, e entry, _ otter.DeletionCause) {
+			bytes.Add(-size(key, e))
+		}).
+		Build()
 	if err != nil {
 		return nil, fmt.Errorf("l1: building the cache: %w", err)
 	}
 	return &Cache{
+		bytes:      bytes,
 		inner:      inner,
 		clk:        opts.Clock,
 		maxTTL:     opts.MaxTTL,
@@ -216,11 +243,20 @@ func (c *Cache) Put(key string, val []byte, stamp core.Stamp, ttl time.Duration)
 	}
 
 	c.puts.Add(1)
-	return c.inner.Set(key, entry{
+	e := entry{
 		val:       stored,
 		stamp:     stamp,
 		expiresAt: saturatingDeadline(now, ttl),
-	})
+	}
+	// Charged before the Set, so that a removal the listener reports for this
+	// very entry can never be subtracted before it was added.
+	c.bytes.Add(size(key, e))
+	if !c.inner.Set(key, e) {
+		// The library refused it outright; nothing is resident.
+		c.bytes.Add(-size(key, e))
+		return false
+	}
+	return true
 }
 
 // saturatingDeadline returns now+ttl in Unix nanoseconds, clamped to the
@@ -266,7 +302,36 @@ func (c *Cache) InvalidateOlderThan(key string, stamp core.Stamp) bool {
 }
 
 // Clear removes everything.
-func (c *Cache) Clear() { c.inner.Clear() }
+//
+// The library does not report a clear to the deletion listener, so the
+// accounting is reset here. Removals queued before the clear are reported
+// before it completes — the library processes them in order and waits — so
+// none of them can arrive afterwards and drive the figure negative.
+func (c *Cache) Clear() {
+	c.inner.Clear()
+	c.bytes.Store(0)
+}
+
+// Bytes returns the tier's accounted size: every resident entry's key and
+// value, plus [EntryOverhead] each. Removals are reflected once the library's
+// maintenance goroutine has reported them.
+func (c *Cache) Bytes() int64 { return c.bytes.Load() }
+
+// Shed empties the tier to relieve memory pressure and returns the bytes it
+// held.
+//
+// It is the first tier the memory budget sheds, and it is shed whole rather
+// than in part. Everything here is a copy of a key owned elsewhere with a TTL
+// of seconds, so dropping it costs round trips and never data; and a clear is
+// accounted exactly, where a partial removal would be accounted only when the
+// library's maintenance goroutine got round to it — late enough that the budget
+// would go on to shed the next tier for pressure already relieved.
+func (c *Cache) Shed() int64 {
+	held := c.bytes.Load()
+	c.shed.Add(int64(c.inner.Size()))
+	c.Clear()
+	return held
+}
 
 // Len returns the number of resident entries, including any that have expired
 // but have not been read since.
@@ -291,6 +356,8 @@ type Counters struct {
 	Rejects int64
 	// Entries is [Cache.Len] at the time of the snapshot.
 	Entries int64
+	// Shed counts entries dropped by [Cache.Shed] under memory pressure.
+	Shed int64
 }
 
 // Stats returns a snapshot of the counters. Fields are read independently, so
@@ -303,6 +370,7 @@ func (c *Cache) Stats() Counters {
 		Puts:     c.puts.Load(),
 		Rejects:  c.rejects.Load(),
 		Entries:  int64(c.inner.Size()),
+		Shed:     c.shed.Load(),
 	}
 }
 
