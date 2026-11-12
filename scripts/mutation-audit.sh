@@ -1609,6 +1609,9 @@ mutate "a load overwrites a write that raced it"   internal/store/store.go   '	i
 		return old.val, false
 	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' .
 
+# A replicated tombstone removed the replica's copy whatever its stamp.
+mutate "a stale tombstone deletes a newer replica"   internal/replication/replica.go   '	if !held || e.Stamp.NewerThan(stamp) {'   '	if !held {'   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

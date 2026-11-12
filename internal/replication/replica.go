@@ -209,6 +209,31 @@ func (s *Store) Delete(namespace, key string) bool {
 	return true
 }
 
+// DeleteUnlessNewer removes a replicated key unless the copy held is newer than
+// stamp, and reports whether it removed anything.
+//
+// It is the deletion counterpart of [Store.Put]'s ordering. A tombstone from an
+// owner on an older epoch — arriving after a partition heals, say — must not
+// remove a copy a newer owner wrote, any more than an old write may replace it.
+func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp) bool {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	e, held := nr.entries[key]
+	if !held || e.Stamp.NewerThan(stamp) {
+		return false
+	}
+	delete(nr.entries, key)
+	s.bytes.Add(-size(key, e))
+	return true
+}
+
 // VersionConflicts returns the number of copies rejected because a newer one
 // was already held.
 func (s *Store) VersionConflicts() int64 { return s.versionConflicts.Load() }

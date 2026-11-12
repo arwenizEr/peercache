@@ -409,12 +409,16 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	}
 
 	if in.Deleted {
-		// A tombstone. Removing outright rather than storing a marker
-		// is safe because the stamp check above it has already refused
-		// anything older, and a replica that is promoted rebuilds from
-		// what it holds — an absent key and a key marked absent are the
-		// same answer.
-		h.cache.replicas.Delete(in.Namespace, in.Key)
+		// A tombstone, ordered like any copy: it removes what is held only
+		// if what is held is not newer. A deletion from an owner on an
+		// older epoch must not remove a write from the key's current owner.
+		// The comment here once said a stamp check above already refused
+		// older tombstones; there was none, and a stale one removed newer
+		// data. Removing outright rather than storing a marker is safe
+		// once ordered: a replica that is promoted rebuilds from what it
+		// holds, and an absent key and a key marked absent are the same
+		// answer.
+		h.cache.replicas.DeleteUnlessNewer(in.Namespace, in.Key, in.Stamp)
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 
