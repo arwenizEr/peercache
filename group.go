@@ -27,7 +27,17 @@ type Group interface {
 	// ID returns the group's identifier.
 	ID() string
 
+	// Get, Set, Delete, Keys, Items and Flush act on the group's state on
+	// this node, and are answered only where the group is owned. On any other
+	// node they return [ErrNotOwner] — Flush returns nil and does nothing,
+	// there being no activation here to release. This is deliberate: a group
+	// is where computation goes to the data, and these exist for code already
+	// running on the owner, such as a registered function's own node or a
+	// test. A caller elsewhere uses [Group.Call], which runs on the owner
+	// wherever it is.
+
 	// Get returns the value for a key within the group, or [ErrNotFound].
+	// Owner only; see above.
 	Get(ctx context.Context, key string) ([]byte, error)
 
 	// Set stores a value within the group. Group entries have no
@@ -58,9 +68,10 @@ type Group interface {
 	// blocking past the caller's deadline.
 	Call(ctx context.Context, fn string, arg []byte) ([]byte, error)
 
-	// Flush deactivates the group, releasing its goroutine once pending
-	// turns complete. State and pending timers survive; the next operation
-	// reactivates it.
+	// Flush deactivates the group on this node, releasing its goroutine once
+	// pending turns complete. State and pending timers survive; the next
+	// operation reactivates it. On a node that does not own the group there
+	// is nothing to deactivate, and Flush returns nil.
 	Flush(ctx context.Context) error
 }
 

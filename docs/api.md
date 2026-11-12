@@ -314,6 +314,13 @@ A group is a named collection of keys guaranteed to share an owner, and the unit
 of activation and serialization. It is addressable at all times, activated
 lazily on its owner, and deactivated after an idle period.
 
+**`Call` works from any node; the rest work on the owner.** `Get`, `Set`,
+`Delete`, `Keys` and `Items` act on the group's state where it lives and return
+`ErrNotOwner` anywhere else, and `Flush` on a non-owner does nothing. That is the
+design rather than a gap: moving a group's state to its caller is what groups
+exist to avoid, so a caller elsewhere sends the computation with `Call`. Unlike
+a `Namespace`, a `Group`'s direct accessors are for code already on the owner.
+
 **There is no `Lock`, and there will not be one.** Serialization is structural:
 it comes from the group having exactly one goroutine while activated, not from
 callers agreeing to take a lock. A lock API here would be a *distributed* lock
