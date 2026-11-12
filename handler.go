@@ -111,6 +111,16 @@ func (h *peerHandler) localNamespace(name string) (*namespace, bool) {
 	return ns, ok
 }
 
+// misconfigured reports a namespace whose options failed validation on this
+// node. Such a namespace is registered — so the application's handle can keep
+// returning the error — but has no store, and a peer request that reached it
+// used to dereference that nil store on the handler's goroutine and take the
+// process down. The error wraps the validation failure, so a caller sees
+// ErrInvalidOption from the owner rather than a dropped connection.
+func (h *peerHandler) misconfigured(ns *namespace) error {
+	return fmt.Errorf("peercache: namespace %q is misconfigured on %s: %w", ns.name, h.cache.self().ID, ns.err)
+}
+
 func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 	var in wire.GetRequest
 	if err := wire.Decode(req, &in); err != nil {
@@ -124,6 +134,9 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 	ns, ok := h.localNamespace(in.Namespace)
 	if !ok {
 		return wire.Encode(&wire.GetResponse{})
+	}
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
 	}
 
 	stored, version, found := ns.store.Get(in.Key)
@@ -165,6 +178,9 @@ func (h *peerHandler) load(ctx context.Context, req []byte) ([]byte, error) {
 	// Created if absent, unlike Get: a load has to be able to populate a
 	// namespace this node has not been asked about before.
 	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
+	}
 	if ns.opts.Loader == nil {
 		// No loader configured here. Report absence rather than an
 		// error: from the caller's side this is the same "not there"
@@ -216,6 +232,9 @@ func (h *peerHandler) set(ctx context.Context, req []byte) ([]byte, error) {
 	// application never chose.
 	_, existed := h.cache.namespaceIfExists(in.Namespace)
 	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
+	}
 	if !existed {
 		h.cache.implicitNamespaces.Add(1)
 		h.cache.opts.Logger.Warn(
@@ -254,6 +273,9 @@ func (h *peerHandler) delete(ctx context.Context, req []byte) ([]byte, error) {
 	// replicate its tombstone, or a replica that missed it resurrects the
 	// key the moment it is promoted.
 	if ns, ok := h.localNamespace(in.Namespace); ok {
+		if ns.err != nil {
+			return nil, h.misconfigured(ns)
+		}
 		if err := ns.localDelete(ctx, in.Key); err != nil {
 			return nil, err
 		}
@@ -271,6 +293,9 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 	ns, ok := h.localNamespace(in.Namespace)
 	if !ok {
 		return wire.Encode(&wire.BatchGetResponse{})
+	}
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
 	}
 
 	out := wire.BatchGetResponse{Entries: make([]wire.BatchEntry, 0, len(in.Keys))}
@@ -404,7 +429,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	// instead: a graceful shutdown would lose exactly the data it was trying
 	// to save. A mutation audit found that, by way of a test that passed
 	// while drain did nothing at all.
-	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && h.ownsKey(ns, in.Key) {
+	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && ns.err == nil && h.ownsKey(ns, in.Key) {
 		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {
 			h.cache.keysAdopted.Add(1)
 		}
@@ -430,7 +455,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	// may already have run and found nothing to promote, and the copy would
 	// sit in the replica store, unreadable, until the next tick. A hand-off
 	// from a draining node is exactly that race.
-	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && h.ownsKey(ns, in.Key) {
+	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && ns.err == nil && h.ownsKey(ns, in.Key) {
 		h.cache.promoter.promoteKey(ns, in.Key)
 	}
 	return wire.Encode(&wire.ReplicateResponse{Conflict: conflict})
@@ -458,6 +483,9 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 	ns, ok := h.localNamespace(in.Namespace)
 	if !ok {
 		return wire.Encode(&wire.CatchUpResponse{})
+	}
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
 	}
 
 	entries, more := ns.store.Snapshot(in.After, limit, func(key string) bool {

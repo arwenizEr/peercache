@@ -1579,6 +1579,15 @@ mutate "the peer handler checks ownership by the raw key" \
 # BatchSet wrote into the calling node's own store, bypassing routing.
 mutate "BatchSet writes locally instead of routing"   namespace.go   '		if err := n.Set(ctx, key, val, ttl); err != nil {'   '		if err := (error)(nil); n.store.Set(key, n.encode(val), ttl) == 0 && err != nil {'   'TestBatchSetRoutesEachKeyToItsOwner$' .
 
+# A peer write to a namespace misconfigured on its owner reached a nil store
+# and panicked on the handler goroutine.
+mutate "a misconfigured namespace's nil store is reachable from a peer"   handler.go   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if ns.err != nil {
+		return nil, h.misconfigured(ns)
+	}
+	if !existed {'   '	ns := h.cache.Namespace(in.Namespace).(*namespace)
+	if !existed {'   'TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

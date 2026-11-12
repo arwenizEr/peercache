@@ -125,6 +125,13 @@ func (p *promoter) reconcile() {
 			continue
 		}
 
+		if ns.err != nil {
+			// Misconfigured here: it has no store to promote into. Its
+			// replicas stay where they are, and the application's handle
+			// keeps reporting the configuration error.
+			continue
+		}
+
 		rf := ns.opts.ReplicationFactor
 
 		// Promote first, then evict. The other order would drop a key

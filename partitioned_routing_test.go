@@ -117,3 +117,38 @@ func TestBatchSetRoutesEachKeyToItsOwner(t *testing.T) {
 		t.Fatalf("%d replica copies for %d keys at RF=2; BatchSet did not replicate", replicas, len(kv))
 	}
 }
+
+// TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash: found by code
+// review. A namespace whose options fail validation is still registered, with
+// no store; a peer request for it reached the nil store and panicked on the
+// handler's goroutine, which takes the whole process down.
+func TestAPeerRequestToAMisconfiguredNamespaceIsAnErrorNotACrash(t *testing.T) {
+	f := newFabric(t, 2)
+	ctx := context.Background()
+	f.caches["n1"].Namespace("misconfigured", peercache.WithCodec("no-such-codec"))
+	good := f.caches["n0"].Namespace("misconfigured", peercache.WithL1TTL(-1))
+	f.settle(t)
+
+	key := ""
+	for i := 0; i < 200 && key == ""; i++ {
+		if k := fmt.Sprintf("m/%d", i); f.ownerOf(t, k) == "n1" {
+			key = k
+		}
+	}
+	if key == "" {
+		t.Fatal("no key owned by n1")
+	}
+	for name, op := range map[string]func() error{
+		"Set": func() error { return good.Set(ctx, key, []byte("v"), 0) },
+		"Get": func() error { _, err := good.Get(ctx, key); return err },
+		"BatchGet": func() error {
+			_, err := good.BatchGet(ctx, []string{key})
+			return err
+		},
+		"Delete": func() error { return good.Delete(ctx, key) },
+	} {
+		if err := op(); err == nil {
+			t.Fatalf("%s against a key whose owner has the namespace misconfigured returned nil", name)
+		}
+	}
+}
