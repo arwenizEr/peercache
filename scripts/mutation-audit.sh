@@ -1612,6 +1612,17 @@ mutate "a load overwrites a write that raced it"   internal/store/store.go   '	i
 # A replicated tombstone removed the replica's copy whatever its stamp.
 mutate "a stale tombstone deletes a newer replica"   internal/replication/replica.go   '	if !held || e.Stamp.NewerThan(stamp) {'   '	if !held {'   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' .
 
+# A timer whose turn could not be queued was dropped, its entry left behind.
+mutate "a timer due on a full mailbox is dropped"   internal/actor/record.go   '	if r.timers[gt.name] == gt && r.act != nil {
+		gt.timer = r.rt.opts.Clock.AfterFunc(timerRetryDelay, func() { r.fireTimer(gt) })
+	}'   ''   'TestATimerDueWhileTheMailboxIsFullStillFires$' ./internal/actor/
+
+mutate "a timer naming no function keeps its entry"   internal/actor/record.go   '		if current {
+			delete(r.timers, gt.name)
+		}'   '		if current && ok {
+			delete(r.timers, gt.name)
+		}'   'TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup$' ./internal/actor/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

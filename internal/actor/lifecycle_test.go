@@ -3,6 +3,7 @@ package actor_test
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -502,4 +503,110 @@ func TestLifecycleEventsAreDelivered(t *testing.T) {
 			t.Errorf("no %v event was delivered; saw %v", want, seen)
 		}
 	}
+}
+
+// TestATimerDueWhileTheMailboxIsFullStillFires: found by code review. A timer
+// that came due while its group's mailbox was full had its turn refused and
+// dropped, while its schedule entry stayed: the timer never fired, and the
+// entry held the group active forever.
+func TestATimerDueWhileTheMailboxIsFullStillFires(t *testing.T) {
+	rt, fc := newRuntime(t, func(o *actor.Options) {
+		o.IdleTimeout = time.Hour
+		o.MailboxSize = 1
+	})
+	var fired atomic.Int64
+	release := make(chan struct{})
+	running := make(chan struct{}, 1)
+	for name, fn := range map[string]core.GroupFunc{
+		"tick": func(context.Context, core.GroupState, []byte) ([]byte, error) { fired.Add(1); return nil, nil },
+		"schedule": func(_ context.Context, s core.GroupState, _ []byte) ([]byte, error) {
+			s.ScheduleTimer("t", time.Minute, "tick", nil)
+			return nil, nil
+		},
+		"block": func(context.Context, core.GroupState, []byte) ([]byte, error) {
+			running <- struct{}{}
+			<-release
+			return nil, nil
+		},
+		"noop": func(context.Context, core.GroupState, []byte) ([]byte, error) { return nil, nil },
+	} {
+		if err := rt.Register(name, fn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	if _, err := rt.Call(ctx, "g", "schedule", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Occupy the group's goroutine, then its one mailbox slot. The slot is
+	// filled by a call whose caller then gives up: the call is queued — Do
+	// checks the context only before queuing — and returns once cancelled,
+	// leaving its turn in the mailbox, so nothing here blocks on the group.
+	go func() { _, _ = rt.Call(ctx, "g", "block", nil) }()
+	<-running
+	//
+	// Each probe is such a call: either it is refused at once, and the
+	// mailbox is full, or it is queued — filling the slot itself — and
+	// returns when cancelled. Two probes at most, and none can block.
+	probe := func() error {
+		pctx, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { _, err := rt.Call(pctx, "g", "noop", nil); done <- err }()
+		for i := 0; i < 1000; i++ {
+			select {
+			case err := <-done:
+				cancel()
+				return err
+			default:
+				runtime.Gosched()
+			}
+		}
+		cancel()
+		return <-done
+	}
+	full := false
+	for i := 0; i < 3 && !full; i++ {
+		full = errors.Is(probe(), core.ErrGroupOverloaded)
+	}
+	if !full {
+		t.Fatal("could not fill a one-slot mailbox while its group was busy")
+	}
+
+	fc.Advance(time.Minute) // due now, with no room for its turn
+	close(release)
+
+	// Its turn is retried rather than lost.
+	for i := 0; i < 100 && fired.Load() == 0; i++ {
+		fc.Advance(100 * time.Millisecond)
+		runtime.Gosched()
+	}
+	if got := fired.Load(); got != 1 {
+		t.Fatalf("a timer due while the mailbox was full fired %d times; want 1", got)
+	}
+}
+
+// TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup: the same leftover
+// schedule entry, for a function that does not exist. It can never run, and it
+// must not keep the group active forever.
+func TestATimerNamingAnUnregisteredFunctionDoesNotPinTheGroup(t *testing.T) {
+	rt, fc := newRuntime(t, func(o *actor.Options) { o.IdleTimeout = time.Minute })
+	if err := rt.Register("schedule", func(_ context.Context, s core.GroupState, _ []byte) ([]byte, error) {
+		s.ScheduleTimer("t", time.Second, "no-such-function", nil)
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Call(context.Background(), "g", "schedule", nil); err != nil {
+		t.Fatal(err)
+	}
+	fc.Advance(2 * time.Second)
+	// The clock moves while waiting, not before: the turn that drops the
+	// entry runs on the group's goroutine whenever it is scheduled, and it
+	// re-arms the idle timer from that moment, so the idle timeout has to be
+	// able to pass after it.
+	waitFor(t, "the group to deactivate", func() bool {
+		fc.Advance(time.Minute)
+		return rt.Stats().Active == 0
+	})
 }

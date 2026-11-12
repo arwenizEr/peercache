@@ -3,6 +3,7 @@ package actor
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -306,8 +307,18 @@ func (r *record) evict() {
 	<-a.done
 }
 
+// timerRetryDelay is how long a timer whose turn could not be queued — the
+// mailbox was full, or activation was deferred — waits before trying again.
+const timerRetryDelay = 50 * time.Millisecond
+
 // scheduleTimer arms a named timer. Only ever called from the turn goroutine.
+//
+// The schedule is written under r.mu. The turn goroutine is the only one that
+// adds or removes entries, but the clock goroutine re-arms a timer whose turn
+// could not be queued, so the entries' timer handles are shared.
 func (r *record) scheduleTimer(name string, after time.Duration, fn string, arg []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.timers == nil {
 		r.timers = make(map[string]*groupTimer, 1)
 	}
@@ -330,6 +341,8 @@ func (r *record) scheduleTimer(name string, after time.Duration, fn string, arg 
 
 // cancelTimer drops a named timer. Only ever called from the turn goroutine.
 func (r *record) cancelTimer(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	gt, ok := r.timers[name]
 	if !ok {
 		return
@@ -346,8 +359,7 @@ func (r *record) armTimer(gt *groupTimer) {
 	if remaining < 0 {
 		remaining = 0
 	}
-	name, fn, arg := gt.name, gt.fn, gt.arg
-	gt.timer = r.rt.opts.Clock.AfterFunc(remaining, func() { r.fireTimer(name, fn, arg) })
+	gt.timer = r.rt.opts.Clock.AfterFunc(remaining, func() { r.fireTimer(gt) })
 }
 
 // rearmTimers re-arms every surviving schedule entry. Called under r.mu during
@@ -371,21 +383,51 @@ func (r *record) stopTimers() {
 
 // fireTimer runs when a group timer comes due. It executes on the clock's
 // goroutine, so it posts work and does not wait.
-func (r *record) fireTimer(name, fn string, arg []byte) {
-	registered, ok := r.rt.lookup(fn)
+//
+// The turn it posts checks that gt is still the schedule entry for its name:
+// a timer cancelled or replaced after it came due, while its turn sat in the
+// mailbox, must neither run nor delete its replacement's entry. That check is
+// also what makes a retried or duplicated firing harmless.
+//
+// A turn that cannot be queued is retried, not dropped. Dropping it left the
+// entry in the schedule with no clock timer behind it, so the timer never fired
+// and the entry held the group active for good. A timer naming a function that
+// is not registered is removed instead, for the same reason.
+func (r *record) fireTimer(gt *groupTimer) {
+	registered, ok := r.rt.lookup(gt.fn)
 	if !ok {
-		r.rt.opts.Logger.Warn("group timer names an unregistered function",
-			"group", r.id, "timer", name, "func", fn)
-		return
+		r.rt.opts.Logger.Warn("group timer names an unregistered function; dropping it",
+			"group", r.id, "timer", gt.name, "func", gt.fn)
 	}
 	ctx := context.Background()
-	_, _ = r.enqueue(ctx, func(s core.GroupState) (any, error) {
-		// Remove the schedule entry from inside the turn, where the map is
-		// safe to touch. A repeating timer re-schedules itself by calling
-		// ScheduleTimer again, exactly as a caller would.
-		delete(r.timers, name)
-		return registered(ctx, s, arg)
+	_, err := r.enqueue(ctx, func(s core.GroupState) (any, error) {
+		r.mu.Lock()
+		current := r.timers[gt.name] == gt
+		if current {
+			delete(r.timers, gt.name)
+		}
+		r.mu.Unlock()
+		if !current || !ok {
+			return nil, nil
+		}
+		return registered(ctx, s, gt.arg)
 	}, false)
+	if err == nil {
+		return
+	}
+	if errors.Is(err, core.ErrClosed) || errors.Is(err, core.ErrNotOwner) {
+		// Closed, or the group has moved: its timers will be re-armed
+		// wherever, and whenever, it activates next.
+		return
+	}
+	// Mailbox full or activation deferred: try again shortly, if the entry is
+	// still this one and the group still has an activation to deliver to. A
+	// deactivated group's timers are re-armed by its next activation.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timers[gt.name] == gt && r.act != nil {
+		gt.timer = r.rt.opts.Clock.AfterFunc(timerRetryDelay, func() { r.fireTimer(gt) })
+	}
 }
 
 // emit delivers a lifecycle event. Delivery is best effort and nothing may
