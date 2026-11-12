@@ -19,6 +19,7 @@ and output-checked by `go test`:
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
+| `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
 | `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
 | `ExamplePartitionByPrefix` | key-to-group mapping |
@@ -751,6 +752,42 @@ and `peercache_members_on_probation` count the nodes waiting; one that keeps
 reappearing there is a crashlooping pod. Clocks need to be roughly synchronised,
 as Kubernetes nodes are; skew moves the moment a node is ranked by that much on
 some peers, which the activation delay absorbs. Off by default.
+
+### A slow node — CPU throttling
+
+A pod at its CPU limit is throttled by the kernel in each scheduling period, and
+from outside it looks slow: every message to it answers late. The library keeps
+that lateness from spreading:
+
+- A read goes to the key's owner and nowhere else, so reads of keys the slow
+  node does not own never wait on it.
+- Asynchronous replication is queued, so a write whose replica is the slow node
+  returns without waiting. **Synchronous** replication does wait — that is what
+  it is for — so a namespace with `WithSyncReplication` writes at the pace of its
+  slowest replica, as documented under Replication.
+- A slow owner fills its groups' mailboxes, and callers get `ErrGroupOverloaded`
+  rather than queueing behind it without bound; deadlines propagate, so a caller
+  is never held past its own.
+
+`TestAStarvedNodeSlowsOnlyItsOwnKeys` delays every message to and from one node
+of five by 200 ms and checks that reads of keys owned elsewhere, and
+asynchronous writes, complete without the fake clock moving at all, while a read
+of the slow node's own key does not complete until it moves past a round trip.
+No split-brain is detected.
+
+**What the harness cannot show** is the failure detector, because its
+membership follows reachability rather than probe timing. In production that is
+memberlist's: the default LAN profile probes every second with a 500 ms timeout,
+suspects a node for `4·log(N+1)` seconds before declaring it dead, and backs its
+own probing off by up to 8× when the local node is the one struggling. A node
+answering in 200 ms is inside all of that. One throttled hard enough to miss
+probes for the whole suspicion window is indistinguishable from a dead one, and
+is treated as one.
+
+Go 1.25 sets `GOMAXPROCS` from the container's CPU limit, so the runtime does not
+schedule more parallelism than the quota allows. Prefer a CPU request with no
+limit, or a generous one: throttling costs latency everywhere, and gossip's
+latency is what the failure detector reads.
 
 ## Membership, transport, clock
 

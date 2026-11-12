@@ -2111,6 +2111,41 @@ the write and reported nothing. Every existing test used a fabric with membershi
 and could not see it. Both counters now sit outside that block, beside
 `MailboxRejections`, for the reason its comment already gave.
 
+### M9 — resilience under resource pressure, and what checking it found
+
+Eleven mutation entries, every one applied by hand and caught before it was
+written into the audit, and each later re-run through the script on a clean
+tree. Four things the process found are worth keeping:
+
+**A test expectation that was wrong, not the code.** The first version of
+`TestSheddingTakesL1AndReplicasBeforeOwnedData` expected an L1-only shed after
+filling L1, and failed: replicas were shed too. The node had already been shed
+to its low-water mark and sat just above it, so even an empty L1 left it over,
+and the remainder correctly came from replicas. The test now brings the nodes
+well below the mark first, which is the only condition under which "L1 first"
+is distinguishable from "everything at once".
+
+**A vacuous entry.** Removing the budget check on replica arrivals changed
+nothing any test saw: the same node's own writes and the periodic tick caught
+the growth anyway. `TestAReplicaOnlyNodeStaysWithinItsBudget` gives a node only
+replicas and no clock tick, which is the inflow a failover produces.
+
+**A resurrection hazard the first design left open.** Shedding an owned key
+first only sent its replicas a removal. Under queue pressure that message can be
+dropped, and then the rewrite of the key — restarting its version at 1 (question
+18) — loses to the replica's copy and a failover promotes the shed value. The
+store now keeps a per-shard version floor at the highest version shed, so
+correctness does not depend on the message (CLAUDE.md decision 6). The same
+hazard exists for an ordinary asynchronous Delete; that is open question 42.
+
+**A flake.** `MembersOnProbation` was cached by the relay goroutine and read
+once as 1 after the probationed node had died, in four of ten runs. It is
+computed from the authority now, as `Members` is; ten repetitions clean.
+
+**And a measured cost.** The cascade test with a budget keeps every survivor
+under it and loses 348 of 1500 keys across three deaths at RF=2; without one it
+loses none on survivors holding 1.9× the budget. Recorded in `docs/api.md`.
+
 ### After M8: question 40, and a CatchUp error that had never been returned
 
 `ReadyState.ReplicasCurrent` reports whether a node has completed a catch-up,
@@ -2148,9 +2183,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-SPEC.md §4 carries seven `**Acceptance:**` blocks, M0 through M6; M7 states its
-requirements as bullets instead. Broken into individually testable claims they
-come to twenty-one. Each one, and the named test that would fail if it regressed:
+SPEC.md §4 carries eight `**Acceptance:**` blocks, M0 through M6 and M9; M7
+states its requirements as bullets instead. Broken into individually testable
+claims they come to twenty-five. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2175,8 +2210,12 @@ come to twenty-one. Each one, and the named test that would fail if it regressed
 | M7 | soak at target throughput, memory flat | `TestSoakMemoryStaysFlat`, `TestSoakGoroutinesStayFlat` |
 | M7 | correctness metrics exported as counters | `TestCorrectnessMetricsAreCounters`, `TestEveryStatsFieldIsExported` |
 | M7 | examples runnable, `docs/api.md` complete | `TestApiDocExampleTableMatchesReality`, `make examples` |
+| M9 | five nodes killed down to two: every survivor within one shedding step of its budget, every shed counted by tier | `TestAFailoverCascadeStaysWithinBudget`, `TestSheddingTakesL1AndReplicasBeforeOwnedData` |
+| M9 | a key shed and rewritten is never served at an older value, before or after a failover | `TestAShedKeyIsNeverServedAtAnOlderValue`, `TestARewriteAfterShedIsVersionedAboveWhatWasShed` |
+| M9 | a node restarted every 2 s for 60 s causes no key held by the healthy nodes to be reported missing | `TestACrashloopingNodeIsNeverRanked` |
+| M9 | every message to one node delayed 200 ms: no split brain, no latency change for keys owned elsewhere | `TestAStarvedNodeSlowsOnlyItsOwnKeys` |
 
-All twenty-three names in the table were verified to exist before it was
+All twenty-nine names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

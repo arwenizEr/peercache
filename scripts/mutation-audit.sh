@@ -1303,6 +1303,12 @@ mutate "a cold start ranks nobody" \
   '	if false {' \
   'TestColdStartRanksEveryNode$' .
 
+# --- M9, part three: a slow node ---
+
+# Asynchronous writes that waited on their replicas would make every write
+# whose replica is a throttled node as slow as that node.
+mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{'   '	if err := n.cache.replicator.replicate(ctx, true, replicaWork{'   'TestAStarvedNodeSlowsOnlyItsOwnKeys$' .
+
 # --- M8, part two: the fuzz targets and the checks on the build files ---
 #
 # Every entry below was applied and reverted by hand before being written here,

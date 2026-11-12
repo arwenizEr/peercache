@@ -82,6 +82,12 @@ the feature list rather than after it.
   restarts cause no rebalancing and no "not found" for data the healthy nodes
   hold. A new pod carries no share for that long; a cold start, where every node
   is young, ranks them all. Off by default.
+- **A slow node slows only its own keys.** A node whose every message is
+  delayed — a CPU-throttled pod — delays reads of the keys it owns and writes
+  that replicate to it synchronously, and nothing else: reads of keys owned
+  elsewhere and asynchronous writes complete without waiting on it. Whether it is
+  judged dead is memberlist's call, made with a 500 ms probe timeout and a
+  suspicion window of seconds; the test harness does not model that part.
 - **Every namespace must be opened on every node, with the same options, before
   serving.** A namespace not opened locally is created on the first routed write
   with *default* options — replication factor 1 — and options cannot be changed
@@ -164,6 +170,7 @@ the next begins.
 | M6 | Rebalancing and Kubernetes lifecycle | **complete** |
 | M7 | Observability and hardening | **complete** |
 | M8 | Adversarial verification | **complete** |
+| M9 | Resilience under resource pressure | **complete** |
 
 All seven SPEC milestones are done, and M8 — linearizability checking, a
 deterministic fault simulation and exhaustive protocol fuzzing — went looking for

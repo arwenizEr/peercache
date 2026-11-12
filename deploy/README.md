@@ -141,6 +141,11 @@ cache; `Stats()` reports all three. Measure, then set limits with headroom for
 the replicas a node inherits when a peer fails — a pod sized for its steady
 state will be OOM-killed by its first failover.
 
+**CPU.** Prefer a request without a limit, or a generous limit. A throttled pod
+answers late, and the failure detector reads lateness: memberlist probes with a
+500 ms timeout. Go 1.25 already sizes `GOMAXPROCS` to the CPU limit, so do not
+set it by hand.
+
 Use `WithJoinProbation(30 * time.Second)` as well. A pod in CrashLoopBackOff
 otherwise rejoins on every restart, takes a share of the keyspace it never
 holds, and makes reads of that share report not-found until it dies again;

@@ -624,3 +624,30 @@ func ExampleWithMemoryBudget() {
 	// owned keys shed: true
 	// keys still held: true
 }
+
+// ExampleWithJoinProbation shows the option's configuration and its two
+// boundaries. A cache without a membership authority is a cluster of one, so
+// there is nobody to keep waiting and the probation has nothing to do; a
+// negative probation is a configuration error. Its effect on a real cluster is
+// what TestACrashloopingNodeIsNeverRanked demonstrates.
+func ExampleWithJoinProbation() {
+	cache, err := peercache.New(
+		peercache.WithNodeID("pod-0"),
+		peercache.WithJoinProbation(30*time.Second),
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	fmt.Println("members on probation:", cache.Stats().MembersOnProbation)
+	fmt.Println("ready:", cache.Ready().Ready)
+
+	_, err = peercache.New(peercache.WithNodeID("pod-1"), peercache.WithJoinProbation(-time.Second))
+	fmt.Println("negative rejected:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// members on probation: 0
+	// ready: true
+	// negative rejected: true
+}
