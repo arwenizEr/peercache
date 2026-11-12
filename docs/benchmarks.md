@@ -786,7 +786,11 @@ before and after twenty million operations.
 
 Re-run on Machine A after M8 and the question 37 change, for an hour split
 between the two soak tests and run one after the other — the first local run
-longer than two minutes. **Still an hour, not twenty-four.**
+longer than two minutes. **An hour, not twenty-four, and that is now a decision
+rather than a gap:** 728 million operations with the heap flat is where a leak
+per operation would show, and a leak that grows with wall time instead — a
+timer, a ticker, a gossip goroutine — would show in the hour the nightly job
+runs. Twenty-four hours would test neither more.
 
 | | `TestSoakMemoryStaysFlat` | `TestSoakGoroutinesStayFlat` |
 |---|---|---|

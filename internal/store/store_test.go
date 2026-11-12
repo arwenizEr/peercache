@@ -93,12 +93,14 @@ func TestVersionsIncrementPerKey(t *testing.T) {
 		t.Fatalf("first Set of a different key returned version %d, want 1", got)
 	}
 
-	// Deleting resets the sequence, because the version lives with the
-	// entry. Recorded here as the observed behaviour so that M4's L1
-	// invalidation is designed knowing it.
+	// Deleting does not reset the sequence. It used to — the version lived
+	// with the entry and went with it — and a replica that missed the
+	// deletion's tombstone then refused the rewrite as older and promoted the
+	// deleted value on failover (open question 42). The shard keeps a floor
+	// at the highest version it deleted, and the rewrite starts above it.
 	s.Delete("a")
-	if got := s.Set("a", []byte("v"), 0); got != 1 {
-		t.Fatalf("Set after Delete returned version %d, want 1", got)
+	if got := s.Set("a", []byte("v"), 0); got != 6 {
+		t.Fatalf("Set after deleting version 5 returned version %d, want 6", got)
 	}
 }
 

@@ -36,10 +36,16 @@ type modelEntry struct {
 type model struct {
 	entries map[string]modelEntry
 	nowNs   func() int64
+	// floor is the store's per-shard version floor: the highest version a
+	// shard has deleted or shed. A first write to an absent key starts above
+	// it (open question 42).
+	floor   map[int]uint64
+	shardOf func(string) int
 }
 
-func newModel(nowNs func() int64) *model {
-	return &model{entries: make(map[string]modelEntry), nowNs: nowNs}
+func newModel(nowNs func() int64, shardOf func(string) int) *model {
+	return &model{entries: make(map[string]modelEntry), nowNs: nowNs,
+		floor: make(map[int]uint64), shardOf: shardOf}
 }
 
 func (m *model) live(e modelEntry) bool {
@@ -64,7 +70,11 @@ func (m *model) set(key string, val []byte, ttl time.Duration) uint64 {
 			expiresAt = deadline
 		}
 	}
-	version := m.entries[key].version + 1
+	old, had := m.entries[key]
+	version := old.version + 1
+	if f := m.floor[m.shardOf(key)]; !had && version <= f {
+		version = f + 1
+	}
 	stored := make([]byte, len(val))
 	copy(stored, val)
 	m.entries[key] = modelEntry{val: stored, expiresAt: expiresAt, version: version}
@@ -74,6 +84,9 @@ func (m *model) set(key string, val []byte, ttl time.Duration) uint64 {
 func (m *model) delete(key string) bool {
 	e, ok := m.entries[key]
 	delete(m.entries, key)
+	if ok && e.version > m.floor[m.shardOf(key)] {
+		m.floor[m.shardOf(key)] = e.version
+	}
 	return ok && m.live(e)
 }
 
@@ -101,7 +114,7 @@ func TestStoreMatchesReferenceModel(t *testing.T) {
 	rng := rand.New(rand.NewSource(seed))
 
 	s, fc := newStore(t, func(o *store.Options) { o.Shards = 8 })
-	ref := newModel(func() int64 { return fc.Now().UnixNano() })
+	ref := newModel(func() int64 { return fc.Now().UnixNano() }, s.ShardOf)
 
 	keys := make([]string, keyspace)
 	for i := range keys {

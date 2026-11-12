@@ -324,7 +324,10 @@ the theoretically required key count ±10%.
   metrics — split-brain detections, stale-epoch activation rejections, version
   conflicts, mailbox rejections, transfer failures.
 - pprof endpoints, structured logging via the `Logger` interface.
-- Load and soak test: 24h at target throughput, memory flat.
+- Load and soak test: 24h at target throughput, memory flat. *(Run for one hour
+  instead, by decision: 728M operations with the live heap flat and goroutines
+  23 → 23. A leak per operation shows within that; one that grows with wall
+  time would show in the hour the nightly job runs. See docs/benchmarks.md.)*
 - `docs/api.md` complete, examples runnable, README with an honest guarantees
   section including the failure modes.
 

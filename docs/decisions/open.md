@@ -344,6 +344,11 @@ stops a restarted sequence from wedging a key until its TTL runs out.
 use "version is lower" alone as proof that an incoming value is stale. If M4
 needs a real ordering it has to carry the owner's epoch alongside the version.
 
+**Narrowed in M9 and after M10.** A deleted or shed entry no longer restarts the
+sequence: the shard keeps a floor at the highest version it removed that way,
+because a replica that missed the removal still holds that version (questions
+42 and M9's shedding). Only an entry the sweeper reclaims restarts at 1 now.
+
 ---
 
 ## 20. One optimisation has no deterministic test — M1, known and unresolved
@@ -1352,7 +1357,7 @@ round-trips invalid UTF-8 intact, and JSON named explicitly still does not.
 
 ---
 
-## 42. A dropped asynchronous Delete can resurrect an older value — M9, open
+## 42. A dropped asynchronous Delete can resurrect an older value — M9, resolved after M10
 
 Found while designing M9's shedding, which has the same shape and is protected
 against it; ordinary deletion is not.
@@ -1381,6 +1386,14 @@ does not raise it.
 
 **What would force it:** any deployment running asynchronous replication with a
 non-zero `peercache_replications_dropped_total` and deletes followed by rewrites.
+
+**Resolved after M10.** `store.Delete` now raises the shard's version floor, as
+`store.Shed` does, so a rewrite of a deleted key starts above any version a
+replica that missed the tombstone can hold. `TestALostDeleteDoesNotResurrectAnOlderValue`
+reproduced it first — a key written five times, deleted while its owner was cut
+off from its replica, rewritten as "new", and served as "old-5" by the replica
+promoted after the owner died — and passes now. Question 18's restart remains
+for an entry the sweeper reclaims, where every holder expires it alike.
 
 ---
 

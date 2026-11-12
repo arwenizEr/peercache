@@ -1528,6 +1528,17 @@ mutate "a two-digit milestone row stops being counted" \
   '| X10 | a typed value set on one node reads back equal on every node through Get and BatchGet |' \
   'TestAcceptanceMapCountsAreCorrect$' .
 
+# --- Question 42: a lost tombstone ---
+
+mutate "a deletion no longer raises the version floor" \
+  internal/store/store.go \
+  '		// must start above it, as after a shed. Open question 42.
+		if e.version > sh.floor {
+			sh.floor = e.version
+		}' \
+  '		// must start above it, as after a shed. Open question 42.' \
+  'TestALostDeleteDoesNotResurrectAnOlderValue$' .
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

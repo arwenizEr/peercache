@@ -220,9 +220,10 @@ func TestShedIsSafeAlongsideWrites(t *testing.T) {
 // remembers, per shard, the highest version it ever shed, and a rewrite starts
 // above it.
 //
-// Delete and Sweep do not raise the floor: a deletion replicates its own
-// tombstone, and an expiry happens on every holder on the same schedule, so
-// question 18's restart is harmless for both and stays as it was.
+// Delete raises the floor too, since open question 42: its tombstone is
+// replicated asynchronously and can be lost the same way. Sweep does not: an
+// expiry happens on every holder on the same schedule, so question 18's restart
+// is harmless there and stays as it was.
 func TestARewriteAfterShedIsVersionedAboveWhatWasShed(t *testing.T) {
 	s, _ := newStore(t, func(o *store.Options) { o.Shards = 1 })
 	var v uint64
@@ -246,13 +247,29 @@ func TestARewriteAfterShedIsVersionedAboveWhatWasShed(t *testing.T) {
 		t.Fatalf("a first write to another key in a shard that shed version 5 got %d", got)
 	}
 
-	// Delete does not raise it: question 18 stands for deletions.
+	// Delete raises it too, since open question 42: a deletion's tombstone is
+	// replicated, but asynchronously, and a lost one leaves a replica holding
+	// the old version exactly as a lost shed does.
 	d, _ := newStore(t, func(o *store.Options) { o.Shards = 1 })
 	for i := 0; i < 5; i++ {
 		d.Set("k", []byte("old"), 0)
 	}
 	d.Delete("k")
-	if got := d.Set("k", []byte("new"), 0); got != 1 {
-		t.Fatalf("a rewrite after Delete got version %d, want 1: only shedding raises the floor", got)
+	if got := d.Set("k", []byte("new"), 0); got <= 5 {
+		t.Fatalf("a rewrite after deleting version 5 got version %d; a replica that missed "+
+			"the tombstone would refuse it", got)
+	}
+
+	// Sweep does not: an expiry happens on every holder at the same deadline,
+	// so there is no copy left elsewhere for a rewrite to have to outrank.
+	w, fc := newStore(t, func(o *store.Options) { o.Shards = 1 })
+	for i := 0; i < 5; i++ {
+		w.Set("k", []byte("old"), time.Second)
+	}
+	fc.Advance(2 * time.Second)
+	w.Sweep(w.Shards())
+	if got := w.Set("k", []byte("new"), 0); got != 1 {
+		t.Fatalf("a rewrite after an expiry got version %d, want 1: only shedding and "+
+			"deleting raise the floor", got)
 	}
 }
