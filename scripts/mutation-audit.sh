@@ -145,6 +145,15 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# ONLY set but empty is almost always a filter that a caller computed and got
+# nothing from, and treating it as "no filter" runs every entry — an hour on the
+# development machine, started by accident. That happened twice in one session.
+# Unset means a full run; set and empty means a mistake.
+if [ "${ONLY+set}" = set ] && [ -z "$ONLY" ]; then
+  echo "refusing to run: ONLY is set but empty. Unset it for a full run." >&2
+  exit 1
+fi
+
 # Restore every mutated file on *any* exit, including Ctrl-C and a crash.
 #
 # This is not belt-and-braces. A run that died between applying a mutation and
