@@ -77,7 +77,7 @@ func TestIdleDeactivationReleasesTheGoroutine(t *testing.T) {
 	}
 }
 
-// TestDeactivationPreservesState is half of the M2 acceptance criterion: a
+// TestDeactivationPreservesState is half of the group acceptance criterion: a
 // group that deactivates and reactivates preserves state.
 func TestDeactivationPreservesState(t *testing.T) {
 	rt, fc := newRuntime(t, func(o *actor.Options) { o.IdleTimeout = time.Minute })
@@ -444,7 +444,7 @@ func TestEscapedStateIsInertAndCounted(t *testing.T) {
 	}
 }
 
-// TestLifecycleEventsAreDelivered covers the six event kinds M2 owns.
+// TestLifecycleEventsAreDelivered covers the six event kinds the runtime owns.
 func TestLifecycleEventsAreDelivered(t *testing.T) {
 	var mu sync.Mutex
 	var seen []core.EventKind

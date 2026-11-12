@@ -31,7 +31,7 @@ func benchKeys(n int) []string {
 }
 
 // BenchmarkOwner is the number that matters. Owner runs on every activation
-// and, from M4, on every remote call, so its cost is paid per request rather
+// and on every remote call, so its cost is paid per request rather
 // than per membership change.
 //
 // It is benchmarked across cluster sizes because rendezvous hashing is O(n) in
@@ -107,8 +107,8 @@ func BenchmarkOwnerDuringUpdate(b *testing.B) {
 	}
 }
 
-// BenchmarkReplicas is the M5 path. It sorts the whole view per call, so it is
-// deliberately not on the M3 hot path and is measured here to record how much
+// BenchmarkReplicas is the replication path. It sorts the whole view per call,
+// so it is deliberately not on the ownership hot path and is measured here to record how much
 // more expensive it is than taking the head.
 func BenchmarkReplicas(b *testing.B) {
 	for _, size := range []int{7, 64} {

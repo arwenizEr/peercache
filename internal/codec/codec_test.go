@@ -173,7 +173,7 @@ func (identityCompressor) Decompress(src []byte) ([]byte, error) {
 //
 // Registration is deliberately global and permanent — it models startup, where
 // every pod registers the same names once — so a test cannot undo it. Under
-// `go test -count=2`, which is the gate CLAUDE.md specifies, a fixed name would
+// `go test -count=2`, which is the race gate, a fixed name would
 // collide with the previous run and the test would fail on its second pass.
 // That is not a flaw in the registry; it is a flaw in a test that assumes a
 // clean process.
@@ -280,7 +280,7 @@ func TestCodecErrorsAreReported(t *testing.T) {
 // went in.
 //
 // FuzzCodecRoundTrip found it on its first run, against a codec that had shipped
-// since M1 with a round-trip guarantee in the interface doc above it.
+// from the start with a round-trip guarantee in the interface doc above it.
 //
 // It is pinned rather than fixed because there is no fix inside this package.
 // The substitution happens inside encoding/json, no option disables it, and

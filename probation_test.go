@@ -57,7 +57,7 @@ func waitForRawMembers(t *testing.T, f *fabric, id string, want []string) {
 	})
 }
 
-// TestACrashloopingNodeIsNeverRanked is M9's crashloop criterion: a node
+// TestACrashloopingNodeIsNeverRanked is the crashloop criterion: a node
 // restarted every 2 seconds for 60 seconds causes no key held by the healthy
 // nodes to be reported missing.
 //

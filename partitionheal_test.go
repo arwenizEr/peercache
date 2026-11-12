@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// This file reduces the failure the M8 simulation found when open question 38's
+// This file reduces the failure the simulation found when open question 38's
 // assertion was finally written: writes acknowledged on the *majority* side of a
 // partition did not survive the heal.
 //
@@ -221,7 +221,7 @@ func TestMajoritySideWritesSurviveAHealAndTwoDestructions(t *testing.T) {
 	// Readable is not the same as replicated. A key is readable the moment one
 	// node holds it; "survives two destructions" needs three nodes to hold it,
 	// and after a heal the copies are restored over time by catch-up — the
-	// mechanism M5 made an explicit call precisely because it is not automatic.
+	// mechanism that is an explicit call precisely because it is not automatic.
 	//
 	// Skipping it here cost a key in about one run in fifteen under
 	// `-race -count=2`: every key read back fine, two nodes died, and one key
@@ -303,7 +303,7 @@ func describeHolders(t *testing.T, f *fabric, lost []string) string {
 // guarded by nothing.
 //
 // The property: when a replica this node has stopped ranking for cannot be
-// handed to anybody, the local copy stays. Dropping it is the pre-M8 behaviour
+// handed to anybody, the local copy stays. Dropping it is the old behaviour
 // by a slower route, and a peer that is briefly unreachable during a membership
 // change is the ordinary case rather than the exceptional one.
 func TestAHandOffThatCannotBePlacedKeepsTheCopy(t *testing.T) {
@@ -371,7 +371,7 @@ func TestAHandOffThatCannotBePlacedKeepsTheCopy(t *testing.T) {
 	// A dropped message looks like silence rather than an error on this fabric,
 	// so the hand-off does not fail -- it waits out its
 	// deadline, which is measured on the injected clock. Advancing is how this
-	// suite expresses waiting; CLAUDE.md forbids the alternative.
+	// suite expresses waiting; CONTRIBUTING.md forbids the alternative.
 	//
 	// This is also the honest shape of the behaviour in production: an
 	// unreachable peer costs the hand-off worker one timeout per key before the
@@ -380,7 +380,7 @@ func TestAHandOffThatCannotBePlacedKeepsTheCopy(t *testing.T) {
 	// A dropped message looks like silence rather than an error on this fabric,
 	// so a hand-off does not fail -- it waits out its deadline,
 	// which is measured on the injected clock. Advancing is how this suite
-	// expresses waiting; CLAUDE.md forbids the alternative.
+	// expresses waiting; CONTRIBUTING.md forbids the alternative.
 	//
 	// That is also the honest shape of the behaviour in production: an
 	// unreachable peer costs the hand-off worker one timeout per key before the

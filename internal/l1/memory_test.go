@@ -24,7 +24,8 @@ func settleBytes(c *l1.Cache, want int64) int64 {
 	return c.Bytes()
 }
 
-// TestL1BytesTracksPutsAndRemovals is the L1 tier's share of M9's accounting.
+// TestL1BytesTracksPutsAndRemovals is the L1 tier's share of the memory
+// budget's accounting.
 func TestL1BytesTracksPutsAndRemovals(t *testing.T) {
 	c, _ := newCache(t)
 	if c.Bytes() != 0 {

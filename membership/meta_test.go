@@ -17,8 +17,8 @@ func TestNodeMetaRoundTripsTheStartTime(t *testing.T) {
 }
 
 // TestNodeMetaFromAnOlderBuildIsAccepted keeps a rolling upgrade working. A
-// peer on a build from before M9 advertises "epoch|rpcaddr" and one from before
-// M4 just "epoch"; both must decode, with no start time, which probation reads
+// peer on a build from before join probation advertises "epoch|rpcaddr" and one
+// from before the gRPC transport just "epoch"; both must decode, with no start time, which probation reads
 // as an established node.
 func TestNodeMetaFromAnOlderBuildIsAccepted(t *testing.T) {
 	for raw, want := range map[string]nodeMeta{

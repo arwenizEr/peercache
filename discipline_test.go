@@ -16,8 +16,8 @@ import (
 	"github.com/arwenizEr/peercache/internal/metrics"
 )
 
-// The tests in this file enforce the engineering rules from CLAUDE.md that no
-// compiler can. They read the repository as text, which is crude, but a rule
+// The tests in this file enforce the engineering rules in CONTRIBUTING.md that
+// no compiler can. They read the repository as text, which is crude, but a rule
 // that is only written down is a rule that erodes.
 //
 // The forbidden identifiers are assembled at runtime rather than written as
@@ -46,7 +46,7 @@ const clockPackage = "internal/clock"
 // deterministically against internal/testkit instead.
 var realTimePackages = []string{
 	"internal/clock",
-	// Public since decision 0024; the exemption moved with them.
+	// Public since docs/decisions/0024; the exemption moved with them.
 	"membership",
 	"transport",
 }
@@ -58,8 +58,8 @@ var realTimePackages = []string{
 // They are listed by name rather than by directory so that the exemption cannot
 // spread. acceptance_m4_test.go measures latency over real gRPC, which no
 // injected clock can time. cluster_test.go is the only test in the repository
-// that runs two real caches against real gossip — it exists because every other M3 test verifies a
-// seam in isolation and none of them proves the seams are connected. examples/m3
+// that runs two real caches against real gossip — it exists because every other ownership test
+// verifies a seam in isolation and none of them proves the seams are connected. examples/m3
 // demonstrates the same thing to a reader.
 //
 // Both bound every wait and poll rather than sleeping, so the rule they are
@@ -123,7 +123,7 @@ func walkGoFiles(t *testing.T, fn func(path string, content string)) {
 	}
 }
 
-// TestNoSleepAnywhere enforces the hardest of CLAUDE.md's rules. A sleeping
+// TestNoSleepAnywhere enforces the hardest of the project's rules. A sleeping
 // test is a broken test: it is slow when it passes and flaky when it does not,
 // and it hides the very interleavings it pretends to exercise.
 func TestNoSleepAnywhere(t *testing.T) {
@@ -214,7 +214,7 @@ func TestInternalPackagesDoNotImportRoot(t *testing.T) {
 	})
 }
 
-// TestEveryPackageHasDocGo enforces CLAUDE.md's documentation rule at the
+// TestEveryPackageHasDocGo enforces the documentation rule at the
 // package level. A package without a doc.go is a package whose purpose lives
 // only in whoever wrote it.
 func TestEveryPackageHasDocGo(t *testing.T) {
@@ -227,7 +227,7 @@ func TestEveryPackageHasDocGo(t *testing.T) {
 		// convention go doc expects; a separate doc.go there would be
 		// worse, not better.
 		//
-		// This tested `examples/` as a path prefix until M8, which is the
+		// This once tested `examples/` as a path prefix, which is the
 		// directory every command happened to live in rather than the
 		// property being reasoned about. The first command written outside
 		// it would have been asked for a doc.go the convention says not to
@@ -274,7 +274,7 @@ func TestNoTODOMarkers(t *testing.T) {
 	})
 }
 
-// TestEveryExportedSymbolIsDocumented enforces the other half of CLAUDE.md's
+// TestEveryExportedSymbolIsDocumented enforces the other half of the
 // documentation rule.
 //
 // `TestEveryPackageHasDocGo` covers "every package has a doc.go". This covers
@@ -387,10 +387,10 @@ func specDoc(spec ast.Spec) *ast.CommentGroup {
 // program and says nothing about library discipline.
 const evalModule = "internal/l1/eval"
 
-// TestNoPanicInLibraryPaths enforces the CLAUDE.md rule that no library path
+// TestNoPanicInLibraryPaths enforces the rule that no library path
 // panics.
 //
-// It is the last of that file's mechanical rules to get a check, and it was
+// It is the last of the mechanical rules to get a check, and it was
 // added for the reason the exported-symbol rule demonstrates: every rule in this
 // file held, the two without a check were the two worth worrying about, and one
 // of them had already been broken.
@@ -404,9 +404,10 @@ const evalModule = "internal/l1/eval"
 // caller's goroutine happened to be running, which in a cache embedded in every
 // pod means taking down the application over a bug in its cache.
 //
-// Question 34 is what that looks like in practice. Eighteen exported methods
-// dereferenced a nil context, and it survived seven milestones because nobody
-// passes nil on purpose — it was found by a throwaway program, not by a test.
+// docs/decisions/open.md question 34 is what that looks like in practice.
+// Eighteen exported methods dereferenced a nil context, and it survived for
+// months because nobody passes nil on purpose — it was found by a throwaway
+// program, not by a test.
 func TestNoPanicInLibraryPaths(t *testing.T) {
 	needle := "pan" + "ic("
 	walkGoFiles(t, func(path, content string) {
@@ -426,7 +427,7 @@ func TestNoPanicInLibraryPaths(t *testing.T) {
 	})
 }
 
-// budgetedDependencies is CLAUDE.md's dependency budget, written out.
+// budgetedDependencies is the dependency budget, written out.
 //
 // The rule names categories — "memberlist, grpc, a local cache library, a codec,
 // and test deps" — and each slot below records which module fills it and the
@@ -445,7 +446,7 @@ var budgetedDependencies = map[string]string{
 
 // TestDependencyBudgetIsUnchanged makes adding a dependency a deliberate act.
 //
-// CLAUDE.md: "Adding anything else requires a note in `docs/decisions/` first."
+// CONTRIBUTING.md: "Adding one needs a decision record in `docs/decisions/` first."
 // Nothing enforced that, so the requirement rested on remembering it at exactly
 // the moment `go get` makes it easiest not to.
 //
@@ -491,7 +492,7 @@ func TestDependencyBudgetIsUnchanged(t *testing.T) {
 
 	for module := range direct {
 		if _, ok := budgetedDependencies[module]; !ok {
-			t.Errorf("%s is a direct dependency and is not in the budget. CLAUDE.md "+
+			t.Errorf("%s is a direct dependency and is not in the budget. CONTRIBUTING.md "+
 				"requires a note in docs/decisions/ before adding one; record the slot "+
 				"it fills in budgetedDependencies once that note exists", module)
 		}
@@ -589,7 +590,7 @@ var citedButNotDefined = map[string]string{
 // and the reader who checks is the one who finds out.
 //
 // The risk is ordinary. `TestGetOrLoadRechecksAfterWinningTheFlight` was renamed
-// once already, and this milestone found a metrics claim citing a test that did
+// once already, and a review found a metrics claim citing a test that did
 // not cover what the sentence said. Renaming a test is a refactor nobody thinks
 // of as a documentation change.
 func TestDocsCiteOnlyRealTests(t *testing.T) {
@@ -680,7 +681,7 @@ func proseOnly(doc string) string {
 //
 // `internal/wire` was missing from it. That is the protocol codec, the only code
 // in the repository that interprets bytes it did not write, and the package
-// where two of this milestone's four library defects lived. It had been absent
+// where two of one review's four library defects lived. It had been absent
 // since the package was created and nothing noticed, because nothing was
 // looking.
 //
@@ -821,17 +822,16 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 			len(names), word)
 	}
 
-	// Every acceptance block in SPEC.md must have at least one row. A milestone
+	// Every acceptance block in SPEC.md must have at least one row. A block
 	// silently dropping out of the map is the failure this table exists to make
 	// impossible.
 	spec, err := os.ReadFile("SPEC.md")
 	if err != nil {
 		t.Fatalf("reading SPEC.md: %v", err)
 	}
-	// Which milestones state one is read from the headings, not inferred
-	// from a count. The first version assumed the blocks were M0, M1, ... in
-	// order; M7 and M8 have none, so once M9 added one this checked M7 in its
-	// place and never looked for M9 — found when M10 made it misfire outright.
+	// Which sections state one is read from the headings, not inferred from
+	// a count: not every section has a block, so assuming they are numbered
+	// in order checks the wrong one as soon as a gap appears.
 	heading := regexp.MustCompile(`(?m)^### (M[0-9]+) `)
 	locs := heading.FindAllStringSubmatchIndex(string(spec), -1)
 	checked := 0
@@ -856,8 +856,8 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 	}
 }
 
-// TestLossCountingTestsUseARetryAwareRead stops the sixth instance of a bug this
-// milestone found five times.
+// TestLossCountingTestsUseARetryAwareRead stops the sixth instance of a bug
+// found five times.
 //
 // A distributed cache returns a large class of errors meaning "not yet" —
 // `ErrActivationPending` while a moved group serves out its activation delay,
@@ -868,8 +868,8 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 // of flake, because the message is convincing.
 //
 // It happened five times: `readAnywhere` itself, `TestKeysAdoptedIsCounted`,
-// `TestDrainSavesDataWithoutReplication`, and both chaos tests — one of them the
-// M5 acceptance criterion. The first three were fixed as they appeared; only
+// `TestDrainSavesDataWithoutReplication`, and both chaos tests — one of them an
+// acceptance criterion. The first three were fixed as they appeared; only
 // after the third did anybody ask where else, and the answer was the acceptance
 // test.
 //
@@ -877,7 +877,7 @@ func TestAcceptanceMapCountsAreCorrect(t *testing.T) {
 //
 // It asserts a file-level property — a test file that counts losses must use one
 // of the retry-aware helpers — rather than trying to recognise the dangerous
-// shape in situ. Three text-based checks written this milestone were wrong on
+// shape in situ. Three text-based checks written alongside it were wrong on
 // their first version by being too literal, and a checker that over-fires is one
 // that gets switched off. This one cannot say *where* in a file the bare read is;
 // it says the file has no way to be doing the right thing, which is enough to
@@ -942,7 +942,7 @@ type fuzzSpec struct {
 // have reported success every night, having fuzzed nothing, and the failure
 // leaves no trace in the log beyond a job that finished suspiciously fast.
 //
-// The opposite failure happened in the same milestone. Patterns were written
+// The opposite failure happened at the same time. Patterns were written
 // unanchored, so `-fuzz FuzzDecode` meant "any target whose name contains
 // FuzzDecode". Adding FuzzDecodeEveryMessage to the same package made that two,
 // and Go refuses: "will not fuzz, -fuzz matches more than one fuzz test". A
@@ -1108,9 +1108,8 @@ func fuzzTargetsIn(t *testing.T, dir string) []string {
 //
 // The root is the public API — Go does not let a package span directories, so
 // every file a caller's import reaches is here, nineteen of them. README's
-// layout block listed seven, and had listed seven since M4 while twelve more
-// were added underneath it. `handoff.go`, written this milestone, would have
-// been the thirteenth.
+// layout block listed seven, and kept listing seven while twelve more were added
+// underneath it. `handoff.go` would have been the thirteenth.
 //
 // That is the same defect `TestReadmeListsEveryInternalPackage` was written for,
 // found one directory over, and it is worse here: a reader who wants to know
@@ -1160,11 +1159,10 @@ func TestReadmeListsEveryRootFile(t *testing.T) {
 //
 // `docs/api.md` tells an operator that "38 series come out of it" and that "most
 // of the 38 are ordinary levels and rates. These ten are not". Both numbers are
-// recomputed by hand whenever a counter is added. The first was 35 until this
-// milestone added three, and it was corrected by someone who happened to
-// remember — which is the mechanism that produced five wrong derived figures out
-// of six checked earlier in M8, and two more in the paragraph that reported
-// them.
+// recomputed by hand whenever a counter is added. The first was 35 until three
+// were added, and it was corrected by someone who happened to remember — which
+// is the mechanism that once produced five wrong derived figures out of six
+// checked, and two more in the paragraph that reported them.
 //
 // The series count is taken from [metrics.Names], the same list the handler
 // writes, so this cannot drift from the output the way a hand-maintained list
@@ -1314,7 +1312,7 @@ func TestMutationAuditCitesOnlyRealTests(t *testing.T) {
 // tests of 60m each under -timeout 85m: it could never have passed, and nobody
 // knew, because the repository has no remote and the workflow had never run.
 //
-// It is the same shape as the race gate's 300s bound in M8 — a number that was
+// It is the same shape as the race gate's old 300s bound — a number that was
 // right for the suite it was written against — so it is pinned the same way.
 func TestNightlySoakFitsItsTimeouts(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(".github", "workflows", "nightly.yml"))

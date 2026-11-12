@@ -57,7 +57,7 @@ type fabric struct {
 // announcement, no state transfer, and its memory goes with it.
 //
 // The surviving peers learn only by failing to reach it, which is the case
-// worth testing — a graceful leave is the easy path and M6 owns it.
+// worth testing — a graceful leave is the easy path and Drain owns it.
 func (f *fabric) hardKill(t *testing.T, id string) {
 	t.Helper()
 	if f.dead[id] {
@@ -190,7 +190,7 @@ func (f *fabric) convergeTo(t *testing.T, n int) {
 // newFabric builds n caches wired to each other through the fake fabric.
 //
 // The activation delay is negative — deferral off — because these tests are
-// about routing rather than about the M3 handover window, which has its own
+// about routing rather than about the ownership handover window, which has its own
 // tests. Leaving it on would make every assertion here wait out a window that
 // is not what is being examined.
 func newFabric(t *testing.T, n int) *fabric {
@@ -429,7 +429,7 @@ func (f *fabric) probeOwns(id, key string) error {
 	return err
 }
 
-// TestAReadReachesTheOwner is the core M4 claim: a key written on its owner is
+// TestAReadReachesTheOwner is the core remote-read claim: a key written on its owner is
 // readable from a node that does not own it.
 func TestAReadReachesTheOwner(t *testing.T) {
 	f := newFabric(t, 3)
@@ -637,8 +637,8 @@ func TestANonOwnedReadIsCachedAndBounded(t *testing.T) {
 	}
 
 	// Past the bound, the copy must not be served, even though no
-	// invalidation was ever delivered. This is the property CLAUDE.md
-	// non-negotiable 6 requires: correctness does not depend on a message
+	// invalidation was ever delivered. This is the property the design
+	// requires: correctness does not depend on a message
 	// arriving.
 	// Past the TTL. Advancing also lets the other nodes notice the isolated
 	// peer, so the view shrinks and has to be rebuilt before the read means
@@ -667,8 +667,8 @@ func TestANonOwnedReadIsCachedAndBounded(t *testing.T) {
 //
 // The network drops every invalidation. The cluster must still converge on the
 // new value once the TTL passes; if this test can be made to fail by dropping a
-// message, the invalidation broadcast has become load-bearing and CLAUDE.md
-// non-negotiable 6 is violated.
+// message, the invalidation broadcast has become load-bearing, which the design
+// forbids.
 func TestInvalidationIsOnlyAnOptimisation(t *testing.T) {
 	f := newFabric(t, 3)
 	ctx := context.Background()
@@ -711,7 +711,7 @@ func TestInvalidationIsOnlyAnOptimisation(t *testing.T) {
 }
 
 // TestAWriteDoesNotWaitOnAnUnreachablePeer is the regression test for the
-// nastiest defect in M4's data path.
+// nastiest defect in the remote data path.
 //
 // Invalidation used to be broadcast inline, on the writing caller's context.
 // On this fabric a dropped message looks like silence rather than an error
@@ -725,7 +725,7 @@ func TestInvalidationIsOnlyAnOptimisation(t *testing.T) {
 // channel send.
 //
 // The wait is bounded by yields rather than by a timer, so a failure reports
-// instead of hanging. That distinction is the lesson M1 paid for.
+// instead of hanging. That distinction is a lesson paid for once already.
 func TestAWriteDoesNotWaitOnAnUnreachablePeer(t *testing.T) {
 	f := newFabric(t, 3)
 
@@ -892,7 +892,7 @@ func (c *countingClient) Invoke(ctx context.Context, method string, req []byte) 
 	return c.PeerClient.Invoke(ctx, method, req)
 }
 
-// TestRouterIssuesOneRequestPerOwner is the M4 acceptance criterion from
+// TestRouterIssuesOneRequestPerOwner is the router acceptance criterion from
 // SPEC.md §4: "a router submitting 10k messages across 3 owners issues at most
 // 3 RPCs per flush window".
 //

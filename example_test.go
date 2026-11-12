@@ -14,11 +14,8 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 )
 
-// Example shows the whole M0 surface: construct, configure a namespace,
+// Example shows the basic lifecycle: construct, configure a namespace,
 // register a group function, and shut down.
-//
-// Every data-path call reports ErrNotImplemented until M1 and M2 land. The
-// shape is what is being fixed here; the behaviour follows.
 func Example() {
 	cache, err := peercache.New(
 		peercache.WithNodeID("pod-0"),
@@ -484,7 +481,7 @@ func ExampleNewRouter() {
 	// globex: 3
 }
 
-// ExampleCache_WriteMetrics shows the observability surface added in M7.
+// ExampleCache_WriteMetrics shows the observability surface.
 //
 // PeerCache imports no metrics client library; it exports values and renders
 // the Prometheus text exposition format itself. The reasoning is in

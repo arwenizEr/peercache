@@ -33,7 +33,7 @@ func TestASingleNodeIsReadyImmediately(t *testing.T) {
 	}
 }
 
-// TestANodeIsNotReadyBeforeCatchUp is the gate that resolves the M5 trap.
+// TestANodeIsNotReadyBeforeCatchUp is the gate that resolves the restart trap.
 //
 // A node becomes an owner the instant it joins, because every peer recomputes
 // the ranking. It holds nothing until catch-up runs. Between those two moments

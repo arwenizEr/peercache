@@ -14,7 +14,7 @@ import (
 //
 // # Where it came from, and what it is not
 //
-// The M8 simulation lost keys after a single node destruction at RF=3
+// The simulation lost keys after a single node destruction at RF=3
 // (PEERCACHE_SEED=601996618416914900), which RF=3 should survive. Reading the
 // code suggested eviction: internal/replication.Store.Evict drops every replica
 // this node no longer ranks for, decided purely from the local ranking --
@@ -32,7 +32,7 @@ import (
 // rejoining node does not take replica ranking away from the holder of a last
 // copy when the copies were placed under the full membership in the first place.
 //
-// **A partition is what reaches it**, and M8 found that once question 38's
+// **A partition is what reaches it**, found once question 38's
 // assertion was finally written. Writes accepted while one node is cut off place
 // their copies at ranking positions computed *without* that node; when it
 // returns, it ranks for many of those keys and holds none, and the nodes that do
@@ -203,7 +203,7 @@ func TestEvictionKeepsTheCopyWhenNobodyElseHasIt(t *testing.T) {
 }
 
 // TestAReplicaInANonReplicatingNamespaceIsDroppedNotHandedOff covers the one
-// place the M8 hand-off must *not* apply, and it exists because that branch was
+// place the hand-off must *not* apply, and it exists because that branch was
 // written as a bug fix and then had no test.
 //
 // # Why the branch exists
@@ -227,7 +227,7 @@ func TestEvictionKeepsTheCopyWhenNobodyElseHasIt(t *testing.T) {
 // Constructing the condition turned out to be beyond what the public API offers
 // here. A drain at RF=1 pushes to two targets, and in this harness both receivers
 // adopt their own share into their owned stores; the surplus copy that would land
-// in a replica store never appears, so the branch is never reached. The M6
+// in a replica store never appears, so the branch is never reached. The drain
 // handler comment describes that surplus copy as a case it has seen, so the
 // condition is real, but nothing in this suite produces it on demand.
 //

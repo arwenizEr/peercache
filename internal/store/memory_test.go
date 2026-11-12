@@ -19,7 +19,7 @@ func entrySize(key string, val []byte) int64 {
 // TestBytesTracksEveryWritePath checks the accounting against a model on every
 // path that adds or removes an entry: Set, overwrite, Restore, Delete, Sweep.
 //
-// M9's memory budget is only as good as this number. A path that forgets to
+// The memory budget is only as good as this number. A path that forgets to
 // update it lets the store grow past the budget without the budget knowing, which
 // is the OOM the budget exists to prevent.
 func TestBytesTracksEveryWritePath(t *testing.T) {
@@ -216,8 +216,8 @@ func TestShedIsSafeAlongsideWrites(t *testing.T) {
 // owner sheds the key and is asked to write it again, an ordinary restart at
 // version 1 would lose to the replica's copy — the rewrite would be refused
 // there — and a failover would promote the older value. The owner's removal
-// message to the replica would fix that if it arrived, but CLAUDE.md decision 6
-// says correctness must never depend on a message arriving. So the store
+// message to the replica would fix that if it arrived, but correctness must
+// never depend on a message arriving. So the store
 // remembers, per shard, the highest version it ever shed, and a rewrite starts
 // above it.
 //

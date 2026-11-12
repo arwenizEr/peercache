@@ -7,7 +7,7 @@ import (
 )
 
 // The cost of an observation decides whether instrumentation can be on by
-// default. M1 measured the local read path at a p99 of 515 ns; anything that
+// default. The local read path measures a p99 of 515 ns; anything that
 // adds a meaningful fraction of that has to be opt-in with the number stated,
 // rather than quietly making every read slower.
 

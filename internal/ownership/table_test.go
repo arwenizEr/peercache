@@ -10,7 +10,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/ownership"
 )
 
-// M3 acceptance parameters, from SPEC.md section 4.
+// Ownership acceptance parameters, from SPEC.md section 4.
 const (
 	acceptanceNodes = 7
 	acceptanceKeys  = 100_000
@@ -41,7 +41,7 @@ func newTable(t *testing.T, members []core.Node, epoch core.Epoch) *ownership.Ta
 	return tbl
 }
 
-// TestOwnershipIsUniform is half of the M3 acceptance criterion: in a seven-node
+// TestOwnershipIsUniform is half of the ownership acceptance criterion: in a seven-node
 // cluster, ownership of 100k group keys is within 5% of uniform.
 //
 // This is a property of the hash alone, so it needs no cluster and no clock —
@@ -259,7 +259,7 @@ func TestSingleNodeOwnsEverything(t *testing.T) {
 	}
 }
 
-// TestReplicasAreARankedPrefix checks the property M5 will depend on: the
+// TestReplicasAreARankedPrefix checks the property replication depends on: the
 // replica set is the top of a total order, so the owner is always first and
 // growing rf only appends.
 func TestReplicasAreARankedPrefix(t *testing.T) {

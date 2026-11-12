@@ -46,7 +46,7 @@ func TestDoPropagatesTheLoadersError(t *testing.T) {
 	}
 }
 
-// TestCollapsesConcurrentLoads is the M1 acceptance criterion: a loader that
+// TestCollapsesConcurrentLoads is the single-flight acceptance criterion: a loader that
 // counts invocations under a thousand concurrent misses reports exactly one.
 //
 // Spawning a thousand goroutines proves nothing on its own — they could run one

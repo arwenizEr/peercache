@@ -18,7 +18,7 @@ import (
 // These are the only tests in the repository that run two real cache instances
 // against real gossip.
 //
-// Everything else about M3 is tested deterministically: the hashing in
+// Everything else about ownership is tested deterministically: the hashing in
 // internal/ownership/table_test.go, the deferral window in guard_test.go
 // against a fake clock, the gossip adapter in internal/membership. Each of
 // those tests one seam. None of them proves the seams are connected — that
@@ -68,8 +68,8 @@ func newClusterNode(t *testing.T, id string, activationDelay time.Duration) *clu
 	// Retry a bind the OS refuses after handing out the port. These two
 	// tests bind real sockets, and on Windows the ephemeral range overlaps a
 	// reserved one — see testkit.IsPortRefused. internal/membership got this
-	// fix in M6; this call site did not, and failed under -count=2 in M7's
-	// gate. The helper is shared now so there is one place to fix.
+	// fix first; this call site did not, and failed under -count=2 in the
+	// race gate. The helper is shared now so there is one place to fix.
 	g, err := testkit.RetryBind(func() (*membership.Gossip, error) {
 		return membership.New(membership.Options{
 			Self:   core.Node{ID: id},
@@ -106,7 +106,7 @@ func newClusterNode(t *testing.T, id string, activationDelay time.Duration) *clu
 }
 
 // awaitCluster polls until cond holds or the budget expires. It yields rather
-// than sleeping: CLAUDE.md forbids time.Sleep in tests, and the cost of a busy
+// than sleeping: CONTRIBUTING.md forbids time.Sleep in tests, and the cost of a busy
 // wait is acceptable for a handful of integration tests.
 func awaitCluster(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -119,7 +119,7 @@ func awaitCluster(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// TestTwoNodesAgreeOnOwnership is the end-to-end M3 claim: two independently
+// TestTwoNodesAgreeOnOwnership is the end-to-end ownership claim: two independently
 // built caches, joined only by gossip, partition the keyspace between them with
 // no key claimed twice and no key claimed by neither.
 //

@@ -129,7 +129,7 @@ func TestNamespaceHandleIsMemoized(t *testing.T) {
 	}
 }
 
-// TestTTLExpiryUnderFakeClock is one of the M1 acceptance criteria: correct TTL
+// TestTTLExpiryUnderFakeClock is one of the local acceptance criteria: correct TTL
 // expiry, driven entirely by the injected clock.
 func TestTTLExpiryUnderFakeClock(t *testing.T) {
 	c, fc := newCache(t)
@@ -333,7 +333,7 @@ func TestGetOrLoadPropagatesTheLoadersError(t *testing.T) {
 	}
 }
 
-// TestGetOrLoadCollapsesConcurrentMisses is the M1 acceptance criterion:
+// TestGetOrLoadCollapsesConcurrentMisses is the single-flight acceptance criterion:
 // a loader that counts invocations under a thousand concurrent misses reports
 // exactly one.
 //
@@ -566,20 +566,14 @@ func TestCallerCancellationDoesNotAbortTheLoad(t *testing.T) {
 	}
 }
 
-// TestPartitionerHasNoEffectYet pins an uncomfortable fact rather than leaving
-// it implicit: WithPartitioner is accepted and validated, and nothing on any
-// data path calls it.
-//
-// Grouping decides which node owns a key. On a single node with no ownership
-// there is nothing for it to decide, so M1 cannot honestly do anything with it.
-// Asserting the current behaviour means the day M3 wires it up, this test
-// changes deliberately instead of a reviewer wondering whether it ever worked.
-func TestPartitionerHasNoEffectYet(t *testing.T) {
+// TestAPartitionerDoesNotMergeKeys: a partitioner decides which node owns a
+// key, and nothing else. Keys that share a group key share an owner; they stay
+// independent keys.
+func TestAPartitionerDoesNotMergeKeys(t *testing.T) {
 	c, _ := newCache(t)
 	ctx := context.Background()
 
-	// A partitioner that maps every key to one group, which would be
-	// dramatic if it did anything.
+	// A partitioner that maps every key to one group.
 	collapsing := c.Namespace("collapsing",
 		peercache.WithPartitioner(peercache.PartitionByFunc(func(string) string { return "everything" })))
 

@@ -8,17 +8,17 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// acceptanceBudget is the wall-clock ceiling from SPEC.md section 4, M0.
+// acceptanceBudget is the harness wall-clock ceiling from SPEC.md section 4.
 const acceptanceBudget = 50 * time.Millisecond
 
-// TestM0Acceptance is the milestone's acceptance criterion, verbatim: create a
+// TestM0Acceptance is the harness acceptance criterion, verbatim: create a
 // five-node in-process cluster, partition it three/two, advance a fake clock by
 // an hour, heal the partition, and assert on membership — in under 50ms of wall
 // clock and with zero sleeps.
 //
 // The wall-clock assertion is the interesting half. Simulated time being free
-// is not a convenience, it is the property that decides whether the next seven
-// milestones can afford to test their timeouts at all. An implementation that
+// is not a convenience, it is the property that decides whether the rest of the
+// suite can afford to test its timeouts at all. An implementation that
 // polled would pass every other assertion here and quietly cost seconds.
 //
 // Wall time is read through clock.Real so that every time access in the
@@ -59,7 +59,7 @@ func TestM0Acceptance(t *testing.T) {
 // TestM0AcceptanceEpochsAdvanceOnBothSides checks the half of the criterion
 // that "assert on membership" leaves implicit: both sides of a split must
 // notice, and each must stamp its conclusion with a new epoch. A minority that
-// silently kept the old epoch would look, to every later milestone, exactly
+// silently kept the old epoch would look, to every other test, exactly
 // like a minority that never partitioned.
 func TestM0AcceptanceEpochsAdvanceOnBothSides(t *testing.T) {
 	c := testkit.NewCluster(t, testkit.WithNodes(5))

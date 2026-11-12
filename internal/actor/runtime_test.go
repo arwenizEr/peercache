@@ -96,7 +96,7 @@ func TestRegisterRejectsDuplicatesAndEmptyNames(t *testing.T) {
 	}
 }
 
-// TestTenThousandCallsAcrossOneThousandGroups is the M2 acceptance criterion:
+// TestTenThousandCallsAcrossOneThousandGroups is the group acceptance criterion:
 // 10k concurrent calls across 1k groups produce serialized, correct results
 // under -race.
 //

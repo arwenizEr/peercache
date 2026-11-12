@@ -13,8 +13,8 @@ func charge(key string, e replication.Entry) int64 {
 	return int64(len(key)+len(e.Value)+len(e.From)) + replication.EntryOverhead
 }
 
-// TestReplicaBytesTracksEveryPath is the replica store's half of M9's
-// accounting: Put, a replacing Put, a refused Put, Delete, Drain and Evict.
+// TestReplicaBytesTracksEveryPath is the replica store's half of the memory
+// budget's accounting: Put, a replacing Put, a refused Put, Delete, Drain and Evict.
 func TestReplicaBytesTracksEveryPath(t *testing.T) {
 	s := replication.NewStore()
 	if s.Bytes() != 0 {

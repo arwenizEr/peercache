@@ -44,7 +44,7 @@ func sampleUser(id string) user {
 	}
 }
 
-// TestTypedValuesRoundTripAcrossNodes is M10's first criterion: a value set on
+// TestTypedValuesRoundTripAcrossNodes is the typed API's first criterion: a value set on
 // one node reads back equal on every node, through Get and BatchGet.
 func TestTypedValuesRoundTripAcrossNodes(t *testing.T) {
 	f := newFabric(t, 3)

@@ -8,9 +8,9 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// BenchmarkClusterPartitionHeal measures the M0 acceptance scenario end to end.
-// It is the number that decides whether later milestones can afford to test
-// their failure paths, so it is tracked rather than merely asserted once.
+// BenchmarkClusterPartitionHeal measures the harness acceptance scenario end to
+// end. It is the number that decides whether the suite can afford to test its
+// failure paths, so it is tracked rather than merely asserted once.
 func BenchmarkClusterPartitionHeal(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c := testkit.NewCluster(b, testkit.WithNodes(5))
@@ -34,7 +34,7 @@ func BenchmarkClusterStartup(b *testing.B) {
 }
 
 // BenchmarkNetworkRoundTrip measures one in-process request/response with no
-// faults injected. It bounds how much of a later milestone's benchmark is
+// faults injected. It bounds how much of any cluster benchmark is
 // harness overhead rather than the code under test.
 func BenchmarkNetworkRoundTrip(b *testing.B) {
 	c := testkit.NewCluster(b, testkit.WithNodes(2))

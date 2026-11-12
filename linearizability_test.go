@@ -17,7 +17,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// Per-group serializability was, until M8, asserted by construction: there is
+// Per-group serializability was once only asserted by construction: there is
 // one goroutine per activation, therefore operations are serialized. The tests
 // backing it checked that concurrent callers produced correct totals.
 //
@@ -36,15 +36,14 @@ import (
 // reported NOT LINEARIZABLE against a cluster with no faults injected at all.
 // That result was true, and it was about a guarantee nobody ever made: reading
 // a key through a Namespace from a node that does not own it is served by the
-// L1 tier, and CLAUDE.md non-negotiable 6 says those copies are TTL-bounded and
-// may be stale.
+// L1 tier, and the design says those copies are TTL-bounded and may be stale.
 //
 // Pinning the same workload to the owner made it linearizable, which locates the
 // boundary exactly:
 //
 //   - Group operations are linearizable from any node. They route to the owner
 //     and execute in its turn loop with no cache in front of them. That is the
-//     per-group guarantee of CLAUDE.md non-negotiable 2, and
+//     per-group guarantee the single activation provides, and
 //     TestGroupHistoriesAreLinearizable checks it.
 //   - Namespace operations are linearizable at the owner and boundedly stale
 //     elsewhere. TestOwnerLocalHistoriesAreLinearizable checks the first half.
@@ -143,7 +142,7 @@ var linModel = porcupine.Model{
 
 // linClock stamps call and return points.
 //
-// An atomic counter rather than a clock. CLAUDE.md forbids time.Now outside
+// An atomic counter rather than a clock. CONTRIBUTING.md forbids time.Now outside
 // internal/clock, and the platform's monotonic clock resolves to roughly 500 µs
 // — larger than most operations being ordered. A counter cannot fail to
 // distinguish two events that really did happen in order.
@@ -171,7 +170,7 @@ func (h *linHistory) sorted() []porcupine.Operation {
 	return out
 }
 
-// TestGroupHistoriesAreLinearizable is the M8 headline check: the per-group
+// TestGroupHistoriesAreLinearizable is the headline consistency check: the per-group
 // guarantee, exercised from every node at once.
 func TestGroupHistoriesAreLinearizable(t *testing.T) {
 	seed := testkit.Seed(t)

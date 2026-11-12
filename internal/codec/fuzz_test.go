@@ -10,8 +10,8 @@ import (
 )
 
 // The frame parser is the only place in this library that interprets bytes it
-// did not write. Today they come from its own store; from M4 they arrive over
-// the network, and CLAUDE.md forbids panics in library paths. Six hand-written
+// did not write. They come from its own store and over the network, and
+// library paths never panic. Six hand-written
 // corrupt frames are not evidence of that; a fuzzer is.
 //
 // Run longer with:

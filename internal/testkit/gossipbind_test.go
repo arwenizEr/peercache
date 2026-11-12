@@ -9,7 +9,7 @@ import (
 )
 
 // TestFreeLoopbackPortReturnsABindablePort is the regression test for the bug
-// that made three membership tests fail intermittently through M6 and M7.
+// that made three membership tests fail intermittently for weeks.
 //
 // The contract is narrow and worth stating exactly: the returned port must be
 // bindable on both UDP and TCP, because memberlist listens on both at the same

@@ -19,7 +19,7 @@ type session struct {
 
 var benchSession = session{UserID: "user-123456", Expires: 1_700_000_000, Roles: []string{"admin", "beta"}, Cart: 3}
 
-// M10's criterion is that the typed path costs the byte path plus one encode or
+// The typed API's criterion is that the typed path costs the byte path plus one encode or
 // decode. These four measure the three terms: typed, the byte path on the same
 // stored bytes, and the codec on its own.
 

@@ -10,7 +10,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// TestKillingAnOwnerPromotesAReplica is the M5 acceptance criterion from
+// TestKillingAnOwnerPromotesAReplica is the replication acceptance criterion from
 // SPEC.md §4: "killing an owner ungracefully causes promotion and resumed
 // service within a stated bound".
 //

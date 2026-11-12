@@ -13,7 +13,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 )
 
-// M1 acceptance parameters, from SPEC.md section 4.
+// Local-read acceptance parameters, from SPEC.md section 4.
 // latencyGateEnv opts a run into the latency assertion. See the skip in
 // TestLocalGetP99AtOneMillionKeys for why it is not on by default.
 const latencyGateEnv = "PEERCACHE_LATENCY_GATE"
@@ -95,7 +95,7 @@ func clockResolution() time.Duration {
 	return smallest
 }
 
-// TestLocalGetP99AtOneMillionKeys is the M1 latency acceptance criterion: local
+// TestLocalGetP99AtOneMillionKeys is the local latency acceptance criterion: local
 // Get p99 under one microsecond at a million keys.
 //
 // Two things about the criterion need stating rather than quietly resolving.
@@ -133,7 +133,7 @@ func TestLocalGetP99AtOneMillionKeys(t *testing.T) {
 	if os.Getenv(latencyGateEnv) != "1" {
 		// The same argument as the one above, for the same reason.
 		//
-		// `go test ./...` runs packages concurrently. From M4 that means
+		// `go test ./...` runs packages concurrently. That means
 		// this budget is measured while gRPC servers, memberlist
 		// clusters and loopback sockets in other packages are competing
 		// for the same cores, and the p99 it reports is a fact about the

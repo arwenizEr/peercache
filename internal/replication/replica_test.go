@@ -62,7 +62,7 @@ func TestAnOlderCopyIsRejected(t *testing.T) {
 }
 
 // TestVersionConflictsAreCountedButRetransmissionsAreNot covers the metric
-// SPEC.md's M7 bullet names, and the distinction that makes it worth having.
+// SPEC.md names, and the distinction that makes it worth having.
 //
 // A strictly older stamp arriving is a real out-of-order delivery — ordinary
 // under asynchronous replication, handled correctly by the stamp ordering, and
@@ -148,7 +148,7 @@ func TestTwoOwnersInOneEpochIsAConflict(t *testing.T) {
 			"can see it")
 	}
 
-	// The write still applies. Detection is not resolution: CLAUDE.md is
+	// The write still applies. Detection is not resolution: the design is
 	// explicit that conflicting writes are not automatically merged, and
 	// dropping one silently would be a merge policy chosen by accident.
 	if got, _ := s.Get("ns", "k"); string(got.Value) != "b" {

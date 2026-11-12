@@ -55,8 +55,8 @@ func TestRealStopPreventsFiring(t *testing.T) {
 }
 
 // TestRealNonPositiveTickerDoesNotPanic covers the divergence from the standard
-// library. time.NewTicker panics on a non-positive period and CLAUDE.md forbids
-// panics in library paths, so a dead ticker is returned instead.
+// library. time.NewTicker panics on a non-positive period and library paths
+// never panic, so a dead ticker is returned instead.
 func TestRealNonPositiveTickerDoesNotPanic(t *testing.T) {
 	tk := clock.Real().NewTicker(0)
 	defer tk.Stop()

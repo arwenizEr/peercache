@@ -198,7 +198,8 @@ func TestSheddingTakesL1AndReplicasBeforeOwnedData(t *testing.T) {
 	}
 }
 
-// TestAShedKeyIsNeverServedAtAnOlderValue is M9's correctness criterion.
+// TestAShedKeyIsNeverServedAtAnOlderValue is the memory budget's correctness
+// criterion.
 //
 // An owner that sheds a key and is then asked to write it again starts that
 // key's version sequence over. If the shed had dropped only
@@ -417,7 +418,8 @@ func TestAReplicaOnlyNodeStaysWithinItsBudget(t *testing.T) {
 	}
 }
 
-// TestAFailoverCascadeStaysWithinBudget is M9's first acceptance criterion.
+// TestAFailoverCascadeStaysWithinBudget is the memory budget's acceptance
+// criterion.
 //
 // Five nodes at RF=2 hold a working set sized so that, at full strength, each
 // node's share fits comfortably. Nodes are then killed one at a time until two

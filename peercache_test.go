@@ -13,7 +13,7 @@ import (
 
 // newCache builds a cache on a fake clock and asserts at teardown that it left
 // no timer armed. Every test in this package uses it, so a leaked ticker in
-// Close would fail immediately rather than at some unrelated later milestone.
+// Close would fail immediately rather than in some unrelated later test.
 func newCache(t *testing.T, opts ...peercache.Option) (peercache.Cache, *clock.Fake) {
 	t.Helper()
 	fc := clock.NewFake(clock.Epoch)
@@ -176,7 +176,7 @@ func TestClosedCacheReportsErrClosed(t *testing.T) {
 // TestCloseReportsAnExpiredDeadline guards against training callers to ignore
 // the context they passed. There is nothing to drain on a single node, but
 // succeeding silently on an expired deadline would be a lie that gets more
-// expensive at M6.
+// expensive once Close has real work to do.
 func TestCloseReportsAnExpiredDeadline(t *testing.T) {
 	fc := clock.NewFake(clock.Epoch)
 	c, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(fc))
@@ -195,7 +195,7 @@ func TestCloseReportsAnExpiredDeadline(t *testing.T) {
 }
 
 // TestCancelledContextIsReportedFirst pins a rule that has to hold for every
-// milestone: an expired deadline is the caller's answer, whatever the callee
+// operation: an expired deadline is the caller's answer, whatever the callee
 // would otherwise have said.
 func TestCancelledContextIsReportedFirst(t *testing.T) {
 	c, _ := newCache(t)

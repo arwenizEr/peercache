@@ -212,7 +212,7 @@ func TestNewGuardValidatesOptions(t *testing.T) {
 	}
 }
 
-// TestPartitionedMinorityStopsActivating is the third M3 acceptance criterion:
+// TestPartitionedMinorityStopsActivating is the third ownership acceptance criterion:
 // a partitioned minority stops activating new groups within activationDelay.
 //
 // It runs on the testkit harness, so the partition, the failure detection and
@@ -290,7 +290,7 @@ func TestPartitionedMinorityStopsActivating(t *testing.T) {
 
 	// The window closes and the minority resumes — it is AP, so it keeps
 	// serving its own view. The deferral bought time, it did not prevent
-	// divergence, and CLAUDE.md decision 5 says so explicitly.
+	// divergence, and the design says so explicitly.
 	c.Advance(delay)
 	resumed := 0
 	for i := 0; i < 500; i++ {

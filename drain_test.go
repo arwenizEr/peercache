@@ -16,12 +16,12 @@ import (
 	"github.com/arwenizEr/peercache/transport"
 )
 
-// These tests exist because the M7 mutation audit found that they did not.
+// These tests exist because the mutation audit found that they did not.
 //
 // The audit script had a truncated entry — an orphaned argument list with no
 // `mutate` command in front of it — which in a script running under `set -u`
 // but not `set -e` is a command that fails with "not found" and lets the run
-// continue. So the M6 acceptance criterion appeared in the audit source and was
+// continue. So the drain acceptance criterion appeared in the audit source and was
 // never actually audited.
 //
 // When the missing mutation was reconstructed and run, two things that looked

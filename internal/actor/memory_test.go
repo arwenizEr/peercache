@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 )
 
-// M2 memory acceptance parameters, from SPEC.md section 4.
+// Group memory acceptance parameters, from SPEC.md section 4.
 const (
 	addressableGroups = 1_000_000
 	activeGroups      = 20_000
@@ -25,7 +25,7 @@ func heapMiB() float64 {
 	return float64(m.HeapAlloc) / (1 << 20)
 }
 
-// TestMemoryAtOneMillionAddressableGroups measures the M2 memory criterion:
+// TestMemoryAtOneMillionAddressableGroups measures the group memory criterion:
 // a million addressable groups with twenty thousand active.
 //
 // SPEC.md says the budget must be "measured and recorded", and does not say what

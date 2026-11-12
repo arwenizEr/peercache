@@ -112,8 +112,8 @@ func TestDefaultNamespaceOptionsAreValid(t *testing.T) {
 	}
 }
 
-// TestNegativeL1TTLDisablesTheTier pins the meaning of a negative bound, which
-// M4 gave a job.
+// TestNegativeL1TTLDisablesTheTier pins the meaning of a negative bound: it
+// disables the tier.
 //
 // Zero is still rejected: it is what an unset field looks like, and silently
 // treating "I forgot" as "I want no caching" would be a trap. Negative is

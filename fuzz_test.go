@@ -26,7 +26,7 @@ import (
 //     twice would move a key to another owner.
 //   - It is deterministic across instances. Two nodes construct their own
 //     partitioners from the same option; they must agree.
-//   - It never panics. CLAUDE.md forbids panics in library paths, and this one
+//   - It never panics. Library paths never panic, and this one
 //     runs on every routed operation with a key the application chose.
 //
 // Run longer with:

@@ -19,8 +19,8 @@ import (
 // These tests bind real loopback sockets and speak real gRPC.
 //
 // That is the point of them. internal/testkit already provides an in-process
-// transport with fault injection, and every milestone up to M3 was tested
-// against it deterministically. What the fake cannot tell us is whether gRPC
+// transport with fault injection, and most of the suite is tested against it
+// deterministically. What the fake cannot tell us is whether gRPC
 // propagates a deadline the way we assume, whether a sentinel error survives a
 // status round trip, or whether killing a server mid-request produces an error
 // rather than a hang. Those are properties of the real library, and only the
@@ -216,9 +216,9 @@ func TestLargePayloadRoundTrips(t *testing.T) {
 	}
 }
 
-// TestDeadlinePropagatesToTheHandler is the M4 requirement that the caller's
-// budget reaches the remote side. CLAUDE.md requires context deadlines to
-// propagate across RPC boundaries; this is the evidence.
+// TestDeadlinePropagatesToTheHandler is the requirement that the caller's
+// budget reaches the remote side. Context deadlines propagate across RPC
+// boundaries; this is the evidence.
 func TestDeadlinePropagatesToTheHandler(t *testing.T) {
 	a := newPeer(t, "node-a", nil)
 	b := newPeer(t, "node-b", nil)
@@ -251,8 +251,8 @@ func TestDeadlinePropagatesToTheHandler(t *testing.T) {
 	}
 }
 
-// TestInvokeReturnsWhenTheContextExpires is the "never a hang" half of the M4
-// acceptance criterion, in its simplest form: the server is alive and simply
+// TestInvokeReturnsWhenTheContextExpires is the "never a hang" half of the
+// transport acceptance criterion, in its simplest form: the server is alive and simply
 // never answers.
 func TestInvokeReturnsWhenTheContextExpires(t *testing.T) {
 	a := newPeer(t, "node-a", nil)
@@ -285,7 +285,7 @@ func TestInvokeReturnsWhenTheContextExpires(t *testing.T) {
 	}
 }
 
-// TestKillingTheTransportMidRequestSurfacesAnError is the M4 acceptance
+// TestKillingTheTransportMidRequestSurfacesAnError is the transport acceptance
 // criterion stated in SPEC.md §4: "killing the transport mid-request surfaces a
 // deadline error, never a hang."
 //
@@ -532,8 +532,8 @@ func TestServeValidates(t *testing.T) {
 	}
 }
 
-// TestCloseIsIdempotentAndReleasesGoroutines guards the rule that cost M3 a
-// milestone: a Close that does not close is a leak that no assertion in the
+// TestCloseIsIdempotentAndReleasesGoroutines guards a rule learned the hard
+// way: a Close that does not close is a leak that no assertion in the
 // package can see.
 func TestCloseIsIdempotentAndReleasesGoroutines(t *testing.T) {
 	settle()

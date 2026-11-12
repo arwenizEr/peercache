@@ -319,9 +319,9 @@ them in configuration, and changing a partitioner later moves keys between
 owners — a decision better made before there is data.
 
 **The risk being managed:** an option that silently does nothing is a lie by
-omission. `TestPartitionerHasNoEffectYet` pins the current behaviour so that
-wiring it up in M3 is a deliberate change to a failing assertion rather than a
-silent one, and the examples say plainly that these are inert.
+omission. A test pinned the inert behaviour so that wiring it up in M3 was a
+deliberate change rather than a silent one; the partitioner now routes, and
+`TestAPartitionerDoesNotMergeKeys` pins what it does not do.
 
 ---
 

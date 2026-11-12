@@ -89,7 +89,7 @@ const simStepClock = 30 * time.Second
 //
 // The property: a key whose write was acknowledged under synchronous
 // replication is still readable once the cluster is healed and settled. That is
-// the strongest claim this system makes about durability, and CLAUDE.md is
+// the strongest claim this system makes about durability, and the design is
 // explicit there is no other — nothing is written to disk, so a key that no
 // live node holds is gone.
 func TestSimulation(t *testing.T) {
@@ -149,7 +149,7 @@ type simulation struct {
 	//
 	// This is what makes the assertion sound. Replication factor 3 promises a
 	// key survives losing up to two of its copies and promises nothing once
-	// all three are gone -- CLAUDE.md is explicit that a hard kill loses that
+	// all three are gone -- the design is explicit that a hard kill loses that
 	// node's memory and a revived node comes back empty.
 	//
 	// The first version asserted survival unconditionally and found real
@@ -205,7 +205,7 @@ func (s *simulation) history() string {
 
 // runSimulation runs one schedule and reports whether it asserted anything.
 func runSimulation(t *testing.T, seed int64) bool {
-	// Detection faster than the fault cadence. M5 recorded why: a cluster
+	// Detection faster than the fault cadence, because a cluster
 	// that loses a node faster than it notices never converges, and the run
 	// then measures a permanently confused system rather than a recovering
 	// one.
@@ -261,7 +261,7 @@ func runSimulation(t *testing.T, seed int64) bool {
 	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	f.settle(t)
 
-	// Every revived node needs catch-up; M5 made that an explicit call
+	// Every revived node needs catch-up; it is an explicit call
 	// rather than an automatic one, and a simulation that skipped it would
 	// be testing a cluster no operator would run.
 	ctx := context.Background()
@@ -309,7 +309,7 @@ func runSimulation(t *testing.T, seed int64) bool {
 	// survives the heal.
 	//
 	// If this holds across seeds, the earlier losses were minority-side and
-	// the system is behaving exactly as CLAUDE.md non-negotiable 5 describes.
+	// the system is behaving exactly as the design describes.
 	// If it fails, post-partition reconciliation is dropping writes the
 	// majority accepted, and open question 37's option 3 -- refusing a
 	// synchronous write that cannot place its copies -- becomes considerably
@@ -439,7 +439,7 @@ func (s *simulation) step(n int, openNS func(string) peercache.Namespace) {
 			return
 		}
 		// A minority/majority split. The minority stops activating, which
-		// is the M3 guard doing its job.
+		// is the ownership guard doing its job.
 		//
 		// `cut` is drawn so that the first side is always *strictly* smaller
 		// than the second. That is what makes "minority" and "majority" mean
@@ -537,7 +537,7 @@ func (s *simulation) write(n int, openNS func(string) peercache.Namespace) {
 			return
 		}
 		// A write acknowledged on the *minority* side of a split is not
-		// promised to survive the heal. CLAUDE.md non-negotiable 5 is
+		// promised to survive the heal. The design is
 		// explicit that a partition can produce two activations of one group
 		// and that conflicting writes are detected, not merged -- so the
 		// losing side's acknowledged write is discarded by design.
@@ -628,7 +628,7 @@ func (s *simulation) read(n int, openNS func(string) peercache.Namespace) {
 // difference between a working cluster and a defect.
 //
 // Advancing the fake clock is how every other wait in this suite is expressed;
-// CLAUDE.md forbids sleeping and requires the fake clock, so this is the
+// CONTRIBUTING.md forbids sleeping and requires the fake clock, so this is the
 // sanctioned form of "shortly".
 func readAnywhere(t *testing.T, f *fabric, openNS func(string) peercache.Namespace, key string) (string, error) {
 	t.Helper()

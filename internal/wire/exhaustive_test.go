@@ -106,10 +106,11 @@ var hostileInputs = []struct {
 // TestALengthPrefixCannotBuyAnAllocation, and it exists because the
 // representative form was not enough.
 //
-// M4 hardened the decoders it knew about and fuzzed five message types as a
-// sample. [wire.SubmitResponse] was not one of the five, and it was the one
-// message with a slice of structs and no custom decoder — so the defect M4 was
-// written to eliminate survived M4 in the single place nobody looked.
+// The first hardening pass fixed the decoders it knew about and fuzzed five
+// message types as a sample. [wire.SubmitResponse] was not one of the five, and
+// it was the one message with a slice of structs and no custom decoder — so the
+// defect the pass was written to eliminate survived it in the single place
+// nobody looked.
 //
 // Six bytes reproduced it: 91 dd ff ff ff ff decoded into a SubmitResponse asks
 // the allocator for 4,294,967,295 GroupFailure values, 137 GB, before reading a

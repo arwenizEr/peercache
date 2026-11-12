@@ -314,7 +314,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 
 // FuzzDecode exercises the message parser against bytes it did not write.
 //
-// From M4 these bytes arrive over the network. "No panic in library paths" is a
+// These bytes arrive over the network. "No panic in library paths" is a
 // claim about exactly this code, and hand-written corrupt inputs are weaker
 // evidence than a fuzzer.
 func FuzzDecode(f *testing.F) {
@@ -356,7 +356,7 @@ func FuzzDecode(f *testing.F) {
 }
 
 // TestALengthPrefixCannotBuyAnAllocation is the regression test for the worst
-// defect found in M4.
+// defect found in the wire format.
 //
 // A six-byte message used to wedge a node for minutes. msgpack writes an array
 // as a length followed by its elements, and the decoder allocated the whole
@@ -373,8 +373,8 @@ func FuzzDecode(f *testing.F) {
 // rather than a map. Reverting the fix makes this case fail in milliseconds
 // having allocated a few megabytes, which reports; the enormous cases below it
 // would instead thrash for minutes, which does not. An assertion whose failure
-// mode is a hang is one nobody trusts at three in the morning — the lesson M1
-// paid for and docs/verification.md records.
+// mode is a hang is one nobody trusts at three in the morning — a lesson
+// docs/verification.md records.
 func TestALengthPrefixCannotBuyAnAllocation(t *testing.T) {
 	// 65535 entries is ~4 MiB of BatchEntry under the old behaviour and
 	// nothing at all under the new one, so the budget separates them

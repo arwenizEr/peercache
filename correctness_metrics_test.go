@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache"
 )
 
-// SPEC.md's M7 bullet names five correctness metrics by name: split-brain
+// SPEC.md names five correctness metrics: split-brain
 // detections, stale-epoch activation rejections, version conflicts, mailbox
 // rejections, and transfer failures. Three had counters already. The two
 // checked here did not — they were reachable conditions that nothing counted,
@@ -25,7 +25,7 @@ import (
 // TestMailboxRejectionsAreCounted saturates a group and checks the refusals
 // reach both Stats and the metrics output.
 //
-// A rejection is not a fault — it is backpressure working, and CLAUDE.md is
+// A rejection is not a fault — it is backpressure working, and the design is
 // explicit that a full mailbox rejects rather than blocks. But it is the first
 // observable sign that a group is saturated, and it arrives before the latency
 // does. An operator who cannot see it learns about the problem from a timeout.

@@ -10,7 +10,7 @@ import (
 
 // Ticker.Reset had no test at all until this file, which is worse than it
 // sounds: it is where period and deadline have to change together, and it was
-// hand-edited during M0's self-review to make them do so. A fix nobody tested
+// hand-edited during a self-review to make them do so. A fix nobody tested
 // is a fix nobody has any reason to believe.
 
 // TestFakeTickerResetChangesThePeriod is the basic contract.
@@ -83,7 +83,7 @@ func TestFakeTickerResetOnAStoppedTickerRevivesIt(t *testing.T) {
 
 // TestFakeTickerResetToNonPositiveIsMisuse covers the branch that stops the
 // ticker rather than panicking, since time.Ticker.Reset panics here and
-// CLAUDE.md forbids panics in library paths.
+// library paths never panic.
 func TestFakeTickerResetToNonPositiveIsMisuse(t *testing.T) {
 	fc := clock.NewFake(clock.Epoch)
 	var misuses []string

@@ -1,6 +1,6 @@
 //lint:file-ignore SA1012 Passing a nil context is the subject of these tests.
 // SA1012 says not to pass a nil Context, and it is right — that is why this
-// file exists. Callers do it anyway, and until M7 every one of them crashed the
+// file exists. Callers do it anyway, and once every one of them crashed the
 // process. Suppressing the check here is not disagreement with it; it is the
 // only way to test what happens when somebody ignores it.
 
@@ -16,13 +16,13 @@ import (
 
 // TestNilContextDoesNotPanic covers every exported method that takes a context.
 //
-// This was found by accident during M7, by a throwaway program that wrote
+// This was found by accident, by a throwaway program that wrote
 // `defer c.Close(nil)`. The process died inside the actor runtime, on the
 // ctx.Err() that every one of these methods starts with — a nil
 // [context.Context] is a nil interface, so the first question asked of it is a
 // nil-pointer dereference.
 //
-// CLAUDE.md forbids panics in library code paths and makes no exception for
+// Library code paths never panic, and the rule makes no exception for
 // caller error, which is the right call for something embedded: a panic here
 // takes down an application that had a working cache and a cosmetic mistake.
 //
@@ -118,7 +118,7 @@ func TestNilContextDoesNotPanic(t *testing.T) {
 //
 // A guard that swallowed the operation would also stop the panic, and would be
 // far worse: writes that silently do nothing are the failure mode this project
-// spent most of M6 chasing.
+// has spent the most time chasing.
 func TestNilContextBehavesLikeBackground(t *testing.T) {
 	c, err := peercache.New(peercache.WithNodeID("nilctx2"))
 	if err != nil {

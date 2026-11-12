@@ -12,11 +12,11 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// The M8 audit found nine Stats fields that appeared in no test file at all.
+// An audit found nine Stats fields that appeared in no test file at all.
 //
 // Every one of them is a correctness signal — the counters an operator is told
 // to alert on — and every one was wired by hand from an internal counter into
-// Stats and then into a metric name. That wiring broke three times in M7 alone
+// Stats and then into a metric name. That wiring broke three times in a row
 // (MailboxRejections, VersionConflicts, StateEscapes), each time by being
 // incremented somewhere and reaching nothing. The behaviour underneath was
 // tested; the path to the operator was not.
@@ -47,9 +47,9 @@ func assertMetric(t *testing.T, cache peercache.Cache, name string) {
 	t.Errorf("%s is absent from the scrape output entirely", name)
 }
 
-// TestStateEscapesIsCountedAndExported covers the counter that M8 found had
+// TestStateEscapesIsCountedAndExported covers a counter that was found to have
 // never reached Stats, despite a comment in internal/actor/state.go asserting
-// since M7 that it was exported.
+// that it was exported.
 //
 // There is no error for this condition and there cannot be — the goroutine
 // using the escaped state is not inside a Call — so this counter is the only
@@ -259,7 +259,7 @@ func TestRefusedActivationsAreCounted(t *testing.T) {
 // TestCatchUpCountersMove covers ReplicasPulled and CatchUpRuns.
 //
 // A restarted node ranks for keys it does not hold. CatchUp is the only thing
-// that fixes that, and M5 recorded it as a required call rather than an
+// that fixes that, and it is a required call rather than an
 // automatic one — so a counter showing it ran, and moved data, is the only
 // evidence an operator has that a restart completed properly.
 func TestCatchUpCountersMove(t *testing.T) {
@@ -353,7 +353,7 @@ func TestCatchUpCountersMove(t *testing.T) {
 // depends on whether the receiver's view updated before the transfer landed.
 // Both preserve the data, which is why the library is built to tolerate either.
 //
-// M8 caught this the hard way. Adding a hand-off goroutine per cache — an
+// This was learned the hard way. Adding a hand-off goroutine per cache — an
 // unrelated change that touched no drain code — shifted the scheduling enough to
 // make every key take the promotion path, and the test failed claiming "silent
 // data loss" while no data had been lost. It then *passed* when a diagnostic

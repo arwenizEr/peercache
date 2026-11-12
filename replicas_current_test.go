@@ -11,8 +11,8 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// TestCatchUpReportsAPeerItCouldNotReach pins CatchUp's error, which from M5
-// until this test was written was always nil.
+// TestCatchUpReportsAPeerItCouldNotReach pins CatchUp's error, which until this
+// test was written was always nil.
 //
 // The per-peer failure was logged and counted, and the error variable meant to
 // carry it was declared and never assigned. docs/api.md has always shown

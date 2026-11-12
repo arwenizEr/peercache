@@ -17,8 +17,7 @@ import (
 //
 // SPEC.md §4 requires a "measured and documented data-loss window for
 // async mode", and §6 has a placeholder — "approximately X ms" — waiting for
-// this number. CLAUDE.md non-negotiable 7 is the reason: async replication is
-// the default, and its cost has to be a documented, measured figure rather than
+// this number. Async replication is the default, and its cost has to be a documented, measured figure rather than
 // an unknown.
 //
 // # What the window actually is

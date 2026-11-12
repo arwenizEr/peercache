@@ -376,7 +376,7 @@ func TestEveryTypeByteIsClassified(t *testing.T) {
 //
 // # Why this test had to be written
 //
-// The M8 mutation audit returned VACUOUS for the M4 entry that guarded
+// The mutation audit returned VACUOUS for the entry that guarded
 // bounded.go: preallocating `make([]BatchEntry, 0, n)` from the declared length
 // no longer fails `TestALengthPrefixCannotBuyAnAllocation`, because the inputs
 // that test uses are refused by `validate` before any decoder sees them. The

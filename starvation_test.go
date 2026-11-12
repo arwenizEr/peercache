@@ -10,7 +10,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// TestAStarvedNodeSlowsOnlyItsOwnKeys is M9's CPU starvation criterion: a node
+// TestAStarvedNodeSlowsOnlyItsOwnKeys is the CPU starvation criterion: a node
 // whose every message is delayed by 200 ms produces no split-brain detections
 // and no change in latency for keys owned elsewhere.
 //

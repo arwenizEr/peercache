@@ -11,7 +11,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// M5 acceptance, from SPEC.md §4:
+// Replication acceptance, from SPEC.md §4:
 //
 //	a chaos test that kills a random node every 2 seconds for 60 seconds
 //	loses no key that was written with sync replication
@@ -40,7 +40,7 @@ const (
 	chaosNodes    = 5
 )
 
-// TestChaosLosesNoSynchronouslyWrittenKey is the M5 acceptance criterion.
+// TestChaosLosesNoSynchronouslyWrittenKey is the replication acceptance criterion.
 func TestChaosLosesNoSynchronouslyWrittenKey(t *testing.T) {
 	// Detection must be faster than the kill cadence, or the cluster never
 	// converges between kills and the test measures a permanently confused
@@ -149,7 +149,7 @@ func TestChaosLosesNoSynchronouslyWrittenKey(t *testing.T) {
 	// guard's delay on every group it moved. Both produce errors that mean
 	// "ask again" rather than "gone", and counting them here would report a
 	// key as lost by chaos when it is merely deferred — a false alarm on the
-	// M5 acceptance criterion, which is the most credible place in the suite
+	// replication acceptance criterion, which is the most credible place in the suite
 	// to get one. readAnywhere retries those and only those.
 	var lost []string
 	for key, want := range written {

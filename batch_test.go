@@ -54,7 +54,7 @@ func TestBatchGetAbortsMidwayAndReturnsWhatItHas(t *testing.T) {
 	// Survive the entry check, the per-owner check, and the checks at key 0
 	// and key 64 — then fail at key 128.
 	//
-	// The per-owner check arrived with M4: BatchGet now groups keys by owner
+	// The check is per owner: BatchGet groups keys by owner
 	// and checks the deadline once per group before issuing that group's
 	// read, so that a batch spanning three nodes cannot start a second
 	// request after the caller has already given up. On a single node there

@@ -116,7 +116,7 @@ func TestVersionsIncrementPerKey(t *testing.T) {
 //
 // That is survivable — the L1 TTL is a hard bound precisely because version
 // comparison cannot be trusted as a total order — but it is a real constraint
-// on M4's invalidation design, so it is asserted here rather than left to be
+// on the invalidation design, so it is asserted here rather than left to be
 // rediscovered.
 func TestVersionRestartsOnlyIfTheEntryWasReclaimed(t *testing.T) {
 	s, fc := newStore(t, func(o *store.Options) { o.Shards = 1 })
@@ -228,7 +228,7 @@ func TestGetReturnsTheStoredSlice(t *testing.T) {
 	}
 }
 
-// TestExpiryIsObservedOnRead is the M1 acceptance criterion for TTL: correct
+// TestExpiryIsObservedOnRead is the acceptance criterion for TTL: correct
 // expiry under a fake clock, with no sweeper running at all.
 func TestExpiryIsObservedOnRead(t *testing.T) {
 	s, fc := newStore(t)

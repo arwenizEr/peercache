@@ -10,11 +10,11 @@ import (
 //
 // FuzzDecode covers five message types. That was a reasonable sample when it
 // was written and it is now a liability: the wire package has twenty-one, a peer can
-// send any of them, and the M4 length-prefix defect — six bytes that wedged the
+// send any of them, and the length-prefix defect — six bytes that wedged the
 // process for two minutes by pre-allocating from a declared length — lived in a
 // decoder that nothing was fuzzing at the time.
 //
-// SPEC.md M8 asks that no input from a peer may panic a node. "No input" means
+// SPEC.md asks that no input from a peer may panic a node. "No input" means
 // every message, not a representative subset, so this decodes each arbitrary
 // byte string into all twenty-one and requires none of them to panic, hang, or
 // allocate from a length it has not read.
@@ -49,7 +49,7 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		// below already decoded into two of the three, which is the same shape
 		// of gap this target exists to close: a sample that has quietly fallen
 		// behind the thing it samples. GroupBatch was the third, seeded here
-		// and decoded nowhere until M8 noticed the counts disagreed.
+		// and decoded nowhere until someone noticed the counts disagreed.
 		&wire.SubmitRequest{FuncName: "f", Batches: []wire.GroupBatch{
 			{Group: "g", Messages: [][]byte{[]byte("m")}},
 		}},
@@ -144,7 +144,7 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		// elements than the input had bytes: each element costs at least
 		// one byte to encode. Anything larger means the decoder sized an
 		// allocation from a number it read rather than from data it
-		// received, which is the M4 defect and a remote OOM.
+		// received, which is the length-prefix defect and a remote OOM.
 		limit := len(data) + 1
 		for name, n := range map[string]int{
 			"BatchGetRequest.Keys":     len(bgReq.Keys),

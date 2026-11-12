@@ -211,7 +211,7 @@ func TestNetworkPartitionIsolatesOmittedNodes(t *testing.T) {
 // Before the change, SetDropRate(from, to, 0) deleted the edge's entry and the
 // call fell through to the wildcard — so "lose everything except this one link"
 // was impossible to express, and asking for it silently did the opposite. That
-// is the sort of fault-injection bug that makes a later milestone's chaos test
+// is the sort of fault-injection bug that makes a chaos test
 // prove something other than what it claims.
 func TestFaultRulesResolveMostSpecificFirst(t *testing.T) {
 	c := testkit.NewCluster(t, testkit.WithNodes(3))

@@ -459,7 +459,8 @@ func TestConcurrentAccessIsSafe(t *testing.T) {
 // the stale copy until the TTL expired — a staleness window measured in the
 // cache's TTL rather than in the network round trip it should have been.
 //
-// Open question 18 predicted this and said M4 would have to carry the epoch.
+// Open question 18 predicted this and said remote reads would have to carry
+// the epoch.
 // This is that.
 func TestANewOwnerSupersedesAHigherVersion(t *testing.T) {
 	c, _ := newCache(t)

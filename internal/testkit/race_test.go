@@ -15,7 +15,7 @@ import (
 // These tests exist to force specific interleavings. The race detector only
 // reports races on paths a test actually takes, so a hand-over bug in a window
 // nothing exercises stays invisible until it produces an unreproducible
-// failure in some later milestone.
+// failure somewhere far from its cause.
 
 // TestNetworkCloseRacesWithDelayedDelivery targets the window between a
 // delivery being registered as pending and its timer being handed over. If

@@ -15,7 +15,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// M7 asks for a "load and soak test: 24h at target throughput, memory flat".
+// SPEC.md asks for a "load and soak test: 24h at target throughput, memory flat".
 //
 // # What this actually runs, and why the distinction matters
 //
@@ -73,7 +73,7 @@ func TestSoakMemoryStaysFlat(t *testing.T) {
 	}, ownership.DefaultActivationDelay)
 	ctx := context.Background()
 
-	// Every node opens the namespace, which M6 established is a correctness
+	// Every node opens the namespace, which is a correctness
 	// requirement rather than tidiness.
 	for _, id := range f.ids {
 		f.caches[id].Namespace("soak",
@@ -163,7 +163,7 @@ func TestSoakMemoryStaysFlat(t *testing.T) {
 
 // TestSoakGoroutinesStayFlat is the other half. A goroutine leak is invisible
 // in heap terms until it is severe, and this project has shipped one before —
-// M3's gossip event loop, found only because it slowed an unrelated latency
+// the gossip event loop, found only because it slowed an unrelated latency
 // test.
 func TestSoakGoroutinesStayFlat(t *testing.T) {
 	if testing.Short() {

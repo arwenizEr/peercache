@@ -12,7 +12,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy is the M8 simulation's
+// TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy is the simulation's
 // first real find, reduced to its mechanism.
 //
 // The schedule that found it (PEERCACHE_SEED=243287519653701681) partitioned a
@@ -32,7 +32,7 @@ import (
 //
 // # Why this matters more than the usual split-brain caveat
 //
-// CLAUDE.md non-negotiable 5 already says a partition can produce two
+// The design already says a partition can produce two
 // activations and that this is narrowed, not eliminated. That is not the
 // surprise. The surprise is the *acknowledgement*: README and docs/api.md both
 // say synchronous replication closes the async data-loss window, and a caller
@@ -130,8 +130,8 @@ func TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy(t *testing.T) {
 			view.Members)
 	}
 	// And it reaches the scrape output, not only Stats. Those two have drifted
-	// before: StateEscapes was documented as exported from M7 and stopped at
-	// the actor package's counters, which the M8 audit found.
+	// before: StateEscapes was documented as exported and stopped at the
+	// actor package's counters.
 	assertMetric(t, f.caches[isolated], "peercache_degraded_writes_total")
 
 	t.Logf("CONFIRMED: Set returned nil under WithSyncReplication at RF=3 while the "+

@@ -21,7 +21,7 @@ import (
 	"github.com/arwenizEr/peercache/transport"
 )
 
-// M4 acceptance, from SPEC.md §4:
+// Remote-read acceptance, from SPEC.md §4:
 //
 //	remote Get p99 under 2ms and p999 under 10ms at 50k rps in a 3-node
 //	real-network test
@@ -32,7 +32,7 @@ import (
 // processes on three machines, which would measure a network this test cannot
 // provision and cannot make reproducible.
 //
-// Like the M1 latency gate, this is opt-in. Measuring a 2ms budget while the
+// Like the local latency gate, this is opt-in. Measuring a 2ms budget while the
 // rest of the suite competes for the same cores reports the machine's load
 // rather than the cache's latency, and CI runs it as its own step.
 
@@ -83,9 +83,9 @@ func newGRPCCluster(t *testing.T, n int) []*grpcNode {
 		// enough to fail this test most times it is run.
 		//
 		// This is the third caller to need the fix and the second to
-		// rediscover the bug rather than inherit it. M6 fixed
-		// internal/membership's tests, M7 found cluster_test.go had its own
-		// helper and fixed that too, and this one built a third — so it kept
+		// rediscover the bug rather than inherit it. The membership tests
+		// were fixed first, then cluster_test.go's own helper, and this one
+		// built a third — so it kept
 		// failing, invisibly, because the test is behind an opt-in latency
 		// gate that only CI's Linux runner sets. Question 27's closing
 		// sentence is about exactly this: a correct fix applied to some of the
@@ -106,8 +106,8 @@ func newGRPCCluster(t *testing.T, n int) []*grpcNode {
 			peercache.WithMembership(g),
 			peercache.WithTransport(tr),
 			peercache.WithListener(l),
-			// Deferral off: this measures throughput, not the M3
-			// handover window, which has its own tests.
+			// Deferral off: this measures throughput, not the
+			// ownership handover window, which has its own tests.
 			peercache.WithActivationDelay(-1),
 		)
 		if err != nil {
@@ -158,7 +158,7 @@ func newGRPCCluster(t *testing.T, n int) []*grpcNode {
 	return nodes
 }
 
-// TestRemoteGetThroughputAndLatency is the M4 acceptance criterion.
+// TestRemoteGetThroughputAndLatency is the remote-read acceptance criterion.
 func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test: binds loopback sockets and drives 50k rps")
@@ -225,7 +225,7 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	// Windows cannot time a single sub-millisecond operation: its monotonic
 	// clock resolves to roughly half a millisecond, so individual deltas
 	// come back as zero. Measure in batches large enough that a batch is
-	// comfortably longer than the resolution, exactly as the M1 gate does,
+	// comfortably longer than the resolution, exactly as the local gate does,
 	// and divide.
 	//
 	// The cost is real and stated rather than hidden: a batch mean smooths
@@ -259,12 +259,12 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	// the target without driving the system into its queue.
 	//
 	// The constant below is 36, not the twelve that paragraph reasons to. The
-	// prose was left behind by a change to the number and M8 found the two
+	// prose was left behind by a change to the number and a review found the two
 	// disagreeing, which is worth a sentence rather than a silent correction:
 	// a comment that argues carefully to a value the code does not use is
 	// worse than no comment, because it is read as evidence.
 	//
-	// Thirty-six is kept. The M8 sweep measured 110k rps at
+	// Thirty-six is kept. A sweep measured 110k rps at
 	// twelve workers and 235k at sixty-four, with p99 rising 180µs → 334µs
 	// across that range — so the queueing the paragraph above warns about does
 	// not begin anywhere near here, and offering ~4x the target rather than
@@ -376,7 +376,7 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	// A regression floor, which the paragraph above deliberately does not
 	// provide.
 	//
-	// The M8 audit found that this test could not fail on throughput at all:
+	// An audit found that this test could not fail on throughput at all:
 	// the criterion's number was logged and nothing was asserted, so a change
 	// that cut the rate by a factor of ten would have passed silently while
 	// the file still claimed to cover a 50k rps criterion. Reporting a number

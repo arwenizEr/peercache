@@ -18,7 +18,7 @@ import (
 // These are integration tests over loopback, and they are honestly real-time:
 // gossip converges on memberlist's own timers, which no injected clock reaches.
 //
-// They poll rather than sleep, so they satisfy the letter of CLAUDE.md's rule,
+// They poll rather than sleep, so they satisfy the letter of the no-sleep rule,
 // but the spirit of that rule — that a test never waits on wall time — cannot be
 // met for a third-party network protocol. The logic that actually depends on
 // membership (ownership, the activation guard) is tested deterministically
@@ -29,8 +29,7 @@ import (
 // It delegates the port choice to testkit rather than asking for port 0,
 // because on Windows port 0 lands inside a reserved block often enough to fail
 // a run and cannot retry its way out — see testkit.FreeLoopbackPort. This
-// function kept its own copy of that logic through M6 and M7 and failed both
-// times; there is now one implementation.
+// function kept its own copy of that logic and failed twice; there is now one implementation.
 func localConfig(name string) *memberlist.Config {
 	return testkit.LocalGossipConfig(name)
 }
@@ -311,7 +310,7 @@ func TestGossipCloseIsIdempotent(t *testing.T) {
 }
 
 // TestCloseLeavesNoGoroutines is the test that should have existed from the
-// start of M3.
+// start.
 //
 // memberlist never closes the channel it delivers node events on, not even from
 // Shutdown, so the goroutine that ranged over it waited forever: one leaked
@@ -320,7 +319,7 @@ func TestGossipCloseIsIdempotent(t *testing.T) {
 // goroutine that leaks after the assertion is invisible to the assertion.
 //
 // What found it was a two-node end-to-end test in the root package, running in
-// the same binary as the M1 p99 acceptance test. Under -count=2 the leaked
+// the same binary as the local p99 acceptance test. Under -count=2 the leaked
 // goroutines from the first iteration pushed the second iteration's p99 from
 // 0.5µs to 1.5µs and broke a budget that had nothing to do with membership.
 func TestCloseLeavesNoGoroutines(t *testing.T) {

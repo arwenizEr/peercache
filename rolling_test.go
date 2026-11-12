@@ -16,7 +16,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
-// M6 acceptance, from SPEC.md §4:
+// Rolling-upgrade acceptance, from SPEC.md §4:
 //
 //	a simulated rolling upgrade of a 9-node cluster under sustained write
 //	load completes with zero failed client requests and moves no more than
@@ -70,9 +70,9 @@ const (
 	placementSample = 200
 )
 
-// TestRollingUpgradeLosesNoRequests is the M6 acceptance criterion.
+// TestRollingUpgradeLosesNoRequests is the rolling-upgrade acceptance criterion.
 func TestRollingUpgradeLosesNoRequests(t *testing.T) {
-	// Detection faster than the upgrade cadence, for the reason M5 recorded:
+	// Detection faster than the upgrade cadence, for the usual reason:
 	// a cluster that loses a node faster than it notices never converges.
 	f := newFabricFull(t, rollingNodes, false, testkit.MembershipConfig{
 		FailureTimeout: 300 * time.Millisecond,
@@ -551,7 +551,7 @@ func TestDrainStopsPeersRoutingImmediately(t *testing.T) {
 }
 
 // TestAnImplicitNamespaceIsCountedAndReplicatesNothing pins the hazard that
-// looked like a data-loss bug for most of a milestone.
+// looked like a data-loss bug for weeks.
 //
 // A write routed to its owner creates the namespace there if the application
 // has not opened it — with default options, so replication factor 1. Options
