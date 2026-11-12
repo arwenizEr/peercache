@@ -63,7 +63,7 @@ new owners before it stops, `Ready` keeps traffic off a node that has joined but
 cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
-Every counter the earlier milestones built is exported: `MetricsHandler` serves
+Every counter is exported: `MetricsHandler` serves
 46 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
@@ -118,12 +118,12 @@ type Cache interface {
     Group(id string) Group
     RegisterGroupFunc(name string, fn GroupFunc) error
 
-    CatchUp(ctx context.Context) error   // M5 — see "CatchUp — required after a restart"
-    Drain(ctx context.Context) error     // M6 — the PreStop hook
-    Ready() ReadyState                   // M6 — the readiness probe
+    CatchUp(ctx context.Context) error   // see "CatchUp — required after a restart"
+    Drain(ctx context.Context) error     // the PreStop hook
+    Ready() ReadyState                   // the readiness probe
     WaitReady(ctx context.Context) error
 
-    Metrics() []Metric                   // M7 — see "Observability"
+    Metrics() []Metric                   // see "Observability"
     WriteMetrics(w io.Writer) error
     MetricsHandler() http.Handler
     RemoteLatency() (p50, p99, p999 uint64)
@@ -654,10 +654,7 @@ first. `Ready().ReplicasCurrent` says when it has, on each node, for the view
 that node holds now.
 
 `CatchUp` returns an error wrapping every peer it could not pull from, and keeps
-going past each one: one unreachable peer is no reason to skip the others. From
-M5 until after M8 it returned `nil` regardless — the error was collected into
-a variable that was never assigned — so a caller checking it was told catch-up
-had finished by a node that had reached nobody.
+going past each one: one unreachable peer is no reason to skip the others.
 
 ### Conflicts
 
@@ -918,11 +915,10 @@ which is the correct answer rather than a special case.
 `github.com/arwenizEr/peercache/membership` provides a gossip-backed
 implementation over hashicorp/memberlist, and
 `github.com/arwenizEr/peercache/transport` the gRPC transport. Both are public
-packages, so an application imports them directly. They were under `internal/`
-until after M9, where Go refuses to let another module import them — so the
-documented way to build a cluster compiled only inside this repository.
-`TestAnExternalModuleCanBuildACluster` now compiles this page's wiring as a
-separate module.
+packages, so an application imports them directly.
+`TestAnExternalModuleCanBuildACluster` compiles this page's wiring as a separate
+module, so the documented way to build a cluster is checked from outside this
+repository.
 
 `WithSeeds` hands its addresses to the authority's `Join` once the transport is
 serving, and `New` fails if the join does. Before, nothing read it.
@@ -957,7 +953,7 @@ entirely, which is only sane on a single node.
 
 Note the limit precisely: the guard runs on *activation*. A group that is
 already active on a node that has just lost it keeps running there until it goes
-idle. Graceful handoff is M6. See `docs/decisions/0012-the-activation-guard.md`.
+idle; `Drain` is the graceful hand-off. See `docs/decisions/0012-the-activation-guard.md`.
 
 `Stats().DeferredActivations`, `Stats().RefusedActivations` and
 `Stats().StaleEpochRefusals` count these decisions. A spike in deferrals after a change that returns to zero is healthy;
@@ -996,9 +992,9 @@ window was entered.
 
 | Series | Non-zero means |
 |---|---|
-| `peercache_split_brain_detections_total` | A replica saw writes for one key from two nodes under one membership epoch. Two nodes believed they owned it. This is the AP consequence in CLAUDE.md §5 actually happening. |
+| `peercache_split_brain_detections_total` | A replica saw writes for one key from two nodes under one membership epoch. Two nodes believed they owned it. This is the AP consequence of gossip membership actually happening. |
 | `peercache_stale_epoch_refusals_total` | A caller's view was older than this node's and the operation was refused. Sustained under stable membership means callers disagree about ownership. |
-| `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** It is a silent misconfiguration that looks exactly like a data-loss bug; it cost most of M6 to diagnose. |
+| `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** It is a silent misconfiguration that looks exactly like a data-loss bug; it once took weeks to diagnose. |
 | `peercache_degraded_writes_total` | A **synchronous** write was acknowledged holding fewer copies than its namespace's replication factor asked for. **Alert on this being non-zero.** It means a caller was told a write reached RF nodes when it reached fewer, and it is the only signal that distinguishes the two. Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns nil. See open question 37. |
 | `peercache_under_replicated_refusals_total` | A synchronous write was refused with `ErrUnderReplicated` in a namespace opened with `WithRequireReplicationFactor`. The caller was told, so nothing is silent — but a sustained rate means a node is cut off or the cluster is smaller than the factor, and every write to that namespace is failing. |
 | `peercache_replications_failed_total` | A replica write did not land. Under async replication the caller was told the write succeeded. |
@@ -1014,8 +1010,8 @@ reclassified as a gauge, because "did this happen in the last hour" is a rate
 question and a gauge cannot answer it.
 
 These are the five docs/design.md names as correctness metrics, plus the five this
-implementation found it needed — the last two added in M8, when a partition heal
-turned out to move replicas that the reconciler had been discarding.
+implementation found it needed — the last two added when a partition heal turned
+out to move replicas that the reconciler had been discarding.
 
 Transfer failures are covered by `peercache_replications_failed_total`: the drain handoff reuses the replication
 path rather than inventing a transfer protocol, so a failed transfer *is* a
@@ -1062,7 +1058,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 
 | Sentinel | Meaning | Retryable |
 |---|---|---|
-| `ErrNotImplemented` | Scaffolding for a milestone that has not run. | no |
+| `ErrNotImplemented` | An RPC method this binary does not recognise (a newer peer during a rolling upgrade), or a cache with no transport asked to reach another node. | no |
 | `ErrNotFound` | Key or group does not exist. | no |
 | `ErrClosed` | The cache has been closed. | no |
 | `ErrGroupOverloaded` | Mailbox full; rejected rather than queued. | yes, after backoff |
@@ -1085,8 +1081,8 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 **A peer's own failure is not `ErrNodeUnreachable`.** When the peer answered and
 the answer was a failure — a loader whose database is down, say — the error
 carries the peer's message and no sentinel. `ErrNodeUnreachable` means the peer
-did not answer. Until the coverage sweep after M9 the two were the same over
-gRPC, so a backend outage behind one owner looked like a network fault.
+did not answer, so a backend outage behind one owner does not look like a
+network fault.
 
 `ErrGroupOverloaded` is backpressure working as designed. Blocking indefinitely
 would convert one slow group into a cluster-wide stall.
@@ -1096,16 +1092,15 @@ ownership and they are retryable in different directions. `ErrStaleEpoch` means
 *your view is out of date* — re-resolve, you may be at the wrong node. It is
 raised when a caller's epoch is older than this node's; when it is *newer*, the
 answer is `ErrActivationPending` instead, because it is this node that is behind
-and it will catch up. Until M4 nothing carries an epoch across a boundary, so in
-M3 this error is reachable only through `Guard.CanActivateAt` directly.
+and it will catch up.
 
 `ErrNotOwner` and `ErrActivationPending` are both about ownership and they are
 retryable in opposite directions. `ErrNotOwner` means *go somewhere else* —
 re-resolve and ask the owner. `ErrActivationPending` means *ask again here* —
 this node is the owner and is deliberately waiting for the previous one to
 notice. Treating them as one error would send a caller away from the node that
-is about to be able to serve it. Until M4's router exists, both are surfaced to
-the caller directly.
+is about to be able to serve it. The remote data path re-resolves the owner
+once on either error, and on `ErrStaleEpoch`, before surfacing it to the caller.
 
 An expired context is reported ahead of anything else: an expired deadline is
 the caller's answer, whatever the callee would otherwise have said.
