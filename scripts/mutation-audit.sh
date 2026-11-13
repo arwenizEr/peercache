@@ -1907,6 +1907,33 @@ mutate "a drifting peer drags the HLC ahead" \
   '	if false {' \
   'TestADriftingPeerCannotDragTheClockAhead$' ./internal/hlc/
 
+# --- persistence: segment format and blob stores (decision 0029) ---
+
+mutate "a corrupted segment is decoded" \
+  internal/segment/segment.go \
+  '	if crc32.Checksum(body, castagnoli) != sum {' \
+  '	if false && crc32.Checksum(body, castagnoli) != sum {' \
+  'TestEveryBitFlipIsCorrupt$' ./internal/segment/
+
+mutate "a segment's declared count is believed" \
+  internal/segment/segment.go \
+  '	if !ok || v > uint64(len(d.b)/minEach) {' \
+  '	if !ok {' \
+  'TestADeclaredCountIsNotBelieved$' ./internal/segment/
+
+mutate "a segment tombstone may carry a value" \
+  internal/segment/segment.go \
+  '		if r.Tombstone && len(r.Value) != 0 {' \
+  '		if false {' \
+  'TestStructuralDefectsAreCorrupt$' ./internal/segment/
+
+mutate "the memory blob store keeps the caller's slice" \
+  persist/persist.go \
+  '	stored := make([]byte, len(data))
+	copy(stored, data)' \
+  '	stored := data' \
+  'TestMemoryMeetsTheContract$' ./persist/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

@@ -124,6 +124,7 @@ jobs:
           - { pkg: ./internal/codec, fn: FuzzCodecRoundTrip }
           - { pkg: ./internal/wire, fn: FuzzDecode }
           - { pkg: ./internal/wire, fn: FuzzDecodeEveryMessage }
+          - { pkg: ./internal/segment, fn: FuzzDecode }
           - { pkg: ., fn: FuzzPartitionByPrefix }
     steps:
       - uses: actions/checkout@v4

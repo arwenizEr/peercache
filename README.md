@@ -402,6 +402,8 @@ probation.go      Keeps young nodes out of the ranking
 
 membership/       Gossip membership over memberlist (public)
 transport/        gRPC client and server, optional mTLS (public)
+persist/          Blob-store interface for persistent namespaces, the
+                  memory backend, and the contract suite (public)
 
 internal/
   core/           Type definitions shared by the public and internal packages
@@ -419,6 +421,7 @@ internal/
                   validation. The only code here that interprets
                   bytes it did not write.
   replication/    Replica store, version stamps, conflict detection
+  segment/        Storage format of persistent namespaces, bounded decoding
   rebalance/      Move planning
   metrics/        Metric collection, text format, histograms
 
