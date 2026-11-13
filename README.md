@@ -408,6 +408,8 @@ transport/        gRPC client and server, optional mTLS (public)
 persist/          Blob-store interface for persistent namespaces, the
                   memory and directory backends, and the contract suite (public)
 persist/s3/       S3 and S3-compatible backend, a nested module (public)
+otel/             OpenTelemetry bridge for the metric series, a nested
+                  module (public)
 
 internal/
   core/           Type definitions shared by the public and internal packages

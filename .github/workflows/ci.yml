@@ -102,6 +102,11 @@ jobs:
       - name: S3 backend
         run: cd persist/s3 && go vet ./... && go test -race ./...
 
+      # The OpenTelemetry bridge is a nested module too; it needs Go 1.26,
+      # which setup-go above provides.
+      - name: OpenTelemetry bridge
+        run: cd otel && go vet ./... && go test -race ./...
+
   race:
     name: test -race
     runs-on: ubuntu-latest

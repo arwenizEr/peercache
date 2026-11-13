@@ -9,6 +9,10 @@ change the public API.
 
 ### Added
 
+- `github.com/arwenizEr/peercache/otel`, an OpenTelemetry bridge in its own
+  module: one observable instrument per metric series, with the node as an
+  attribute and counters named so the Prometheus exporter does not double their
+  `_total`. Decision 0032.
 - Conditional writes on one key, run on its owner under the store's lock:
   `Namespace.SetIfAbsent`, `CompareAndSwap`, `Increment` and `Touch`, and
   `SetIfAbsent` and `Touch` on `TypedNamespace[T]`. Decision 0027.

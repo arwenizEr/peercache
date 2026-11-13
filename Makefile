@@ -30,7 +30,7 @@ TIMEOUT ?= 300s
 # The figures live there rather than here so there is one copy to keep true.
 RACE_TIMEOUT ?= 900s
 
-.PHONY: all ci test test-s3 test-race latency examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
+.PHONY: all ci test test-s3 test-otel test-race latency examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
 
 all: fmt vet lint test-race
 
@@ -114,6 +114,10 @@ fuzz:
 ## also run its contract against a real S3 or MinIO.
 test-s3:
 	cd persist/s3 && $(GO) vet ./... && $(GO) test -race ./...
+
+## test-otel tests the OpenTelemetry bridge, a nested module.
+test-otel:
+	cd otel && $(GO) vet ./... && $(GO) test -race ./...
 
 ## bench-l1-eval re-runs the L1 cache-library comparison. It lives in a nested
 ## module so that three losing candidates never enter the shipping dependency

@@ -2289,6 +2289,32 @@ mutate "persist/s3 lists only the first page" \
   '	for first := true; first && p.HasMorePages(); first = false {' \
   'TestTheStoreMeetsTheContract$' persist/s3::./
 
+# --- OpenTelemetry bridge, a nested module (decision 0032, M15b) ---
+
+mutate "otel registers counters as gauges" \
+  otel/otel.go \
+  '		case peercache.CounterMetric:
+			c, err := meter.Float64ObservableCounter(' \
+  '		case -1:
+			c, err := meter.Float64ObservableCounter(' \
+  'TestEverySeriesIsBridged$' otel::./
+
+mutate "otel keeps a counter's _total" \
+  otel/otel.go \
+  '		return strings.TrimSuffix(m.Name, "_total")' \
+  '		return m.Name' \
+  'TestCounterNamesDropTheirTotal$' otel::./
+
+mutate "otel observes without the node attribute" \
+  otel/otel.go \
+  '				o.ObserveFloat64(c, m.Value, node)
+			} else if g, ok := gauges[m.Name]; ok {
+				o.ObserveFloat64(g, m.Value, node)' \
+  '				o.ObserveFloat64(c, m.Value)
+			} else if g, ok := gauges[m.Name]; ok {
+				o.ObserveFloat64(g, m.Value)' \
+  'TestEverySeriesIsBridged$' otel::./
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

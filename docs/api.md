@@ -1212,6 +1212,24 @@ is the one error a latency metric must not make. Zero means nothing has been
 observed, which is distinguishable from a real measurement because no operation
 takes zero nanoseconds.
 
+### OpenTelemetry — `github.com/arwenizEr/peercache/otel`
+
+A nested module, so the OpenTelemetry API is a dependency only of programs that
+use it (`docs/decisions/0032-opentelemetry-bridge.md`):
+
+```go
+reg, err := pcotel.Register(otel.Meter("peercache"), cache)
+if err != nil { ... }
+defer reg.Unregister() // before cache.Close
+```
+
+One observable instrument per series — counter or gauge, as the series is —
+with its help text as the description, and every observation carries
+`peercache.node`. A counter's name drops its trailing `_total`, because
+OpenTelemetry's Prometheus exporter appends one; through that exporter the
+names come out as `MetricsHandler` serves them. It needs Go 1.26, as
+OpenTelemetry v1.47 does. Latency histograms are not bridged.
+
 ### What is not exported
 
 No per-namespace or per-key labels. The aggregate is what operators alert on,
