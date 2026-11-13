@@ -226,6 +226,10 @@ func TestARestoreDoesNotUndoAPromotedWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	killAndSettle(t, f, owner)
+	// Promotion re-records what it installs, and a restore overlays what is
+	// still pending. Flushing first — into the black hole — leaves the
+	// promoted value in memory alone, which is the case under test.
+	flushAll(t, f)
 
 	durable := func(id string) peercache.Namespace { return f.caches[id].Namespace("durable") }
 	for _, id := range f.live() {
