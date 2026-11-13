@@ -29,6 +29,7 @@ and output-checked by `go test`:
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
 | `ExampleCache_Describe` | the introspection surface: node, namespaces, one key's placement |
+| `ExampleWithCatchUpGate` | a cache that holds its peers until its first catch-up; alone, ready at once |
 | `ExampleWithPersistence` | write, close, reopen over the same store: restored, and a delete stays deleted |
 | `ExampleWithReplicaReads` | the configurations replica reads refuse, and their counters |
 | `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
@@ -874,6 +875,36 @@ that exists elsewhere. The gate keeps clients away until the two agree.
 `ReadyState` is a struct rather than a bool because the remedies differ: waiting
 for gossip needs patience, an uncaught-up node needs `CatchUp`, a draining one
 needs to be left alone. `String()` is written for a probe response body.
+
+#### `WithCatchUpGate` — holding peers until caught up
+
+```go
+cache, err := peercache.New(
+    peercache.WithMembership(gossip),
+    peercache.WithTransport(tr),
+    peercache.WithCatchUpGate(),
+)
+```
+
+Readiness keeps *clients* away from a node that has not caught up. It does not
+keep *peers* away: a restarted node owns its keys from the moment it joins, and
+every other node forwards writes for them to it at once. Applied before catch-up
+has brought the newest values back, such a write lands on an empty or
+persisted-but-older base — an `Increment` counts from the wrong value, a
+`SetIfAbsent` succeeds over a key that exists — and the catch-up that follows
+discards it as older than the copy it brings. Under kill -9 on kind that was 1
+to 3 lost decrements on 5 of 50 stock counters.
+
+With the gate, until this node's first `CatchUp` completes, its peers'
+operations on keys it owns, in namespaces with a replication factor of 2 or
+more, are answered with `ErrActivationPending`. Nothing is applied; the
+forwarding node retries once and returns the error, which an application treats
+as refused-before-applied and retries. This node's own calls are not held —
+they are the application's, and `Ready` already says when to make them.
+
+Turn it on wherever the application calls `CatchUp` before serving, as the
+deployment in `deploy/` does. It is off by default because a node whose
+application never calls `CatchUp` would refuse its peers indefinitely.
 
 #### `ReplicasCurrent` — beside readiness, not inside it
 

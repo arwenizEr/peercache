@@ -2372,6 +2372,14 @@ mutate "a forwarding node drops the owner report" \
   'if true {' \
   'TestAForwardedHeldWriteKeepsItsResult$' ./tests
 
+# --- open question 49, part two ---
+
+mutate "the catch-up gate lets a forwarded write through" \
+  handler.go \
+  '!h.cache.readiness.caughtUp.Load() {' \
+  'false {' \
+  'TestTheCatchUpGateHoldsForwardedWritesUntilCaughtUp$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
