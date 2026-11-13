@@ -80,6 +80,7 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_misses_total", Counter, "Namespace reads not served locally. An expired key counts as a miss.", float64(s.Misses)},
 		{"peercache_loads_total", Counter, "Loader invocations.", float64(s.Loads)},
 		{"peercache_collapsed_loads_total", Counter, "GetOrLoad calls that joined a load already in flight instead of starting one.", float64(s.CollapsedLoads)},
+		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 
 		// Correctness. These are the ones that matter.

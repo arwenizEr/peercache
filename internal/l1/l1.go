@@ -73,6 +73,11 @@ type entry struct {
 	// value as stale — see docs/decisions/open.md question 18.
 	stamp     core.Stamp
 	expiresAt int64
+	// floor marks an entry that holds no value, only a stamp: what an
+	// invalidation leaves behind in a namespace with replica reads. It
+	// reads as a miss and refuses any Put older than its stamp. See
+	// [Cache.Floor].
+	floor bool
 }
 
 // Cache is a bounded, TTL-bounded, version-stamped cache of non-owned keys.
@@ -196,6 +201,10 @@ func (c *Cache) Get(key string) ([]byte, core.Stamp, bool) {
 		c.misses.Add(1)
 		return nil, core.Stamp{}, false
 	}
+	if e.floor {
+		c.misses.Add(1)
+		return nil, core.Stamp{}, false
+	}
 	c.hits.Add(1)
 	return e.val, e.stamp, true
 }
@@ -236,7 +245,14 @@ func (c *Cache) Put(key string, val []byte, stamp core.Stamp, ttl time.Duration)
 	now := c.clk.Now().UnixNano()
 	if existing, ok := c.inner.Get(key); ok {
 		live := now < existing.expiresAt
-		if live && !stamp.NewerThan(existing.stamp) {
+		// A floor admits its own stamp: the owner's answer to the read an
+		// invalidation provoked carries exactly that stamp, and refusing
+		// it would send every read to the owner until the floor expired.
+		stale := !stamp.NewerThan(existing.stamp)
+		if existing.floor {
+			stale = existing.stamp.NewerThan(stamp)
+		}
+		if live && stale {
 			c.rejects.Add(1)
 			return false
 		}
@@ -299,6 +315,54 @@ func (c *Cache) InvalidateOlderThan(key string, stamp core.Stamp) bool {
 	}
 	c.inner.Delete(key)
 	return true
+}
+
+// Floor replaces a live copy older than stamp with a floor: a marker that holds
+// no value, reads as a miss, and refuses any [Cache.Put] older than stamp until
+// ttl passes. It reports whether it set one.
+//
+// It is the invalidation path for namespaces with replica reads
+// (docs/decisions/0028). Invalidation and replication leave the owner on
+// separate queues, so this node can hear "stamp S exists" before the replica it
+// would refill from has S. Deleting the copy, as [Cache.InvalidateOlderThan]
+// does, would let that refill put the old value straight back.
+//
+// Nothing is set for a key with no live copy. A node that holds nothing for a
+// key has not read it within a TTL, and a floor for every invalidated key on
+// every node would fill the tier with markers for keys nobody here reads.
+// Without a floor such a read is still bounded by the TTL; the floor only makes
+// it fresher sooner.
+func (c *Cache) Floor(key string, stamp core.Stamp, ttl time.Duration) bool {
+	if ttl <= 0 || ttl > c.maxTTL {
+		ttl = c.maxTTL
+	}
+	stripe := c.stripeFor(key)
+	stripe.Lock()
+	defer stripe.Unlock()
+
+	now := c.clk.Now().UnixNano()
+	existing, ok := c.inner.Get(key)
+	if !ok || now >= existing.expiresAt || !stamp.NewerThan(existing.stamp) {
+		return false
+	}
+	e := entry{stamp: stamp, expiresAt: saturatingDeadline(now, ttl), floor: true}
+	c.bytes.Add(size(key, e))
+	if !c.inner.Set(key, e) {
+		c.bytes.Add(-size(key, e))
+		return false
+	}
+	return true
+}
+
+// Below reports whether a live entry for key — a copy or a floor — carries a
+// stamp newer than stamp. A reader uses it to discard a replica's answer that
+// this node already knows to be superseded.
+func (c *Cache) Below(key string, stamp core.Stamp) bool {
+	e, ok := c.inner.Get(key)
+	if !ok || c.clk.Now().UnixNano() >= e.expiresAt {
+		return false
+	}
+	return e.stamp.NewerThan(stamp)
 }
 
 // Clear removes everything.

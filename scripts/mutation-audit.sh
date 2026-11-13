@@ -1709,6 +1709,52 @@ mutate "an overflowing increment wraps" \
   '		if false {' \
   'TestIncrementRefusesWhatIsNotAnInteger$' ./tests
 
+# --- hot-key reads (decision 0028) ---
+
+mutate "remote misses are not coalesced" \
+  namespace.go \
+  '	value, err := n.sharedFetch(ctx, p, key)' \
+  '	value, err := n.fetchOwner(ctx, p, key)' \
+  'TestConcurrentRemoteMissesShareOneFetch$' ./tests
+
+mutate "the shared fetch runs on its starter's context" \
+  namespace.go \
+  '			val, err := n.fetchOwner(fetchCtx, p, key)' \
+  '			val, err := n.fetchOwner(ctx, p, key)' \
+  'TestACancelledWaiterLeavesTheSharedFetch$' ./tests
+
+mutate "a starter's deadline fails every waiter" \
+  namespace.go \
+  '		if !errors.Is(res.Err, context.DeadlineExceeded) && !errors.Is(res.Err, context.Canceled) {' \
+  '		if true {' \
+  'TestALeadersDeadlineIsNotEveryones$' ./tests
+
+mutate "the shared fetch has no deadline" \
+  namespace.go \
+  '			if deadline, ok := ctx.Deadline(); ok {' \
+  '			if deadline, ok := ctx.Deadline(); false && ok {' \
+  'TestALeadersDeadlineIsNotEveryones$' ./tests
+
+mutate "an L1 floor reads as a value" \
+  internal/l1/l1.go \
+  '	if e.floor {
+		c.misses.Add(1)' \
+  '	if false {
+		c.misses.Add(1)' \
+  'TestAFloorReplacesAnOlderCopyAndReadsAsAMiss$' ./internal/l1
+
+mutate "an L1 floor refuses its own stamp" \
+  internal/l1/l1.go \
+  '			stale = existing.stamp.NewerThan(stamp)' \
+  '			stale = !stamp.NewerThan(existing.stamp)' \
+  'TestAFloorRefusesOlderPutsAndAdmitsItsOwnStamp$' ./internal/l1
+
+mutate "an L1 floor is set for a key with no copy" \
+  internal/l1/l1.go \
+  '	if !ok || now >= existing.expiresAt || !stamp.NewerThan(existing.stamp) {' \
+  '	if ok && (now >= existing.expiresAt || !stamp.NewerThan(existing.stamp)) {' \
+  'TestAFloorIsNotSetWithoutACopy$' ./internal/l1
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

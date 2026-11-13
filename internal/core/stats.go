@@ -45,6 +45,10 @@ type Stats struct {
 	// one. A healthy ratio under load is what singleflight is for.
 	Loads          int64
 	CollapsedLoads int64
+	// CoalescedReads counts reads of keys owned elsewhere that missed L1
+	// and joined a fetch from the owner already in flight on this node,
+	// instead of sending their own. See docs/decisions/0028.
+	CoalescedReads int64
 
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the

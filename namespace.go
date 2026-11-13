@@ -143,6 +143,10 @@ type namespace struct {
 	store  *store.Store
 	framer *codec.Framer
 	flight singleflight.Group
+	// readFlight coalesces concurrent L1 misses of one key owned elsewhere
+	// into one fetch. It is separate from flight on purpose: a Get must
+	// never join a GetOrLoad's load, nor a GetOrLoad a Get's plain read.
+	readFlight singleflight.Group
 
 	// l1 caches copies of keys this node does not own. Nil when there is no
 	// membership authority, because a cluster of one owns everything and a
@@ -269,7 +273,7 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 		}
 	}
 
-	value, stamp, err := n.cache.route.remoteGet(ctx, p, n.name, key)
+	value, err := n.sharedFetch(ctx, p, key)
 	if err != nil {
 		if retry && retryable(err) {
 			next, rerr := n.cache.route.locate(n.groupKeyFor(key))
@@ -281,6 +285,69 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 			}
 			return n.remoteGet(ctx, next, key, false)
 		}
+		return nil, err
+	}
+	return value, nil
+}
+
+// sharedFetchAttempts bounds how many times a caller joins a shared fetch that
+// ended on someone else's deadline before it fetches alone.
+const sharedFetchAttempts = 2
+
+// sharedFetch reads key from its owner, sharing one request among every caller
+// on this node that missed L1 for it at the same time.
+//
+// Without this a hot key's L1 expiry, or the invalidation of it, sent one RPC
+// per waiting goroutine to the owner — a thousand callers were a thousand
+// requests (measured; docs/decisions/0028). The shared answer is the owner's
+// reply to a request sent after every waiter missed, so it is as fresh as any
+// of them would have got alone.
+//
+// # Whose deadline
+//
+// The fetch runs under the deadline of the caller that started it, because
+// deadlines propagate across RPC boundaries and a fetch with none could hang a
+// waiter forever. That makes one caller's deadline a risk to the others, so a
+// waiter whose own context is still alive when the shared fetch ends on a
+// context error does not inherit the failure: it tries again, and after
+// sharedFetchAttempts it fetches alone under its own deadline.
+func (n *namespace) sharedFetch(ctx context.Context, p placement, key string) ([]byte, error) {
+	for attempt := 0; attempt < sharedFetchAttempts; attempt++ {
+		res := n.readFlight.Do(ctx, key, func(fetchCtx context.Context) ([]byte, time.Duration, error) {
+			if deadline, ok := ctx.Deadline(); ok {
+				var cancel context.CancelFunc
+				fetchCtx, cancel = context.WithDeadline(fetchCtx, deadline)
+				defer cancel()
+			}
+			val, err := n.fetchOwner(fetchCtx, p, key)
+			return val, 0, err
+		})
+		if res.Err == nil {
+			return res.Value, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !errors.Is(res.Err, context.DeadlineExceeded) && !errors.Is(res.Err, context.Canceled) {
+			return nil, res.Err
+		}
+	}
+	return n.fetchOwner(ctx, p, key)
+}
+
+// fetchOwner sends one read to the owner and caches the answer in L1.
+//
+// L1 is checked again first. A caller can miss, lose the race to a fetch that
+// then completes and fills L1, and start a fetch of its own; the second look
+// turns that into a hit instead of a second request.
+func (n *namespace) fetchOwner(ctx context.Context, p placement, key string) ([]byte, error) {
+	if n.l1 != nil {
+		if val, _, ok := n.l1.Get(key); ok {
+			return val, nil
+		}
+	}
+	value, stamp, err := n.cache.route.remoteGet(ctx, p, n.name, key)
+	if err != nil {
 		return nil, err
 	}
 

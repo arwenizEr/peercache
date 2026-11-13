@@ -630,6 +630,7 @@ func (c *cache) Stats() Stats {
 		stats.InflightLoads += ns.flight.Inflight()
 		stats.Loads += ns.flight.Loads()
 		stats.CollapsedLoads += ns.flight.Collapsed()
+		stats.CoalescedReads += ns.readFlight.Collapsed()
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())
 		}
