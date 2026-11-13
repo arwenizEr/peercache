@@ -33,6 +33,9 @@ change the public API.
   (decision 0030). `PersistSplits` and `PersistSplitFailures`.
 - `github.com/arwenizEr/peercache/persist/s3`, an S3 and S3-compatible backend
   in its own module, so the AWS SDK enters only programs that choose it.
+- A key a persistent namespace restores from storage is sent to its replicas
+  again, instead of sitting at a replication factor of one until its next
+  write.
 
 ### Changed
 

@@ -2246,6 +2246,14 @@ mutate "a non-positive flush interval is accepted" \
   '	if false {' \
   'TestANonPositiveFlushIntervalIsRefused$' ./tests
 
+# --- persistence: re-replicating restored keys ---
+
+mutate "a restored key is not replicated again" \
+  persistence.go \
+  '		p.replicateRestored(key, r, version, now)' \
+  '		_ = version' \
+  'TestARestoredKeyIsReplicatedAgain$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
