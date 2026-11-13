@@ -2202,6 +2202,31 @@ check of every entry's text against its file found five that M9 and the coverage
 sweep had silently turned into skips; they were repointed first. The drain entry
 recorded above as flaky was caught.
 
+### The full audit after M14b: 236, eleven repointed, one re-aimed
+
+Every entry run end to end after M14b, on Machine A, in 20 m 45 s: **caught:
+224, vacuous: 1, skipped: 11**. Not a clean run, and recorded as it was.
+
+The eleven skips were entries whose code the persistence plumbing had
+reshaped — order arguments threaded through `fanOut` and `Restore`, the
+`err :=` form open question 45 introduced, the `scan` refactor. Each was
+regenerated against the code as it is, its text asserted present exactly once.
+
+The vacuous one was "a promoted replica's order is not carried". Its test no
+longer showed it, because observing an order on receipt is what makes the
+replica's next write win. What the carried order protects is a later restore:
+installed at order zero, a promoted value is outranked by any stored record.
+`TestARestoreDoesNotUndoAPromotedWrite` was written for it — and was itself
+vacuous twice before it worked. First a restore's overlay of pending records
+masked the case; then it turned out the test helper `flushAll` returned when the
+pending map emptied, which a flush does *before* its writes reach the store, so
+the test had been running against an empty store. Both are fixed; the helper
+now waits for the flush counter.
+
+The twelve were then run by name: **caught: 12, vacuous: 0, skipped: 0, tree
+clean**. No library code changed between that and the full run, so the 236 are
+accounted for — but by two runs, not one, and this says so.
+
 ### The full audit after M13: 200 of 200
 
 Every entry run end to end after M13, on Machine A, in 18 m 5 s: **caught: 197,
