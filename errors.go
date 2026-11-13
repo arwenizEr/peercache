@@ -110,7 +110,9 @@ var (
 	// Either way it is counted in Stats().DegradedWrites, and it is reported,
 	// not rolled back: the value is held by the owner and by whichever
 	// replicas took it, and a Get returns it. So a caller must treat it as
-	// done. Retrying is harmless for Set and Delete, which are idempotent;
+	// done, and the operation's result comes back beside the error, whether
+	// the write ran here or was forwarded: Increment's new value, true from
+	// SetIfAbsent, CompareAndSwap or Touch. Retrying is harmless for Set and Delete, which are idempotent;
 	// for Increment, CompareAndSwap and SetIfAbsent the operation has already
 	// happened, and retrying it applies it again. See docs/decisions/open.md
 	// question 37.

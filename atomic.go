@@ -3,6 +3,7 @@ package peercache
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -48,7 +49,7 @@ func (n *namespace) Increment(ctx context.Context, key string, delta int64, ttl 
 				Epoch:     p.epoch,
 			}, &resp)
 			result = resp.Value
-			return err
+			return heldRemotely(err, p, resp.UnderReplicated)
 		})
 	return result, err
 }
@@ -70,7 +71,7 @@ func (n *namespace) Touch(ctx context.Context, key string, ttl time.Duration) (b
 				Epoch:     p.epoch,
 			}, &resp)
 			existed = resp.Existed
-			return err
+			return heldRemotely(err, p, resp.UnderReplicated)
 		})
 	return existed, err
 }
@@ -95,7 +96,7 @@ func (n *namespace) condSet(ctx context.Context, key string, val []byte, compare
 				Epoch:     p.epoch,
 			}, &resp)
 			stored = resp.Stored
-			return err
+			return heldRemotely(err, p, resp.UnderReplicated)
 		})
 	return stored, err
 }
@@ -278,10 +279,11 @@ func (h *peerHandler) condSet(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	stored, err := ns.localCondSet(ctx, in.Key, in.Value, in.Compare, in.Old, time.Duration(in.TTLNanos))
+	held, err := heldLocally(err)
 	if err != nil {
 		return nil, err
 	}
-	return wire.Encode(&wire.CondSetResponse{Stored: stored})
+	return wire.Encode(&wire.CondSetResponse{Stored: stored, UnderReplicated: held})
 }
 
 func (h *peerHandler) increment(ctx context.Context, req []byte) ([]byte, error) {
@@ -298,10 +300,11 @@ func (h *peerHandler) increment(ctx context.Context, req []byte) ([]byte, error)
 		return nil, err
 	}
 	v, err := ns.localIncrement(ctx, in.Key, in.Delta, time.Duration(in.TTLNanos))
+	held, err := heldLocally(err)
 	if err != nil {
 		return nil, err
 	}
-	return wire.Encode(&wire.IncrementResponse{Value: v})
+	return wire.Encode(&wire.IncrementResponse{Value: v, UnderReplicated: held})
 }
 
 func (h *peerHandler) touch(ctx context.Context, req []byte) ([]byte, error) {
@@ -324,8 +327,42 @@ func (h *peerHandler) touch(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 	existed, err := ns.localTouch(ctx, in.Key, time.Duration(in.TTLNanos))
+	held, err := heldLocally(err)
 	if err != nil {
 		return nil, err
 	}
-	return wire.Encode(&wire.TouchResponse{Existed: existed})
+	return wire.Encode(&wire.TouchResponse{Existed: existed, UnderReplicated: held})
 }
+
+// heldLocally splits an owner's ErrUnderReplicated off the error it returns to
+// a forwarding peer. That write happened, and its result must reach the caller
+// — an Increment's new value, a SetIfAbsent's true — but an RPC error carries
+// no body. So it travels as a field of the response, and every other error as
+// an error.
+func heldLocally(err error) (string, error) {
+	if err != nil && errors.Is(err, ErrUnderReplicated) {
+		return err.Error(), nil
+	}
+	return "", err
+}
+
+// heldRemotely is heldLocally's other half, on the forwarding node: an owner's
+// report that the write is held below its factor becomes ErrUnderReplicated
+// again, beside the result the response carried.
+func heldRemotely(err error, p placement, held string) error {
+	if err != nil || held == "" {
+		return err
+	}
+	return &remoteHeld{owner: string(p.owner.ID), detail: held}
+}
+
+// remoteHeld is ErrUnderReplicated as reported by a write's owner.
+type remoteHeld struct {
+	owner, detail string
+}
+
+// Error returns the owner's report and names the owner.
+func (e *remoteHeld) Error() string { return e.detail + " (on owner " + e.owner + ")" }
+
+// Is makes errors.Is(err, ErrUnderReplicated) hold.
+func (e *remoteHeld) Is(target error) bool { return target == ErrUnderReplicated }

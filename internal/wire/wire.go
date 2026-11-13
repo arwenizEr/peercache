@@ -122,6 +122,11 @@ type CondSetRequest struct {
 // CondSetResponse reports whether the owner stored the value.
 type CondSetResponse struct {
 	Stored bool `msgpack:"stored"`
+	// UnderReplicated, when set, is the owner's ErrUnderReplicated: the write
+	// happened and the result above is its result, but replication fell short.
+	// It travels in the body rather than as an RPC error because an error
+	// carries no body, and the caller needs the result to act on the write.
+	UnderReplicated string `msgpack:"under_replicated"`
 }
 
 // IncrementRequest adds Delta to the integer under one key on its owner.
@@ -137,6 +142,11 @@ type IncrementRequest struct {
 // IncrementResponse returns the integer after the increment.
 type IncrementResponse struct {
 	Value int64 `msgpack:"value"`
+	// UnderReplicated, when set, is the owner's ErrUnderReplicated: the write
+	// happened and the result above is its result, but replication fell short.
+	// It travels in the body rather than as an RPC error because an error
+	// carries no body, and the caller needs the result to act on the write.
+	UnderReplicated string `msgpack:"under_replicated"`
 }
 
 // TouchRequest gives one key a new lifetime on its owner.
@@ -150,6 +160,11 @@ type TouchRequest struct {
 // TouchResponse reports whether the key existed.
 type TouchResponse struct {
 	Existed bool `msgpack:"existed"`
+	// UnderReplicated, when set, is the owner's ErrUnderReplicated: the write
+	// happened and the result above is its result, but replication fell short.
+	// It travels in the body rather than as an RPC error because an error
+	// carries no body, and the caller needs the result to act on the write.
+	UnderReplicated string `msgpack:"under_replicated"`
 }
 
 // DeleteResponse is empty. It exists so that the method has a response type

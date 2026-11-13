@@ -191,6 +191,8 @@ message CondSetRequest {
 
 message CondSetResponse {
   bool stored = 1;
+  // Set when the write happened but replication fell short (ErrUnderReplicated).
+  string under_replicated = 2;
 }
 
 message IncrementRequest {
@@ -204,6 +206,8 @@ message IncrementRequest {
 
 message IncrementResponse {
   int64 value = 1;
+  // Set when the write happened but replication fell short (ErrUnderReplicated).
+  string under_replicated = 2;
 }
 
 message TouchRequest {
@@ -215,6 +219,8 @@ message TouchRequest {
 
 message TouchResponse {
   bool existed = 1;
+  // Set when the write happened but replication fell short (ErrUnderReplicated).
+  string under_replicated = 2;
 }
 
 message BatchGetRequest {
