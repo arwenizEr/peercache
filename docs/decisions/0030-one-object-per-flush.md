@@ -1,6 +1,6 @@
 # 0030 — One object per flush, split into partitions in the background
 
-**Status:** accepted, being built in M14d.
+**Status:** accepted and built (M14d).
 **Amends:** 0029's layout. Its ordering, merge, restore and compaction rules
 stand; what a flush writes, and where, changes.
 **Decided by:** the project owner on 2026-11-13, choosing this over making the

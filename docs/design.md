@@ -567,8 +567,7 @@ interface, `persist.Memory`, the order carried through every write path, flush,
 restore and compaction; **M14c** `persist.Dir` and the measured loss window;
 **M14d** `persist/s3` as a separate module.
 
-M14b and M14c are built. M14d's module is a criterion of its own part and is
-added here when it is.
+M14b, M14c and M14d are built.
 
 **Acceptance:** killing every holder of a key restores it on its new owner at
 its last flushed value; a whole cluster stopped and started on the same store
@@ -585,7 +584,10 @@ syncs the directory, and a Put interrupted at any step leaves a whole object;
 the loss window on it is measured; one flush writes one object whatever it
 touches, a split moves every log into at most one segment per partition and
 deletes the logs only once those are durable, a split that fails part-way loses
-nothing, and the flush interval is a namespace option.
+nothing, and the flush interval is a namespace option; the S3 backend, in its
+own module, meets the blob-store contract against an S3 fake with paged
+listings, tells an absent object from a refused one, and carries a namespace
+through a restart in one PUT per flush.
 
 ---
 

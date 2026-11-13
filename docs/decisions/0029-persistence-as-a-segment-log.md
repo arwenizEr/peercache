@@ -1,6 +1,6 @@
 # 0029 — Opt-in persistence as a segment log over a blob store
 
-**Status:** accepted; M14b and M14c built, M14d not yet. Supersedes 0026.
+**Status:** accepted and built (M14b–M14d). Supersedes 0026.
 Its layout is amended by 0030: a flush writes one log object, split into the
 partitions in the background.
 **Milestone:** M14, in four parts (below).
