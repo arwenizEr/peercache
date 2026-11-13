@@ -78,6 +78,15 @@ change the public API.
 
 ### Fixed
 
+- Replica copies are ordered by the hybrid logical clock, in every namespace,
+  instead of by a stamp whose epoch dominated. Epochs are per view, so after a
+  rolling restart a key's returning owner held a smaller epoch than the interim
+  owner it had caught up from, its replicas refused its writes as older, and a
+  synchronous write at RF 3 was lost once the owner and the interim owner
+  failed. On kind, version conflicts after one rolling restart grew with each
+  pod's epoch, to 1.1 million. Found by M16 (open question 50). A peer on an
+  earlier release sends no order for a non-persistent namespace; its copies
+  fall back to the stamp.
 - `docs/api.md` told a restarted node to call `CatchUp` "after the readiness
   gate", but `Ready()` stays false until `CatchUp` has run, so an application
   following it never became ready. The order is join, settle, `CatchUp`, ready.
