@@ -59,6 +59,10 @@ type activation struct {
 
 	// elem is this activation's LRU position, guarded by Runtime.mu.
 	elem *list.Element
+
+	// retiring is set once a turn was refused because ownership moved, so
+	// that only the first refusal releases the activation.
+	retiring atomic.Bool
 }
 
 // request is one unit of work for a group.
@@ -115,6 +119,21 @@ func (r *record) enqueue(ctx context.Context, run func(core.GroupState) (any, er
 				r.rt.forget(r)
 			}
 			r.mu.Unlock()
+			return nil, err
+		}
+	} else if r.rt.opts.StillOwns != nil {
+		if err := r.rt.opts.StillOwns(r.id); err != nil {
+			// Ownership moved while this group was active. No turn
+			// runs here again: the new owner activates its own, and
+			// two activations of one group are what the runtime
+			// exists to prevent. Released outside the lock, because
+			// eviction waits for the goroutine, and once.
+			a := r.act
+			r.mu.Unlock()
+			r.rt.refusedActivations.Add(1)
+			if a.retiring.CompareAndSwap(false, true) {
+				go r.evict()
+			}
 			return nil, err
 		}
 	}

@@ -54,6 +54,20 @@ type Options struct {
 	// not call back into the runtime.
 	CanActivate func(groupID string) error
 
+	// StillOwns is consulted before every turn of a group that is already
+	// active, and refuses one this node no longer owns. Ownership moves
+	// while a group is active — a peer joins and outranks this node, the
+	// routine case of a rolling restart — and CanActivate, which runs only
+	// at activation, never sees it. Refused, the activation is released,
+	// keeping its state, so that the group's new owner holds the only one.
+	//
+	// Ownership alone, not CanActivate's activation delay: a group this node
+	// is already running is not one it has just acquired.
+	//
+	// It runs while the group's lock is held, so it must not block and must
+	// not call back into the runtime.
+	StillOwns func(groupID string) error
+
 	// OnEvent receives lifecycle events. It is called on the group's turn
 	// goroutine and must not block: anything slow belongs on the far side
 	// of a channel the handler owns.

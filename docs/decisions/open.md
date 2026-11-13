@@ -1642,3 +1642,43 @@ they differ. Its count after a rolling restart on kind (tens of thousands) is
 therefore not evidence of two owners. It needs a definition that does not rely
 on epochs being comparable; until then the counter is noise after churn, and
 docs that call it "deserves investigation whenever it is non-zero" overstate it.
+
+## 51. An active group outlived its ownership — found in M16, resolved
+
+**Found** writing M16's epoch-lineage test, whose probe for "who owns this key"
+activates a group: after the key's owner returned, two nodes claimed it. The
+runtime asked the ownership guard only when a group *activated*. Ownership moves
+under an active group whenever a peer joins and outranks this node, and the old
+activation went on serving — the node's own `Keys`, `Items`, `Get`, `Set` and
+`Delete`, which docs/api.md says return `ErrNotOwner` off the owner, and any
+`Call` a peer with a lagging view forwarded — while the new owner activated its
+own. That is two activations of one group without any partition, which decision
+2 exists to rule out.
+
+**Resolved:** every turn of an active group checks ownership first
+(`actor.Options.StillOwns`, the guard's `Owns`: one ranking, no activation
+delay, because a group already running here was not just acquired). A moved
+group answers `ErrNotOwner` and its activation is released once, keeping state
+and timers, as any deactivation does. `TestAnActiveGroupStopsServingWhenOwnershipMoves`.
+
+**Not resolved here:** the moved group's *state* stays on the old owner, which no
+longer serves it; the new owner starts from its own record. Group state is not
+replicated — design §5 defers persisting it — so this is the documented loss on
+a move, made visible rather than served from the wrong node.
+
+## 52. A dial failure is reported as possibly applied — found in M16, decided
+
+**Found** by M16's shop: some checkouts after a kill -9 failed with "Error while
+dialing … connection refused", which `fromStatus` maps to `ErrNodeUnreachable`,
+which an application must treat as "may have been applied" for `Increment`,
+`SetIfAbsent` and `CompareAndSwap`. A refused dial sent nothing, so those were
+safe to retry.
+
+**Decided: no change.** gRPC reports both "never sent" and "sent, then the
+connection broke" as `Unavailable`; the only difference is message text from
+inside grpc-go, which is not an interface and can change in any release. A new
+"not sent" sentinel resting on it would be right until the day it was wrong,
+and wrong means an application applying a non-idempotent write twice. The
+ambiguous answer is the safe one. Revisit if gRPC exposes the distinction, or
+if the transport takes over dialing itself so that a failed dial never reaches
+`Invoke`.

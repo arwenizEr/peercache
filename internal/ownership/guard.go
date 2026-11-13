@@ -143,6 +143,18 @@ func (g *Guard) OnUpdate(fn func()) {
 // ActivationDelay returns the configured delay.
 func (g *Guard) ActivationDelay() time.Duration { return g.activationDelay }
 
+// Owns reports whether this node owns the group under its current view: nil,
+// or [core.ErrNotOwner]. Unlike [Guard.CanActivate] it applies no activation
+// delay, because it answers for a group already running here.
+func (g *Guard) Owns(groupKey string) error {
+	snap := g.table.current.Load()
+	current, ok := owner(snap, groupKey)
+	if !ok || current.ID != g.self.ID {
+		return fmt.Errorf("ownership: group %q now belongs to %s: %w", groupKey, current.ID, core.ErrNotOwner)
+	}
+	return nil
+}
+
 // CanActivate reports whether this node may activate the group now, under this
 // node's own current view.
 //

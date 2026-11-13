@@ -113,6 +113,14 @@ change the public API.
   restart on kind, one pod put 10.5 million copies back to rehome 97,000, at a
   core and a quarter. A round now takes only what the queue has room for. Found
   by M16.
+
+- A group already active on a node that then lost it — a peer joined and
+  outranks it, as in every rolling restart — kept serving that node's `Get`,
+  `Set`, `Delete`, `Keys` and `Items`, and any `Call` a lagging peer forwarded
+  to it, while the new owner activated a second copy. Ownership was checked only
+  at activation. It is now checked before every turn; a group that has moved
+  answers `ErrNotOwner` and its activation is released, keeping its state.
+  Found by M16.
 - `docs/api.md` told a restarted node to call `CatchUp` "after the readiness
   gate", but `Ready()` stays false until `CatchUp` has run, so an application
   following it never became ready. The order is join, settle, `CatchUp`, ready.

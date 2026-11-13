@@ -2436,6 +2436,14 @@ mutate "reconciliation drains more orphans than the queue holds" \
   'c.replicas.DrainUpTo(name, -1, func' \
   'TestAHandOffBacklogLargerThanItsQueueIsNotChurned$' ./tests
 
+# --- open question 51 (found by M16) ---
+
+mutate "an active group is not rechecked for ownership" \
+  internal/actor/record.go \
+  '} else if r.rt.opts.StillOwns != nil {' \
+  '} else if false {' \
+  'TestAnActiveGroupStopsServingWhenOwnershipMoves$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
