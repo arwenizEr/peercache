@@ -2214,8 +2214,11 @@ matter most were broken by hand instead, and both were caught:
 | a listing stops after its first page | `TestTheStoreMeetsTheContract` (the fake pages two keys at a time) | caught |
 
 The first is the dangerous one: an access-denied read as a miss would make a
-restore treat stored keys as absent. Teaching the script to run nested modules
-would make this repeatable; it is not done yet.
+restore treat stored keys as absent.
+
+**Since then the script reaches nested modules.** An entry whose package is
+written `dir::pkg` runs `go test -C dir pkg`, inside that module's own
+`go.mod`; both mutations above are now ordinary entries and run with the rest.
 
 ### The full audit after M14b: 236, eleven repointed, one re-aimed
 
