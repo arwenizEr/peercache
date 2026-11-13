@@ -2202,6 +2202,21 @@ check of every entry's text against its file found five that M9 and the coverage
 sweep had silently turned into skips; they were repointed first. The drain entry
 recorded above as flaky was caught.
 
+### The full audit after M13: 200 of 200
+
+Every entry run end to end after M13, on Machine A, in 18 m 5 s: **caught: 197,
+vacuous: 0, skipped: 3**. The three skips were entries whose code M13 had
+moved — the L1 tier's stale check became a variable so that a floor could admit
+its own stamp, and the metric count in docs/api.md went from 46 to 50. Each was
+repointed at the new text and run on its own: **caught: 3, vacuous: 0,
+skipped: 0, tree clean**. 200 entries, 200 caught.
+
+The same milestone's race gate failed before it passed, and not on M13's code:
+`internal/actor` let an internal "look again" sentinel escape `Do` when two
+concurrent refusals removed a record twice (open question 47). It fails about
+one run in a hundred in isolation, and this gate is the first place it was
+seen.
+
 ### The documented way to build a cluster did not compile outside this module
 
 The coverage sweep's remaining zeros were mostly trivial — no-op logger methods,
