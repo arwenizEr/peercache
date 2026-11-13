@@ -811,6 +811,13 @@ what is written after it comes back — while the ownership ranking gives it bac
 its keys immediately. It then answers `ErrNotFound` for data that exists
 elsewhere in the cluster.
 
+It pulls two things from every peer: the keys that peer owns and this node
+replicates, and the peer's replica copies of keys this node owns. The second
+matters when a node comes back faster than its peers' failure detector — a
+killed pod restarted by its kubelet in a second or two. Nobody declared it dead,
+so nobody was promoted in its place, and the newest copies of what it owns are
+replicas on its peers.
+
 It is explicit rather than automatic because a starting node is usually also
 serving traffic, and a bulk transfer at that moment competes with the requests
 it was started to answer. The application decides when it can afford it.
