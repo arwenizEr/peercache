@@ -2,6 +2,8 @@ package peercache_test
 
 import (
 	"context"
+	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -187,6 +189,80 @@ func BenchmarkPersistentSet(b *testing.B) {
 			b.Fatalf("Set: %v", err)
 		}
 	}
+}
+
+// BenchmarkPersistLossWindow measures decision 0029's loss window on a real
+// disk: the time from a Set returning to its record being durable in a segment
+// file — fsynced, renamed into place, directory synced. A crash inside that
+// window loses the write. Run it with -benchtime Nx; each iteration is one
+// write and its wait, so ns/op is the mean window, and p50_ms, p99_ms and
+// max_ms are its distribution.
+func BenchmarkPersistLossWindow(b *testing.B) {
+	store, err := persist.Dir(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	c := benchCache(b)
+	ns := c.Namespace("bench", peercache.WithPersistence(store))
+	ctx := context.Background()
+	clk := clock.Real()
+	value := make([]byte, 64)
+	windows := make([]time.Duration, 0, b.N)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		before := c.Stats().PersistFlushes
+		if err := ns.Set(ctx, key(i), value, 0); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+		acked := clk.Now()
+		// The flush counter moves only once every segment of the flush is
+		// durable, so this is acknowledged-to-durable, not to-enqueued.
+		for c.Stats().PersistFlushes == before {
+			runtime.Gosched()
+		}
+		windows = append(windows, clk.Since(acked))
+	}
+	b.StopTimer()
+
+	sort.Slice(windows, func(i, j int) bool { return windows[i] < windows[j] })
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	b.ReportMetric(ms(windows[len(windows)/2]), "p50_ms")
+	b.ReportMetric(ms(windows[len(windows)*99/100]), "p99_ms")
+	b.ReportMetric(ms(windows[len(windows)-1]), "max_ms")
+}
+
+// BenchmarkPersistFlushSpread is one flush of writes spread over the whole
+// keyspace, so that it touches every partition and writes one segment per
+// partition: the flush a loaded node actually does. ns/op is that flush,
+// write acknowledged to every segment durable.
+func BenchmarkPersistFlushSpread(b *testing.B) {
+	store, err := persist.Dir(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	c := benchCache(b)
+	ns := c.Namespace("bench", peercache.WithPersistence(store))
+	ctx := context.Background()
+	value := make([]byte, 64)
+	const keys = 4096 // about 16 per partition
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// The previous iteration ended with nothing pending and its flush
+		// counted, so the next flush holds exactly this batch.
+		before := c.Stats().PersistFlushes
+		for k := 0; k < keys; k++ {
+			if err := ns.Set(ctx, key(i*keys+k), value, 0); err != nil {
+				b.Fatalf("Set: %v", err)
+			}
+		}
+		for c.Stats().PersistFlushes == before || c.Stats().PersistPending != 0 {
+			runtime.Gosched()
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(c.Stats().PersistRecordsWritten)/float64(b.N), "records/flush")
 }
 
 // BenchmarkNamespaceIncrement is decision 0027's cost criterion: a local

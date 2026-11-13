@@ -1002,8 +1002,34 @@ the record; the bytes are mostly the dirty map, which is replaced by a fresh one
 at every flush and regrown, amortised over the writes between. Reusing it is
 the obvious next step and is not done yet.
 
-The loss window — write acknowledged to record durable — belongs to a real
-backend and is measured with `persist.Dir` in M14c.
+### M14c — the loss window on `persist.Dir`
+
+Machine A, an NVMe SSD under NTFS. `go test . -run '^$' -bench 'BenchmarkPersistLossWindow' -benchtime 200x -count 3`
+and `go test ./persist -run '^$' -bench BenchmarkDirPut -benchmem -count 5`.
+
+| | p50 | p99 | max |
+|---|---:|---:|---:|
+| write acknowledged → durable on disk, worst phase | 98.6 ms | 102–110 ms | 139 ms |
+
+Each iteration writes just after a flush finished, so it waits nearly a whole
+interval: this is the bound, not the average. A write at a random moment waits
+half an interval on average, plus the write. The I/O term:
+
+| | ns/op | MB/s |
+|---|---:|---:|
+| `BenchmarkDirPut`, 4 KiB, one at a time | ~2.9 ms | 1.4 |
+| `BenchmarkDirPut`, 256 KiB, one at a time | ~3.1 ms | 84 |
+| `BenchmarkDirPutParallel`, 4 KiB, 20 goroutines | ~1.1 ms per Put | — |
+
+A durable write is about 3 ms, almost all of it the fsync, and they overlap only
+about threefold on this disk. That decided two things. A flush writes one
+object per partition it touches, and written one after another, a flush
+touching all of 256 partitions took **0.9–1.1 s** (`BenchmarkPersistFlushSpread`,
+4,096 keys) — ten times the interval it is meant to fit inside. Written sixteen
+at a time it took 40–600 ms; with the partition count cut to 64, about **5 ms**
+(16 partitions: 1.5 ms; not chosen, because each restore would read four times
+as much). Both changes are in M14c, and open question 48 records what the same
+arithmetic costs on an object store.
 
 ## What the test suite itself costs
 

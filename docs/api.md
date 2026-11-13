@@ -324,7 +324,20 @@ it (`docs/decisions/0029-persistence-as-a-segment-log.md`):
   serves the partition from memory and retries a second later.
 
 Backends implement `persist.BlobStore`, four methods with an atomic `Put`, and
-run the contract in `persist/persisttest`. `persist.Memory` is for tests.
+run the contract in `persist/persisttest`. Two ship in the core module:
+
+- `persist.Dir(root)` keeps each object as a file: written to a temporary file,
+  fsynced, renamed into place, directory fsynced. A crash at any point leaves
+  the old object or the new one, and its leftovers are cleaned up when the
+  directory is next opened. It is one process's store; for a key to survive
+  the loss of its node, every node must reach the same files — a shared volume.
+  On Windows a directory cannot be fsynced, so whether a rename survives a power
+  loss at once is the file system's journal's guarantee, not this package's.
+- `persist.Memory()` survives nothing and is for tests.
+
+The loss window on `persist.Dir`, measured on Machine A: a write is durable at
+most one flush interval plus one durable write after it is acknowledged — p99
+105 ms, worst 139 ms, against the 100 ms interval.
 `PersistPending`, `PersistFlushes`, `PersistRecordsWritten`, `PersistFailures`,
 `PersistRestored`, `PersistRestoreFailures`, `PersistCompactions` and
 `PersistCompactFailures` report it.

@@ -25,7 +25,13 @@ const (
 	// persistPartitions is how many partitions a persistent namespace's keys
 	// are spread over. Fixed: a key's partition is part of where its records
 	// live, so changing it would orphan every record already written.
-	persistPartitions = 256
+	//
+	// 64, not the 256 decision 0029 first said. A flush writes one durable
+	// object per partition it touches, and durable writes overlap only about
+	// threefold on Machine A's disk: a flush touching all of 256 took 40 to
+	// 600 ms, past its own 100 ms interval, where 64 takes about 5. A restore
+	// still reads a sixty-fourth of the namespace.
+	persistPartitions = 64
 	// persistFlushInterval is the loss window's main term: a write is
 	// in memory only until the next flush.
 	persistFlushInterval = 100 * time.Millisecond
@@ -44,6 +50,11 @@ const (
 	// written. A segment from a slow writer can arrive late with an older
 	// write of the key; while the tombstone is kept it still wins.
 	persistTombstoneGrace = time.Hour
+	// persistFlushParallel is how many segments one flush writes at once.
+	// Each is an fsync on a disk or a request to an object store, so they
+	// overlap well; the bound keeps one flush from opening a connection or
+	// a file per partition at once.
+	persistFlushParallel = 16
 	// persistFlushTimeout bounds one flush. A store that does not answer
 	// must not hold the flusher, and the records stay pending for the next.
 	persistFlushTimeout = 10 * time.Second
@@ -233,25 +244,44 @@ func (p *persister) flush(ctx context.Context) error {
 		byPartition[part] = append(byPartition[part], *r)
 	}
 
-	var failed error
+	// The segments are independent objects, so they are written side by
+	// side. One after another, a flush touching every partition was one
+	// fsync per partition in a row — with 256 partitions, nearly a second
+	// on Machine A — and the loss window under load was ten times the flush
+	// interval it claims.
+	var (
+		failed  error
+		errMu   sync.Mutex
+		wg      sync.WaitGroup
+		workers = make(chan struct{}, persistFlushParallel)
+	)
 	for part, records := range byPartition {
-		sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
-		var maxOrder uint64
-		for i := range records {
-			if records[i].Order > maxOrder {
-				maxOrder = records[i].Order
+		wg.Add(1)
+		workers <- struct{}{}
+		go func(part int, records []segment.Record) {
+			defer wg.Done()
+			defer func() { <-workers }()
+			sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+			var maxOrder uint64
+			for i := range records {
+				if records[i].Order > maxOrder {
+					maxOrder = records[i].Order
+				}
 			}
-		}
-		name := segmentName(p.ns.name, part, maxOrder, p.ns.cache.self().ID)
-		data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
-		if err := p.store.Put(ctx, name, data); err != nil {
-			p.failures.Add(1)
-			failed = errors.Join(failed, fmt.Errorf("peercache: persisting %s: %w", name, err))
-			p.restorePending(records)
-			continue
-		}
-		p.written.Add(int64(len(records)))
+			name := segmentName(p.ns.name, part, maxOrder, p.ns.cache.self().ID)
+			data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+			if err := p.store.Put(ctx, name, data); err != nil {
+				p.failures.Add(1)
+				errMu.Lock()
+				failed = errors.Join(failed, fmt.Errorf("peercache: persisting %s: %w", name, err))
+				errMu.Unlock()
+				p.restorePending(records)
+				return
+			}
+			p.written.Add(int64(len(records)))
+		}(part, records)
 	}
+	wg.Wait()
 	p.flushes.Add(1)
 	return failed
 }

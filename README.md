@@ -221,9 +221,9 @@ everything else that follows.
   and streams state. Every namespace must therefore either be reconstructible
   from a loader or tolerate loss — unless it is opened with `WithPersistence`,
   which writes it behind to a blob store and loses at most the last 100 ms
-  flush interval (`docs/decisions/0029-persistence-as-a-segment-log.md`). The
-  disk and object-storage backends are still being built; `persist.Memory`
-  ships, for tests.
+  flush interval (`docs/decisions/0029-persistence-as-a-segment-log.md`).
+  `persist.Dir` keeps it on a local or shared disk, measured at p99 105 ms from
+  acknowledgement to durable; an object-storage backend is still being built.
 - **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
   1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
   acknowledged inside it exists on one node only. `WithSyncReplication()` closes

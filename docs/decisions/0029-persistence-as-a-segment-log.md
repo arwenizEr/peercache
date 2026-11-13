@@ -1,6 +1,6 @@
 # 0029 — Opt-in persistence as a segment log over a blob store
 
-**Status:** accepted; M14b built, M14c and M14d not yet. Supersedes 0026.
+**Status:** accepted; M14b and M14c built, M14d not yet. Supersedes 0026.
 **Milestone:** M14, in four parts (below).
 **Changes:** design principle 4 (docs/design.md, CLAUDE.md). It said
 "Durability: none… nothing is written to disk in v1". On 2026-11-13 the project
@@ -67,7 +67,9 @@ A **record** is one key's state as one write left it:
 namespace, key, value | tombstone, expiresAt (absolute, Unix ns), order, writer
 ```
 
-A namespace is split into a fixed number of **partitions** (default 256, chosen
+A namespace is split into a fixed number of **partitions** (64 — first 256, cut
+when M14c measured a flush of 256 durable objects outrunning its own interval;
+chosen
 at first use and recorded in a manifest object, never changed after; a node
 configured with a different count reports `ErrInvalidOption` rather than
 writing into the wrong layout). A key's
