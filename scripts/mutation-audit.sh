@@ -2095,6 +2095,16 @@ mutate "a promoted replica's order is not carried" \
   '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
   'TestAPromotedReplicasWriteOutranksItsOldOwner$' ./tests
 
+# --- persistence: shedding (decision 0029) ---
+
+mutate "a shed persistent key is not marked for restore" \
+  pressure.go \
+  '				if ns.persister != nil {
+					ns.persister.noteShed(key)
+				}' \
+  '				_ = key' \
+  'TestAShedKeyIsRestoredNotLost$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

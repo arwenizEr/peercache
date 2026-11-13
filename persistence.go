@@ -62,6 +62,12 @@ type persister struct {
 	mu      sync.Mutex
 	pending map[string]*segment.Record
 	bytes   int
+	// shed holds keys the memory budget dropped from the owned store. Their
+	// records are still in storage, or still pending here; the first access
+	// to one restores that key alone (see restoreShed). Restoring the whole
+	// partition instead would bring every shed key back at once and undo
+	// the shedding that made room. Bounded by the owned keys shed.
+	shed map[string]struct{}
 
 	kick chan struct{}
 	done chan struct{}
@@ -86,6 +92,7 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 		store:   store,
 		clk:     ns.cache.opts.Clock,
 		pending: map[string]*segment.Record{},
+		shed:    map[string]struct{}{},
 		kick:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 	}
@@ -115,6 +122,12 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	}
 
 	p.mu.Lock()
+	// The shed mark is deliberately left alone. Clearing it here, as the
+	// first version did, lost keys: a write's own memory accounting can
+	// shed the key it just stored, before the write records it, and the
+	// cleared mark then meant it was never restored. Restoring a key that
+	// was written since costs a read and changes nothing, because the
+	// merge keeps the newer value in memory.
 	if cur, ok := p.pending[key]; ok {
 		if !r.Newer(cur) {
 			// An older write recorded late — a promotion racing a
@@ -130,10 +143,29 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	p.mu.Unlock()
 
 	if full {
-		select {
-		case p.kick <- struct{}{}:
-		default:
-		}
+		p.flushSoon()
+	}
+}
+
+// noteShed records that the memory budget dropped key from the owned store.
+func (p *persister) noteShed(key string) {
+	p.mu.Lock()
+	p.shed[key] = struct{}{}
+	p.mu.Unlock()
+}
+
+// pendingBytes is what the dirty map holds, for the memory budget.
+func (p *persister) pendingBytes() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return int64(p.bytes)
+}
+
+// flushSoon asks the flusher to run now rather than at its next tick.
+func (p *persister) flushSoon() {
+	select {
+	case p.kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -283,6 +315,13 @@ type partitionState struct {
 // the restore. A namespace that is never touched after a membership change is
 // never re-read.
 func (p *persister) await(ctx context.Context, key string) error {
+	if err := p.awaitPartition(ctx, key); err != nil {
+		return err
+	}
+	return p.restoreShed(ctx, key)
+}
+
+func (p *persister) awaitPartition(ctx context.Context, key string) error {
 	part := persistPartition(p.ns.groupKeyFor(key))
 	for {
 		want := p.ns.cache.restoreGen.Load() + 1
@@ -338,6 +377,11 @@ func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
 // newest snapshot, every segment it does not name, newest record per key, kept
 // only for keys this node owns and not expired.
 func (p *persister) restore(ctx context.Context, part int) error {
+	// Held across the read and the overlay of pending records: a flush in
+	// between would move a record out of pending and into storage after we
+	// read storage, and the restore would see it in neither place.
+	p.flushMu.Lock()
+	defer p.flushMu.Unlock()
 	prefix := partitionPrefix(p.ns.name, part)
 	// A compactor can delete a segment between our List and our Get. The
 	// snapshot that covers it is then newer than the one we chose, so
@@ -352,6 +396,18 @@ func (p *persister) restore(ctx context.Context, part int) error {
 		if err != nil {
 			return err
 		}
+		// A record still pending here is newer than storage for its key
+		// whenever it exists: this node wrote it and has not flushed it.
+		p.mu.Lock()
+		for key, r := range p.pending {
+			if persistPartition(p.ns.groupKeyFor(key)) != part {
+				continue
+			}
+			if cur, ok := newest[key]; !ok || r.Newer(cur) {
+				newest[key] = r
+			}
+		}
+		p.mu.Unlock()
 		p.apply(newest)
 		return nil
 	}
@@ -453,4 +509,46 @@ func (p *persister) owns(key string) bool {
 	}
 	owner, _, err := c.guard.Table().Owner(p.ns.groupKeyFor(key))
 	return err == nil && owner.ID == c.self().ID
+}
+
+// restoreShed brings back one key the memory budget shed, on its first access.
+//
+// It reads the key's partition and merges that key alone, preferring a record
+// still pending here — the newest write may not have been flushed when the key
+// was shed. A failure leaves the key marked, counted, and served from memory
+// as a miss; the next access tries again. Two accesses racing may both read
+// the partition; the merge makes that harmless.
+func (p *persister) restoreShed(ctx context.Context, key string) error {
+	p.mu.Lock()
+	_, shed := p.shed[key]
+	p.mu.Unlock()
+	if !shed {
+		return nil
+	}
+
+	// See restore for why a flush must not run between the read and the
+	// look at pending.
+	p.flushMu.Lock()
+	defer p.flushMu.Unlock()
+	newest, err := p.read(ctx, partitionPrefix(p.ns.name, persistPartition(p.ns.groupKeyFor(key))))
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		p.restoreFailures.Add(1)
+		return nil
+	}
+
+	p.mu.Lock()
+	delete(p.shed, key)
+	r := newest[key]
+	if pending, ok := p.pending[key]; ok && (r == nil || pending.Newer(r)) {
+		r = pending
+	}
+	p.mu.Unlock()
+
+	if r != nil {
+		p.apply(map[string]*segment.Record{key: r})
+	}
+	return nil
 }

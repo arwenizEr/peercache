@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -192,5 +193,53 @@ func TestACorruptSegmentFailsTheRestore(t *testing.T) {
 	}
 	if got := c.Stats().PersistRestoreFailures; got != 1 {
 		t.Fatalf("PersistRestoreFailures = %d; a corrupt segment must fail the restore", got)
+	}
+}
+
+// TestAShedKeyIsRestoredNotLost: with persistence, the memory budget shedding
+// an owned key is a cache miss, not a data loss. Each key is written twice —
+// once flushed, once possibly still pending when it is shed — and every one
+// reads back at its newest value.
+func TestAShedKeyIsRestoredNotLost(t *testing.T) {
+	const (
+		budget = 192 << 10
+		value  = 2 << 10
+		keys   = 300 // 600 KiB of values against a 192 KiB budget
+	)
+	store := persist.Memory()
+	c, fc := newCache(t, peercache.WithMemoryBudget(budget))
+	ns := c.Namespace("shed", peercache.WithPersistence(store))
+	ctx := context.Background()
+	val := func(gen string, i int) []byte {
+		b := make([]byte, value)
+		copy(b, fmt.Sprintf("%s-%d", gen, i))
+		return b
+	}
+
+	for i := 0; i < keys; i++ {
+		if err := ns.Set(ctx, fmt.Sprintf("k%d", i), val("v1", i), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fc.Advance(flushInterval)
+	waitFor(t, "the first flush", func() bool { return c.Stats().PersistRecordsWritten >= keys })
+	for i := 0; i < keys; i++ {
+		if err := ns.Set(ctx, fmt.Sprintf("k%d", i), val("v2", i), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.Stats().ShedOwned == 0 {
+		t.Fatalf("nothing owned was shed; the test would prove nothing (used %d of %d)",
+			c.Stats().MemoryUsed, budget)
+	}
+
+	for i := 0; i < keys; i++ {
+		got, err := ns.Get(ctx, fmt.Sprintf("k%d", i))
+		if err != nil {
+			t.Fatalf("k%d after shedding: %v; a shed key in a persistent namespace must come back", i, err)
+		}
+		if want := val("v2", i); string(got) != string(want) {
+			t.Fatalf("k%d came back as %q, want its newest write", i, got[:8])
+		}
 	}
 }
