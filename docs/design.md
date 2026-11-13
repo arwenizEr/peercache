@@ -565,8 +565,8 @@ interface, `persist.Memory`, the order carried through every write path, flush,
 restore and compaction; **M14c** `persist.Dir` and the measured loss window;
 **M14d** `persist/s3` as a separate module.
 
-M14b is built. M14c's measured loss window and M14d's module are criteria of
-their own parts and are added here when those are.
+M14b and M14c are built. M14d's module is a criterion of its own part and is
+added here when it is.
 
 **Acceptance:** killing every holder of a key restores it on its new owner at
 its last flushed value; a whole cluster stopped and started on the same store
@@ -577,7 +577,10 @@ deletes nothing; a promoted replica's next write outranks everything its dead
 owner flushed; a shed owned key is restored on its next access; an unavailable
 store fails no write, keeps one pending record per key, and loses nothing once
 it returns, and a restore that cannot read it serves memory and retries; a
-namespace without persistence performs within noise of before, benchmarked.
+namespace without persistence performs within noise of before, benchmarked;
+`persist.Dir` meets the blob-store contract, writes data, then renames, then
+syncs the directory, and a Put interrupted at any step leaves a whole object;
+the loss window on it is measured.
 
 ---
 

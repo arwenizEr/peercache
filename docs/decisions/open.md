@@ -1523,3 +1523,26 @@ thousand runs under `-race` pass where two hundred failed twice. There is no
 mutation entry: reverting to a single retry fails one run in a hundred, and an
 audit entry that is caught by chance is the vacuous kind the audit exists to
 expose.
+
+---
+
+## 48. Objects per flush, and what an object store charges for them — found in M14c, open
+
+A flush writes one object per partition it touches. M14c measured what that
+costs on a disk: durable writes overlap only about threefold on Machine A, so a
+flush touching all of 256 partitions took 40–600 ms, past its own 100 ms
+interval. The partition count was cut to 64 (about 5 ms), and a flush's segments
+are now written sixteen at a time instead of one after another.
+
+On an object store the same arithmetic is a bill. A loaded node touching every
+partition each flush makes 64 PUTs per flush, ten flushes a second: 640 requests
+a second per node, which at S3's published price per thousand PUTs is real money
+for a cache. Fewer partitions trade restore granularity; a longer interval
+trades the loss window.
+
+**Picked for now:** nothing, because the disk backend does not have the problem.
+**Must be decided before M14d ships:** a per-namespace flush interval (an object
+store wants seconds, not milliseconds), and possibly one object per flush holding
+every partition, indexed, instead of one per partition. Measure the PUT rate of a
+loaded node before choosing.
+

@@ -25,6 +25,9 @@ change the public API.
   (the `BlobStore` interface, `Memory`, and the `persisttest` contract suite);
   eight `Persist*` stats and metric series. Design principle 4 changed to allow
   it. Decision 0029, superseding 0026.
+- `persist.Dir`, a durable file-system backend: temporary file, fsync, rename,
+  directory fsync; crash leftovers cleaned on open; names encoded so any
+  namespace is a legal file name on every platform.
 
 ### Changed
 

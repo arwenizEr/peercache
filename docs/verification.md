@@ -2401,7 +2401,7 @@ level up.
 
 docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to fifty-six. Each one, and the named test that would fail if it regressed:
+testable claims they come to fifty-nine. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2461,8 +2461,11 @@ testable claims they come to fifty-six. Each one, and the named test that would 
 | M14 | a shed owned key is restored on its next access | `TestAShedKeyIsRestoredNotLost` |
 | M14 | an unavailable store fails no write and loses nothing; a restore that cannot read it degrades to memory | `TestAnUnavailableStoreLosesNothing`, `TestAnUnavailableStoreDegradesToMemory` |
 | M14 | a namespace without persistence within noise of before, measured | `BenchmarkNamespaceSet`, `BenchmarkNamespaceGet`, `BenchmarkPersistentSet`, recorded in docs/benchmarks.md |
+| M14 | `persist.Dir` meets the blob-store contract and writes data, renames, then syncs the directory | `TestDirMeetsTheContract`, `TestPutIsWriteSyncRenameSyncDir` |
+| M14 | a Dir Put interrupted at any step leaves a whole object; a crash's leftovers are invisible and cleaned up | `TestAnInterruptedPutLeavesTheOldObjectOrTheNew`, `TestACrashsLeftoversAreInvisibleAndCleanedUp` |
+| M14 | the loss window on `persist.Dir`, measured | `BenchmarkPersistLossWindow`, `BenchmarkPersistFlushSpread`, `BenchmarkDirPut`, recorded in docs/benchmarks.md |
 
-All sixty-three names in the table were verified to exist before it was
+All sixty-seven names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

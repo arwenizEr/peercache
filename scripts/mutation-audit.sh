@@ -2140,6 +2140,65 @@ mutate "a promoted replica's order is not carried" \
   '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
   'TestARestoreDoesNotUndoAPromotedWrite$' ./tests
 
+# --- persist.Dir (decision 0029, M14c) ---
+
+mutate "Dir renames before the data is written" \
+  persist/dir.go \
+  '	lock := d.lockFor(target)
+	lock.Lock()
+	err = d.fs.Rename(tmp, target)
+	lock.Unlock()
+	if err != nil {
+		_ = d.fs.Remove(tmp)
+		return fmt.Errorf("persist: placing %s: %w", name, err)
+	}
+	if err := d.fs.SyncDir(parent); err != nil {' \
+  '	if err := d.fs.SyncDir(parent); err != nil {
+		return err
+	}
+	lock := d.lockFor(target)
+	lock.Lock()
+	err = d.fs.Rename(tmp, target)
+	lock.Unlock()
+	if err != nil {
+		_ = d.fs.Remove(tmp)
+		return fmt.Errorf("persist: placing %s: %w", name, err)
+	}
+	if err := error(nil); err != nil {' \
+  'TestPutIsWriteSyncRenameSyncDir$' ./persist/
+
+mutate "Dir lists a crash's temporary files" \
+  persist/dir.go \
+  '		if strings.Contains(rel, tempMarker) {
+			return
+		}' \
+  '		if false {
+			return
+		}' \
+  'TestACrashsLeftoversAreInvisibleAndCleanedUp$' ./persist/
+
+mutate "Dir never removes a crash's temporary files" \
+  persist/dir.go \
+  '	if err := d.removeTemps(); err != nil {
+		return nil, err
+	}' \
+  '' \
+  'TestACrashsLeftoversAreInvisibleAndCleanedUp$' ./persist/
+
+mutate "Dir accepts names that escape its root" \
+  persist/dir.go \
+  '		if part == "" || part == "." || part == ".." {' \
+  '		if part == "" {' \
+  'TestNamesThatEscapeAreRefused$' ./persist/
+
+mutate "Dir lists files it did not write" \
+  persist/dir.go \
+  '			if !ok {
+				return // not a file this store wrote
+			}' \
+  '			_ = ok' \
+  'TestFilesNotWrittenByTheStoreAreIgnored$' ./persist/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
