@@ -9,7 +9,7 @@
 //	PUT  /product/{id}?price=N   update a product (staleness is measured on this)
 //	POST /cart/{user}/add?item=I a group per user, Call
 //	GET  /cart/{user}
-//	POST /checkout/{order}?item=I  idempotent order, stock by Increment
+//	POST /checkout/{order}?item=I  idempotent order, stock by Increment; see checkout
 //	GET  /order/{order}
 //	GET  /stock/{item}
 //	GET  /metrics, /debug/peercache/, /healthz
@@ -303,7 +303,7 @@ func (s *shop) limited(h http.HandlerFunc) http.HandlerFunc {
 		}
 		window := time.Now().Unix() / 60
 		n, err := s.limit.Increment(r.Context(), fmt.Sprintf("%s:%d", user, window), 1, 2*time.Minute)
-		if err != nil {
+		if classify(err) != applied {
 			fail(w, err)
 			return
 		}
@@ -366,39 +366,168 @@ func (s *shop) cartGet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(v)
 }
 
+// Order records carry a state, because the order key and the stock key are two
+// keys and there is no transaction across them — by design there are none. So
+// an order cannot simply exist or not: it is pending from the moment it is
+// claimed until the stock decrement is known to have happened, and only then
+// placed. A pending order whose decrement is unknown stays pending: deleting it
+// would let a retry decrement again, and placing it would claim a decrement
+// that may not have happened.
+const (
+	statePending = "pending"
+	statePlaced  = "placed"
+	stateRefused = "refused"
+)
+
+// outcome sorts a write's error the way an application must before acting on
+// a non-idempotent operation.
+type outcome int
+
+const (
+	applied outcome = iota // nil, or ErrUnderReplicated: the write happened
+	refused                // answered before anything was applied
+	unknown                // anything else: it may have happened
+)
+
+func classify(err error) outcome {
+	switch {
+	case err == nil, errors.Is(err, peercache.ErrUnderReplicated):
+		return applied
+	case errors.Is(err, peercache.ErrNotOwner), errors.Is(err, peercache.ErrStaleEpoch),
+		errors.Is(err, peercache.ErrActivationPending), errors.Is(err, peercache.ErrGroupOverloaded),
+		errors.Is(err, peercache.ErrClosed):
+		return refused
+	default:
+		return unknown
+	}
+}
+
 // checkout places one order for one unit of item. The order ID is the client's
-// idempotency key: a retry finds the order and decrements nothing. There is no
-// transaction across the order and the stock key — by design there are none —
-// so a process dying between the two leaves an order without a decrement; the
-// checker counts that application window separately from library guarantees.
+// idempotency key.
+//
+//	201  placed by this request
+//	200  already placed by an earlier attempt
+//	409  out of stock
+//	202  pending: an earlier attempt's decrement is unknown, so this one cannot
+//	     say whether the order went through and must not try again
+//	503  nothing happened that a retry would repeat; ask again
 func (s *shop) checkout(w http.ResponseWriter, r *http.Request) {
 	order, item := r.PathValue("order"), r.URL.Query().Get("item")
 	if item == "" {
 		http.Error(w, "item is required", http.StatusBadRequest)
 		return
 	}
-	created, err := s.orders.SetIfAbsent(r.Context(), order, []byte(item), 0)
-	if err != nil {
+	ctx := r.Context()
+	created, err := s.orders.SetIfAbsent(ctx, order, []byte(statePending+" "+item), 0)
+	switch classify(err) {
+	case refused:
+		fail(w, err)
+		return
+	case unknown:
+		// The claim may or may not exist. A retry finds out: if it was
+		// stored, the retry sees a pending order and answers 202.
 		fail(w, err)
 		return
 	}
 	if !created {
-		w.WriteHeader(http.StatusOK) // a retry: already placed
+		s.existingOrder(w, r, order)
 		return
 	}
-	left, err := s.stock.Increment(r.Context(), item, -1, 0)
-	if err != nil {
-		_ = s.orders.Delete(r.Context(), order)
-		fail(w, err)
+
+	left, err := s.stock.Increment(ctx, item, -1, 0)
+	switch classify(err) {
+	case refused:
+		// Nothing was decremented, so the claim can go and a retry can
+		// start over. If the delete itself is not known to have happened,
+		// the order stays pending: the stock is right, the order is lost
+		// to the client as "pending", and the checker counts it uncertain.
+		if classify(s.orders.Delete(ctx, order)) == applied {
+			fail(w, err)
+			return
+		}
+		pending(w)
+		return
+	case unknown:
+		log.Printf("checkout %s: decrement unknown, order stays pending: %v", order, err)
+		pending(w)
 		return
 	}
+
 	if left < -InitialStock { // stock is stored as a delta from InitialStock
-		_, _ = s.stock.Increment(r.Context(), item, 1, 0)
-		_ = s.orders.Delete(r.Context(), order)
+		if classify(s.retrySet(ctx, func() error {
+			_, err := s.stock.Increment(ctx, item, 1, 0)
+			return err
+		}, false)) != applied {
+			pending(w) // the decrement happened; its undo is unknown
+			return
+		}
+		if s.retrySet(ctx, func() error {
+			return s.orders.Set(ctx, order, []byte(stateRefused+" "+item), 0)
+		}, true) != nil {
+			pending(w)
+			return
+		}
 		http.Error(w, "out of stock", http.StatusConflict)
 		return
 	}
+
+	// The decrement happened. Set is idempotent, so marking the order placed
+	// can be retried until it is known to have landed.
+	if err := s.retrySet(ctx, func() error {
+		return s.orders.Set(ctx, order, []byte(statePlaced+" "+item), 0)
+	}, true); err != nil {
+		log.Printf("checkout %s: decremented, but not yet marked placed: %v", order, err)
+		pending(w)
+		return
+	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// existingOrder answers a retry by the order's recorded state.
+func (s *shop) existingOrder(w http.ResponseWriter, r *http.Request, order string) {
+	v, err := s.orders.Get(r.Context(), order)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	state, _, _ := strings.Cut(string(v), " ")
+	switch state {
+	case statePlaced:
+		w.WriteHeader(http.StatusOK)
+	case stateRefused:
+		http.Error(w, "out of stock", http.StatusConflict)
+	default:
+		pending(w)
+	}
+}
+
+func pending(w http.ResponseWriter) {
+	http.Error(w, "order pending: outcome unknown", http.StatusAccepted)
+}
+
+// retrySet runs write until it is known to have happened, for writes that are
+// safe to repeat. idempotent false runs it once more only after a refusal,
+// which applied nothing. It gives up after a few attempts or with the
+// request's context, and returns the last error.
+func (s *shop) retrySet(ctx context.Context, write func() error, idempotent bool) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		err = write()
+		switch classify(err) {
+		case applied:
+			return nil
+		case unknown:
+			if !idempotent {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(50*(attempt+1)) * time.Millisecond):
+		}
+	}
+	return err
 }
 
 func (s *shop) getOrder(w http.ResponseWriter, r *http.Request) {

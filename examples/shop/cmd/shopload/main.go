@@ -262,6 +262,11 @@ func checkout(st *stats, target, order, item, user string) string {
 			return "acknowledged"
 		case err == nil && code == http.StatusConflict:
 			return "refused"
+		case err == nil && code == http.StatusAccepted:
+			// Pending: the service does not know whether the decrement
+			// happened, and says so instead of guessing. Retrying cannot
+			// learn more.
+			return "uncertain"
 		case err == nil && code == http.StatusTooManyRequests:
 			return "refused-rate" // nothing was attempted
 		}
@@ -329,9 +334,9 @@ func check(args []string) error {
 	perItem := map[string]int{}
 	for _, o := range acked {
 		perItem[o[1]]++
-		code, _, _, err := retryGet(*target + "/order/" + o[0])
-		if err != nil || code != http.StatusOK {
-			lost = append(lost, fmt.Sprintf("%s(%d,%v)", o[0], code, err))
+		code, body, _, err := retryGet(*target + "/order/" + o[0])
+		if err != nil || code != http.StatusOK || !strings.HasPrefix(body, "placed ") {
+			lost = append(lost, fmt.Sprintf("%s(%d,%q,%v)", o[0], code, body, err))
 		}
 	}
 	slack := map[string]int{}
