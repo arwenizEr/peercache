@@ -2361,6 +2361,16 @@ mutate "a failed sync replication is an opaque error" \
 		return fmt.Errorf("%w: %w", ErrUnderReplicated, err)' \
   '		return err' \
   'TestAFailedSyncReplicationReportsTheWriteAsHeld$' ./tests
+mutate "a held write forwards no result" \
+  atomic.go \
+  'return err.Error(), nil' \
+  'return "", err' \
+  'TestAForwardedHeldWriteKeepsItsResult$' ./tests
+mutate "a forwarding node drops the owner report" \
+  atomic.go \
+  'if err != nil || held == "" {' \
+  'if true {' \
+  'TestAForwardedHeldWriteKeepsItsResult$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

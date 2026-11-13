@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/arwenizEr/peercache"
 	"github.com/arwenizEr/peercache/internal/core"
@@ -57,4 +58,73 @@ func TestAFailedSyncReplicationReportsTheWriteAsHeld(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAForwardedHeldWriteKeepsItsResult is the result half of the same report.
+// A write forwarded to its owner whose replication failed has still happened,
+// and its result is the only way the caller can act on it: an Increment's new
+// value decides "out of stock", a SetIfAbsent's true decides "this request
+// created the order". Found by M16: across the hop both came back as zero
+// values beside ErrUnderReplicated, because the owner answered with an error
+// and no body.
+func TestAForwardedHeldWriteKeepsItsResult(t *testing.T) {
+	r := newReplicaFabric(t, replicaFabricConfig{nodes: 3, rf: 2, sync: true})
+	ctx := context.Background()
+
+	// writerFor arranges key's owner to refuse replication to its replica,
+	// and returns the third node, which forwards.
+	writerFor := func(t *testing.T, key string) peercache.Namespace {
+		t.Helper()
+		holders := r.holders(t, key)
+		owner, replica := holders[0], holders[1]
+		r.filters[owner].set(func(to, method string) error {
+			if to == replica && method == transport.MethodReplicate {
+				return fmt.Errorf("test refuses replication: %w", core.ErrNodeUnreachable)
+			}
+			return nil
+		})
+		t.Cleanup(func() { r.filters[owner].set(nil) })
+		for _, id := range r.ids {
+			if id != owner && id != replica {
+				return r.caches[id].Namespace("hot")
+			}
+		}
+		t.Fatal("no third node")
+		return nil
+	}
+
+	t.Run("Increment", func(t *testing.T) {
+		ns := writerFor(t, "count")
+		v, err := ns.Increment(ctx, "count", 7, 0)
+		if !errors.Is(err, peercache.ErrUnderReplicated) || v != 7 {
+			t.Fatalf("forwarded held Increment returned %d, %v; want 7 and ErrUnderReplicated", v, err)
+		}
+	})
+	t.Run("SetIfAbsent", func(t *testing.T) {
+		ns := writerFor(t, "claim")
+		stored, err := ns.SetIfAbsent(ctx, "claim", []byte("x"), 0)
+		if !errors.Is(err, peercache.ErrUnderReplicated) || !stored {
+			t.Fatalf("forwarded held SetIfAbsent returned %v, %v; want true and ErrUnderReplicated", stored, err)
+		}
+	})
+	t.Run("CompareAndSwap", func(t *testing.T) {
+		if err := r.caches[r.ids[0]].Namespace("hot").Set(ctx, "swap", []byte("a"), 0); err != nil {
+			t.Fatal(err)
+		}
+		ns := writerFor(t, "swap")
+		swapped, err := ns.CompareAndSwap(ctx, "swap", []byte("a"), []byte("b"), 0)
+		if !errors.Is(err, peercache.ErrUnderReplicated) || !swapped {
+			t.Fatalf("forwarded held CompareAndSwap returned %v, %v; want true and ErrUnderReplicated", swapped, err)
+		}
+	})
+	t.Run("Touch", func(t *testing.T) {
+		if err := r.caches[r.ids[0]].Namespace("hot").Set(ctx, "touch", []byte("a"), 0); err != nil {
+			t.Fatal(err)
+		}
+		ns := writerFor(t, "touch")
+		existed, err := ns.Touch(ctx, "touch", time.Hour)
+		if !errors.Is(err, peercache.ErrUnderReplicated) || !existed {
+			t.Fatalf("forwarded held Touch returned %v, %v; want true and ErrUnderReplicated", existed, err)
+		}
+	})
 }

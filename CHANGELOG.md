@@ -55,6 +55,12 @@ change the public API.
   factor — and is counted in `DegradedWrites`, instead of an error that could
   not be told apart from a refusal and lost its identity across a forwarding
   hop. Found by M16's real-world run (open question 37, option 2).
+- The result of a held write now survives forwarding too. A forwarded
+  `Increment`, `SetIfAbsent`, `CompareAndSwap` or `Touch` that came back with
+  `ErrUnderReplicated` returned a zero result — `0`, `false` — for a write that
+  had happened. The owner now sends the result and the report in the response
+  body. A peer on the previous release ignores the new field, and sees the
+  write as an ordinary success, during a rolling upgrade. Found by M16.
 - Tests live in `tests/` and `tests/repo/` instead of the root directory.
 - Concurrent `Get` misses of one key owned elsewhere share one request to its
   owner instead of sending one each.
