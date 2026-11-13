@@ -221,7 +221,14 @@ PY
     return
   fi
 
-  if go test "$pkg" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
+  # A package written dir::pkg is in a nested module: go test -C dir pkg runs
+  # it from inside that module, so its own go.mod applies. The mutated file
+  # is still named from the repository root, like every other entry's.
+  local run=(go test "$pkg")
+  if [[ "$pkg" == *::* ]]; then
+    run=(go test -C "${pkg%%::*}" "${pkg#*::}")
+  fi
+  if "${run[@]}" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
     echo "VACUOUS  $name -- $test PASSED with the behaviour broken"
     vacuous=$((vacuous + 1))
   else
@@ -2264,6 +2271,23 @@ mutate "a pending record is never replaced by a newer write" \
   '		if true {
 			// An older write recorded late' \
   'TestAHotKeyCoalescesToOneRecord$' ./tests
+
+# --- persist/s3, a nested module (decision 0029, M14d) ---
+
+mutate "persist/s3 reads every API error as not found" \
+  persist/s3/s3.go \
+  '		switch api.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		}' \
+  '		return true' \
+  'TestOtherErrorsAreNotNotFound$' persist/s3::./
+
+mutate "persist/s3 lists only the first page" \
+  persist/s3/s3.go \
+  '	for p.HasMorePages() {' \
+  '	for first := true; first && p.HasMorePages(); first = false {' \
+  'TestTheStoreMeetsTheContract$' persist/s3::./
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
