@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/ownership"
 	"github.com/arwenizEr/peercache/internal/testkit"
 	"github.com/arwenizEr/peercache/persist"
 )
@@ -254,4 +256,73 @@ func TestARestoreDoesNotUndoAPromotedWrite(t *testing.T) {
 				"v2 with storage's older v1", id, v, err)
 		}
 	}
+}
+
+// TestARestoredKeyIsReplicatedAgain: a restore installs what it reads on this
+// node alone, so it must send it to the key's replicas, or the key sits at a
+// replication factor of one until its next write.
+//
+// Both holders of a key are killed at once — killed one at a time, promotion
+// would re-replicate in between and the restore would never run. A survivor
+// restores the key on first read; then storage is made unreadable and the
+// restorer killed too. The key must survive on the replica the restore fed.
+func TestARestoredKeyIsReplicatedAgain(t *testing.T) {
+	f := newFabric(t, 4)
+	store := &listFailingStore{BlobStore: persist.Memory()}
+	openDurable(f, store, peercache.WithReplicationFactor(2), peercache.WithSyncReplication())
+	ctx := context.Background()
+
+	const key = "restored-then-replicated"
+	if err := f.caches[f.ids[0]].Namespace("durable").Set(ctx, key, []byte("v"), 0); err != nil {
+		t.Fatal(err)
+	}
+	flushAll(t, f)
+
+	holders := holdersAmong(t, f, key, 2)
+	f.hardKill(t, holders[0])
+	f.hardKill(t, holders[1])
+	f.clk.Advance(2 * testkit.DefaultFailureTimeout)
+	f.convergeTo(t, len(f.live()))
+	f.settle(t)
+
+	durable := func(id string) peercache.Namespace { return f.caches[id].Namespace("durable") }
+	survivors := holdersAmong(t, f, key, 2)
+	restorer, replica := survivors[0], survivors[1]
+	sent := f.caches[restorer].Stats().ReplicationsSent
+	if v, err := readWithRetryFrom(t, f, durable, restorer, key); err != nil || v != "v" {
+		t.Fatalf("restore on %s = %q, %v", restorer, v, err)
+	}
+	if f.caches[restorer].Stats().PersistRestored == 0 {
+		t.Fatal("nothing was restored; the test would prove nothing")
+	}
+	waitFor(t, "the restored key to reach its replica", func() bool {
+		return f.caches[restorer].Stats().ReplicationsSent > sent
+	})
+
+	store.failing.Store(true)
+	killAndSettle(t, f, restorer)
+	if v, err := readWithRetryFrom(t, f, durable, replica, key); err != nil || v != "v" {
+		t.Fatalf("after the restorer died with storage unreadable, %s reads %q, %v; the restore "+
+			"did not replicate what it installed", replica, v, err)
+	}
+}
+
+// holdersAmong ranks key's holders among the live nodes, best first.
+func holdersAmong(t *testing.T, f *fabric, key string, rf int) []string {
+	t.Helper()
+	table := ownership.NewTable()
+	var nodes []core.Node
+	for _, id := range f.live() {
+		nodes = append(nodes, f.nodes[id])
+	}
+	table.Update(nodes, 1)
+	ranked, _, err := table.Replicas(key, rf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, len(ranked))
+	for i, n := range ranked {
+		out[i] = n.ID
+	}
+	return out
 }
