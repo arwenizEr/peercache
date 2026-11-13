@@ -202,6 +202,12 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 		}
 
 		for _, e := range resp.Entries {
+			// The writer, when the peer relayed a copy it holds; the
+			// peer itself, when it sent what it owns.
+			from := e.From
+			if from == "" {
+				from = peer.ID
+			}
 			// Through the replica store's ordinary Put, so the stamp
 			// check applies: a page that arrives after a live write
 			// must not undo it. Catch-up is not privileged just
@@ -215,7 +221,7 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 				ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),
 				ReceivedAt: now,
 				Order:      e.Order,
-				From:       peer.ID,
+				From:       from,
 			})
 			if accepted {
 				cu.pulled.Add(1)

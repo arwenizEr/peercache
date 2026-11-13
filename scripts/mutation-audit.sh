@@ -2394,6 +2394,13 @@ mutate "the replica pass sends what the asker does not own" \
   'return err == nil && owner.ID != ""' \
   'TestTheReplicaPassSendsOnlyWhatTheAskerOwns$' ./tests
 
+mutate "a relayed catch-up copy is filed under its relay" \
+  handler.go \
+  '			From:     e.From,
+' \
+  '' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

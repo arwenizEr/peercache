@@ -653,6 +653,7 @@ func (h *peerHandler) catchUpReplicas(ctx context.Context, ns *namespace, in wir
 			Stamp:    e.Stamp,
 			TTLNanos: ttl,
 			Order:    e.Order,
+			From:     e.From,
 		})
 	}
 	return wire.Encode(&out)

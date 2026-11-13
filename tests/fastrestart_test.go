@@ -85,6 +85,12 @@ func TestANodeRestartedFasterThanDetectionRecoversWhatItOwns(t *testing.T) {
 			missing = append(missing, fmt.Sprintf("%s=%q,%v", k, got, err))
 		}
 	}
+	// Both replicas send the same key, written by the same owner. A copy
+	// filed under the peer that relayed it rather than the node that wrote
+	// it reads as two writers in one epoch: a split brain that never was.
+	if n := f.caches[victim].Stats().SplitBrainDetections; n != 0 {
+		t.Fatalf("catch-up counted %d split-brain detections; relayed copies must keep their writer", n)
+	}
 	if len(missing) > 0 {
 		t.Fatalf("after catch-up, %d of the %d keys the restarted node owns are not back; "+
 			"their copies sit in its peers' replica stores. First: %v",

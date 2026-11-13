@@ -326,6 +326,12 @@ type CatchUpEntry struct {
 	TTLNanos int64  `msgpack:"ttl_ns"`
 	// Order is the entry's persistence order; see ReplicateRequest.Order.
 	Order uint64 `msgpack:"order"`
+	// From is the node that wrote the value, set when the sender relays a
+	// copy it holds as a replica. Empty means the sender wrote it. The
+	// receiver records the writer, not the relay, for the same reason a
+	// hand-off does: two relays of one write are not two writers, and filing
+	// them as such counts a split brain that never happened.
+	From string `msgpack:"from"`
 }
 
 // InvalidateRequest tells a peer that keys it may be caching have changed.

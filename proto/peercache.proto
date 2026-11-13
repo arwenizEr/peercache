@@ -339,6 +339,8 @@ message CatchUpEntry {
   Stamp stamp = 3;
   int64 ttl_ns = 4;
   uint64 order = 5;
+  // The writer of a relayed replica copy; empty when the sender wrote it.
+  string from = 6;
 }
 
 message InvalidateRequest {
