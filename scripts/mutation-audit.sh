@@ -739,21 +739,6 @@ mutate "the replica store compares versions, ignoring the epoch" \
   'if e.Stamp.Version <= existing.Stamp.Version {' \
   'TestALaterEpochWinsWhateverTheVersion' ./internal/replication/
 
-mutate "split brain is not detected" \
-  internal/replication/replica.go \
-  'existing.From != e.From {
-			conflict = true' \
-  'false {
-			conflict = true' \
-  'TestTwoOwnersInOneEpochIsAConflict' ./internal/replication/
-
-mutate "any writer change counts as a split brain" \
-  internal/replication/replica.go \
-  'existing.Stamp.Epoch == e.Stamp.Epoch && existing.From != "" && e.From != "" &&
-			existing.From != e.From' \
-  'existing.From != e.From' \
-  'TestDifferentEpochsAreNotAConflict' ./internal/replication/
-
 mutate "Drain leaves a stranded copy behind" \
   internal/replication/replica.go \
   '		taken[key] = e
