@@ -1883,6 +1883,30 @@ mutate "the write path ranks one replica too few" \
   '	ranked, count, epoch := c.guard.Table().Holders(groupKey, rf-1)' \
   'TestReplicasAreTheRunnersUpInTheRanking$' ./tests
 
+# --- persistence: hybrid logical clock (decision 0029) ---
+
+mutate "an HLC order repeats on a stopped clock" \
+  internal/hlc/hlc.go \
+  '		if next <= last {
+			next = last + 1
+		}' \
+  '		if false {
+			next = last + 1
+		}' \
+  'TestNextIsStrictlyIncreasingOnAStoppedClock$' ./internal/hlc/
+
+mutate "an observed HLC order is ignored" \
+  internal/hlc/hlc.go \
+  '		if uint64(o) <= last || c.last.CompareAndSwap(last, uint64(o)) {' \
+  '		if true {' \
+  'TestAnObservedOrderIsOutranked$' ./internal/hlc/
+
+mutate "a drifting peer drags the HLC ahead" \
+  internal/hlc/hlc.go \
+  '	if uint64(o) > limit {' \
+  '	if false {' \
+  'TestADriftingPeerCannotDragTheClockAhead$' ./internal/hlc/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
