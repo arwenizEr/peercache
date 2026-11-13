@@ -576,12 +576,12 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 		// What still bounds this is the ranking: a node cannot obtain
 		// keys it has no business holding by asking nicely, because the
 		// sender computes the answer rather than trusting the request.
-		ranked, _, err := h.cache.guard.Table().Replicas(ns.groupKeyFor(key), in.ReplicationFactor)
-		if err != nil {
-			return false
-		}
-		for _, n := range ranked {
-			if n.ID == in.Requester {
+		// Holders rather than Replicas: this runs once per key scanned, and
+		// Replicas allocates per call. It also clamps the asker's factor to
+		// the maximum, which a well-formed asker never exceeds.
+		ranked, n, _ := h.cache.guard.Table().Holders(ns.groupKeyFor(key), in.ReplicationFactor)
+		for _, node := range ranked[:n] {
+			if node.ID == in.Requester {
 				return true
 			}
 		}
