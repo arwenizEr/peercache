@@ -753,25 +753,6 @@ mutate "Drain leaves a stranded copy behind" \
   '		taken[key] = e' \
   'TestDrainTakesOnlyWhatItClaims' ./internal/replication/
 
-mutate "promotion restarts the version sequence" \
-  internal/store/store.go \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
-	delta := size(key, stored)
-	if ok {' \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: 1}
-	delta := size(key, stored)
-	if ok {' \
-  'TestRestoreContinuesTheVersionSequence' ./internal/store/
-
-mutate "Restore overwrites a newer value" \
-  internal/store/store.go \
-  '	if ok && existing.version >= version {
-		return false
-	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}' \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}' \
-  'TestRestoreRefusesAnOlderVersion' ./internal/store/
-
 mutate "snapshot ignores its page limit" \
   internal/store/store.go \
   '	more := len(candidates) > limit' \
@@ -824,14 +805,6 @@ mutate "replication does nothing at all" \
 	return r.fanOut(ctx, w)' \
   'return nil' \
   'TestChaosLosesNoSynchronouslyWrittenKey' ./tests
-
-mutate "deletions are not replicated" \
-  namespace.go \
-  'if err := n.fanOut(ctx, key, nil, 0, tombstone, true); err != nil {
-		return err
-	}' \
-  '' \
-  'TestADeletionReplicates' ./tests
 
 mutate "a remote write skips replication" \
   handler.go \
@@ -935,15 +908,6 @@ mutate "drain does not announce its departure" \
 # from scratch. See
 # docs/verification.md, and TestKeysAdoptedIsCounted for the same race found and
 # fixed on the counter side.
-mutate "handed-off keys are not adopted by their new owner" \
-  handler.go \
-  'if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {
-			h.cache.keysAdopted.Add(1)
-		}
-		h.cache.pressure.noteWrite(len(in.Value))' \
-  'h.cache.pressure.noteWrite(len(in.Value))' \
-  'TestDrainSavesDataWithoutReplication' ./tests
-
 mutate "an implicitly created namespace is not counted" \
   handler.go \
   'if !existed {
@@ -1325,8 +1289,6 @@ mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err :
 # removing either check changes nothing a test can see. See
 # docs/verification.md.
 
-mutate "promotion restarts a key's lifetime"   promote.go   'if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {'   'if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version) {'   'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
-
 mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),'   'ExpiresAt:  replication.DeadlineFrom(now+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' ./tests
 
 mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' ./tests
@@ -1600,8 +1562,6 @@ mutate "a remote Get unframes a value the owner already unframed"   namespace.go
 
 '   'TestCompressedValuesSurviveEveryRemotePath$' ./tests
 
-mutate "an adopted hand-off is framed a second time"   handler.go   '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {'   '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version) {'   'TestACompressedHandOffIsNotFramedTwice$' ./tests
-
 # A load that raced a Set stored its older value over the newer one.
 mutate "a load overwrites a write that raced it"   internal/store/store.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
 		return old.val, false
@@ -1674,12 +1634,6 @@ mutate "an increment extends its counters deadline" \
 		}' \
   '		m.TTL = ttl' \
   'TestIncrementKeepsTheCountersDeadline$' ./tests
-
-mutate "atomic writes are not replicated" \
-  atomic.go \
-  '	if err := n.fanOut(ctx, key, encoded, ttl, stamp, false); err != nil {' \
-  '	if err := error(nil); err != nil {' \
-  'TestTouchOutlivesTheOriginalDeadlineAcrossFailover$' ./tests
 
 mutate "a kept deadline reaches replicas as none" \
   atomic.go \
@@ -1845,36 +1799,6 @@ mutate "replica reads are accepted with the L1 tier disabled" \
 
 # --- open question 45 ---
 
-mutate "a failed synchronous Set skips its invalidation" \
-  namespace.go \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
-	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
-	}' \
-  'TestAFailedSyncWriteStillInvalidates/Set$' ./tests
-
-mutate "a failed synchronous Delete skips its invalidation" \
-  namespace.go \
-  '	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
-	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)' \
-  '	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
-	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
-	}' \
-  'TestAFailedSyncWriteStillInvalidates/Delete$' ./tests
-
-mutate "a failed synchronous atomic write skips its invalidation" \
-  atomic.go \
-  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, false)
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
-  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, false)
-	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
-	}' \
-  'TestAFailedSyncWriteStillInvalidates/Increment$' ./tests
-
 # --- open question 46 ---
 
 mutate "the write path ranks one replica too few" \
@@ -2011,12 +1935,6 @@ mutate "Close does not flush persistent namespaces" \
 
 # --- persistence: restore (decision 0029) ---
 
-mutate "a restore keeps the first record it reads" \
-  persistence.go \
-  '			if cur, ok := newest[r.Key]; !ok || r.Newer(cur) {' \
-  '			if _, ok := newest[r.Key]; !ok {' \
-  'TestAColdStartRestoresWhatWasFlushed$' ./tests
-
 mutate "a restore brings back expired keys" \
   persistence.go \
   '		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {' \
@@ -2089,12 +2007,6 @@ mutate "a membership change does not trigger a restore" \
   '' \
   'TestKillingEveryHolderRestoresFromStorage$' ./tests
 
-mutate "a promoted replica's order is not carried" \
-  promote.go \
-  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
-  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
-  'TestAPromotedReplicasWriteOutranksItsOldOwner$' ./tests
-
 # --- persistence: shedding (decision 0029) ---
 
 mutate "a shed persistent key is not marked for restore" \
@@ -2134,6 +2046,99 @@ mutate "compaction keeps tombstones forever" \
   '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
   '		if false {' \
   'TestATombstoneIsKeptForItsGrace$' ./tests
+
+# --- repointed after M14b moved their code ---
+
+mutate "promotion restarts the version sequence" \
+  internal/store/store.go \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	delta := size(key, stored)
+	if ok {' \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: 1, order: order}
+	delta := size(key, stored)
+	if ok {' \
+  'TestRestoreContinuesTheVersionSequence' ./internal/store/
+
+mutate "Restore overwrites a newer value" \
+  internal/store/store.go \
+  '	if ok && existing.version >= version {
+		return false
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}' \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}' \
+  'TestRestoreRefusesAnOlderVersion' ./internal/store/
+
+mutate "deletions are not replicated" \
+  namespace.go \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)' \
+  '	err := error(nil)' \
+  'TestADeletionReplicates' ./tests
+
+mutate "handed-off keys are not adopted by their new owner" \
+  handler.go \
+  '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
+  '		if false {' \
+  'TestDrainSavesDataWithoutReplication' ./tests
+
+mutate "promotion restarts a key's lifetime" \
+  promote.go \
+  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
+  '		if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version, e.Order) {' \
+  'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
+
+mutate "an adopted hand-off is framed a second time" \
+  handler.go \
+  '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
+  '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
+  'TestACompressedHandOffIsNotFramedTwice$' ./tests
+
+mutate "atomic writes are not replicated" \
+  atomic.go \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)' \
+  '	err = error(nil)' \
+  'TestTouchOutlivesTheOriginalDeadlineAcrossFailover$' ./tests
+
+mutate "a failed synchronous Set skips its invalidation" \
+  namespace.go \
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Set$' ./tests
+
+mutate "a failed synchronous Delete skips its invalidation" \
+  namespace.go \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
+	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)' \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Delete$' ./tests
+
+mutate "a failed synchronous atomic write skips its invalidation" \
+  atomic.go \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Increment$' ./tests
+
+mutate "a restore keeps the first record it reads" \
+  persistence.go \
+  '			if cur, ok := sc.newest[r.Key]; !ok || r.Newer(cur) {' \
+  '			if _, ok := sc.newest[r.Key]; !ok {' \
+  'TestAColdStartRestoresWhatWasFlushed$' ./tests
+
+mutate "a promoted replica's order is not carried" \
+  promote.go \
+  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
+  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
+  'TestARestoreDoesNotUndoAPromotedWrite$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

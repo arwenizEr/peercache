@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/arwenizEr/peercache"
@@ -183,5 +184,55 @@ func TestAPromotedReplicasWriteOutranksItsOldOwner(t *testing.T) {
 	}
 	if after.Writer == owner {
 		t.Fatalf("the winning record names the dead owner %s as its writer", owner)
+	}
+}
+
+// blackholeStore silently drops every Put once dropping is set, as a store
+// would whose writes were lost after being acknowledged.
+type blackholeStore struct {
+	persist.BlobStore
+	dropping atomic.Bool
+}
+
+func (s *blackholeStore) Put(ctx context.Context, name string, data []byte) error {
+	if s.dropping.Load() {
+		return nil
+	}
+	return s.BlobStore.Put(ctx, name, data)
+}
+
+// TestARestoreDoesNotUndoAPromotedWrite: a replica promoted with a value
+// storage never received must keep it when the failover's restore reads
+// storage's older record. That holds only because promotion installs the
+// value at the order it was written under; installed at order zero, any
+// stored record would outrank it.
+func TestARestoreDoesNotUndoAPromotedWrite(t *testing.T) {
+	f := newFabric(t, 3)
+	store := &blackholeStore{BlobStore: persist.Memory()}
+	openDurable(f, store, peercache.WithReplicationFactor(2), peercache.WithSyncReplication())
+	ctx := context.Background()
+
+	const key = "promoted-unflushed"
+	owner := f.ownerOf(t, key)
+	if err := f.caches[owner].Namespace("durable").Set(ctx, key, []byte("v1"), 0); err != nil {
+		t.Fatal(err)
+	}
+	flushAll(t, f)
+
+	// From here storage loses everything: v2 reaches the replica and no
+	// store, which is the window a crash leaves.
+	store.dropping.Store(true)
+	if err := f.caches[owner].Namespace("durable").Set(ctx, key, []byte("v2"), 0); err != nil {
+		t.Fatal(err)
+	}
+	killAndSettle(t, f, owner)
+
+	durable := func(id string) peercache.Namespace { return f.caches[id].Namespace("durable") }
+	for _, id := range f.live() {
+		v, err := readWithRetryFrom(t, f, durable, id, key)
+		if err != nil || v != "v2" {
+			t.Fatalf("Get from %s after the failover = %q, %v; the restore replaced the promoted "+
+				"v2 with storage's older v1", id, v, err)
+		}
 	}
 }
