@@ -83,6 +83,10 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_replica_reads_served_total", Counter, "Reads this node answered from its replica copy, in namespaces with replica reads.", float64(s.ReplicaReadsServed)},
 		{"peercache_replica_reads_referred_total", Counter, "Replica reads this node declined and the reader sent to the owner: no copy, a copy older than the L1 TTL, or no longer a replica.", float64(s.ReplicaReadsReferred)},
 		{"peercache_replica_reads_floored_total", Counter, "Replica answers this node discarded because an invalidation had already told it of a newer stamp.", float64(s.ReplicaReadsFloored)},
+		{"peercache_persist_pending", Gauge, "Keys of persistent namespaces waiting for the next flush: what a crash now would lose.", float64(s.PersistPending)},
+		{"peercache_persist_flushes_total", Counter, "Flushes of persistent namespaces to their blob store.", float64(s.PersistFlushes)},
+		{"peercache_persist_records_written_total", Counter, "Records written to blob stores by flushes.", float64(s.PersistRecordsWritten)},
+		{"peercache_persist_failures_total", Counter, "Segments a flush could not write; their records were kept for the next flush.", float64(s.PersistFailures)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 

@@ -155,6 +155,10 @@ type namespace struct {
 	//
 	// See docs/decisions/open.md question 13.
 	l1 *l1.Cache
+
+	// persister writes this namespace's owned changes behind to its blob
+	// store. Nil unless the namespace was opened with WithPersistence.
+	persister *persister
 }
 
 // status returns the error every operation on this handle should report, or nil
@@ -559,6 +563,9 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	// here -- there is no rollback -- so every other pod's copy is stale
 	// either way, and skipping the hint made a degraded write staler than
 	// an asynchronous one. Open question 45.
+	if n.persister != nil {
+		n.persister.record(key, n.encode(val), written.ExpiresAt, written.Order, false)
+	}
 	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
@@ -733,6 +740,9 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
 	_, order := n.store.Remove(key)
+	if n.persister != nil {
+		n.persister.record(key, nil, 0, order, true)
+	}
 	// A deletion invalidates every cached copy. The stamp carries this
 	// node's epoch with a version above anything the deleted entry could
 	// have held, so a peer holding an older copy drops it; a peer that has

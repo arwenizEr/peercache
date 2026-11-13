@@ -399,6 +399,7 @@ ready.go          Readiness, its three conditions, and whether
 observe.go        Stats and the metric series they export
 pressure.go       The memory budget and the order it sheds in
 probation.go      Keeps young nodes out of the ranking
+persistence.go    Write-behind flush of persistent namespaces to a blob store
 
 membership/       Gossip membership over memberlist (public)
 transport/        gRPC client and server, optional mTLS (public)

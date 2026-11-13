@@ -299,6 +299,8 @@ type Write struct {
 	Version uint64
 	// Order is the persistence order, or zero without [Options.Order].
 	Order uint64
+	// ExpiresAt is the stored deadline in Unix nanoseconds, zero for none.
+	ExpiresAt int64
 }
 
 // Put is [Store.Set], also reporting the order the write was given.
@@ -330,7 +332,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 	sh.mu.Unlock()
 
 	sh.sets.Add(1)
-	return Write{Version: version, Order: order}
+	return Write{Version: version, Order: order, ExpiresAt: expiresAt}
 }
 
 // nextOrder issues an order, or zero without [Options.Order]. Callers hold the

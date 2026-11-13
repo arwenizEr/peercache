@@ -484,6 +484,10 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		h.cache.observeOrder(in.Order)
 		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {
 			h.cache.keysAdopted.Add(1)
+			if ns.persister != nil && in.Order != 0 {
+				ns.persister.record(in.Key, in.Value,
+					replication.DeadlineFrom(h.cache.opts.Clock.Now().UnixNano(), in.TTLNanos), in.Order, false)
+			}
 		}
 		h.cache.pressure.noteWrite(len(in.Value))
 		return wire.Encode(&wire.ReplicateResponse{})

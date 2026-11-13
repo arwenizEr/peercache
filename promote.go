@@ -220,6 +220,12 @@ func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
 		}
 		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {
 			p.promoted.Add(1)
+			// The old owner may have died before flushing this write. The
+			// record is idempotent under the merge, so writing it again
+			// costs a duplicate at worst and closes that gap at best.
+			if ns.persister != nil {
+				ns.persister.record(key, e.Value, e.ExpiresAt, e.Order, false)
+			}
 		}
 		// A refused Restore means a newer value was written here while the
 		// drain ran. The replica copy is correctly discarded; it is older by

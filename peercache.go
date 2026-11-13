@@ -543,6 +543,9 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		return ns
 	}
 	ns.store = st
+	if opts.Persistence != nil {
+		ns.persister = newPersister(ns, opts.Persistence)
+	}
 
 	// The non-owned tier only exists once there is somewhere else for a key
 	// to live. Without a membership authority this node owns the whole
@@ -654,6 +657,13 @@ func (c *cache) Stats() Stats {
 		stats.Loads += ns.flight.Loads()
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
+		if ns.persister != nil {
+			pending, flushes, written, failures := ns.persister.counters()
+			stats.PersistPending += int64(pending)
+			stats.PersistFlushes += flushes
+			stats.PersistRecordsWritten += written
+			stats.PersistFailures += failures
+		}
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())
 		}
@@ -788,6 +798,11 @@ func (c *cache) Close(ctx context.Context) error {
 			}
 			if ns.store == nil {
 				continue
+			}
+			if ns.persister != nil {
+				if err := ns.persister.Close(ctx); err != nil {
+					closeErr = errors.Join(closeErr, fmt.Errorf("flushing namespace %q: %w", ns.name, err))
+				}
 			}
 			if err := ns.store.Close(); err != nil {
 				closeErr = errors.Join(closeErr, fmt.Errorf("closing namespace %q: %w", ns.name, err))

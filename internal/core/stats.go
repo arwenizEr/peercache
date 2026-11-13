@@ -62,6 +62,17 @@ type Stats struct {
 	// reader because an invalidation had already told it of a newer stamp.
 	ReplicaReadsFloored int64
 
+	// PersistPending is how many keys of persistent namespaces are waiting
+	// for the next flush — the keys a crash now would lose.
+	// PersistFlushes counts flushes, PersistRecordsWritten the records they
+	// wrote, and PersistFailures segments that could not be written and
+	// were kept for the next flush. See
+	// docs/decisions/0029-persistence-as-a-segment-log.md.
+	PersistPending        int64
+	PersistFlushes        int64
+	PersistRecordsWritten int64
+	PersistFailures       int64
+
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the
 	// group had just been acquired.

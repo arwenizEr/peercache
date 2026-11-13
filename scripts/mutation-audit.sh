@@ -1462,8 +1462,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '50 series come out of it' \
-  '49 series come out of it' \
+  '54 series come out of it' \
+  '53 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -1938,8 +1938,8 @@ mutate "the memory blob store keeps the caller's slice" \
 
 mutate "a store write reports an order it did not store" \
   internal/store/store.go \
-  '	return Write{Version: version, Order: order}' \
-  '	return Write{Version: version, Order: s.nextOrder()}' \
+  '	return Write{Version: version, Order: order, ExpiresAt: expiresAt}' \
+  '	return Write{Version: version, Order: s.nextOrder(), ExpiresAt: expiresAt}' \
   'TestAKeysOrdersRiseWithItsVersions$' ./internal/store/
 
 mutate "a promoted value is given a new order" \
@@ -1957,6 +1957,57 @@ mutate "an atomic update stores no order" \
   '	order := s.nextOrder()' \
   '	order := uint64(0)' \
   'TestEveryWritePathTakesAnOrder$' ./internal/store/
+
+# --- persistence: write-behind flush (decision 0029) ---
+
+mutate "a failed flush drops its records" \
+  persistence.go \
+  '			p.restorePending(records)
+' \
+  '' \
+  'TestAnUnavailableStoreLosesNothing$' ./tests
+
+mutate "a failed flush's records replace newer writes" \
+  persistence.go \
+  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(cur) {
+			continue
+		} else if ok {' \
+  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(cur) {
+			continue
+		} else if ok {' \
+  'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
+
+mutate "a pending record shares the caller's buffer" \
+  persistence.go \
+  '		r.Value = append([]byte(nil), value...)' \
+  '		r.Value = value' \
+  'TestThePendingRecordIsACopy$' ./tests
+
+mutate "a pending record is never replaced by a newer write" \
+  persistence.go \
+  '		if !r.Newer(cur) {
+			// An older write recorded late' \
+  '		if true {
+			// An older write recorded late' \
+  'TestAHotKeyCoalescesToOneRecord$' ./tests
+
+mutate "a persistent delete writes no tombstone" \
+  namespace.go \
+  '		n.persister.record(key, nil, 0, order, true)' \
+  '		_ = order' \
+  'TestADeleteIsATombstone$' ./tests
+
+mutate "a persistent atomic write is not recorded" \
+  atomic.go \
+  '		n.persister.record(key, encoded, res.ExpiresAt, res.Order, false)' \
+  '		_ = encoded' \
+  'TestAnAtomicWriteIsPersisted$' ./tests
+
+mutate "Close does not flush persistent namespaces" \
+  peercache.go \
+  '				if err := ns.persister.Close(ctx); err != nil {' \
+  '				if err := error(nil); err != nil {' \
+  'TestCloseFlushesWhatIsPending$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
