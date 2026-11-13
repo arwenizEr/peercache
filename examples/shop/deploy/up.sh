@@ -31,4 +31,8 @@ if [ -n "$existed" ]; then
 fi
 kubectl --context kind-m16 rollout status statefulset/shop --timeout=600s
 kubectl --context kind-m16 wait --for=condition=ready pod/loadgen --timeout=120s
+# Observability: Prometheus scraping every shop pod, Grafana summing them.
+kubectl --context kind-m16 create configmap grafana-dashboards   --from-file=peercache.json="$here/peercache.json" --dry-run=client -o yaml   | kubectl --context kind-m16 apply -f -
+kubectl --context kind-m16 apply -f "$here/observability.yaml"
+kubectl --context kind-m16 rollout status deployment/grafana --timeout=300s
 kubectl --context kind-m16 get pods -o wide
