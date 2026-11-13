@@ -2070,6 +2070,31 @@ mutate "a restore replaces newer memory" \
 	if tombstone {' \
   'TestMergeIfNewerKeepsWhateverIsNewer$' ./internal/store/
 
+# --- persistence: cluster acceptance (decision 0029) ---
+
+mutate "a restore installs keys this node does not own" \
+  persistence.go \
+  '		if !p.owns(key) {
+			continue
+		}' \
+  '		if false {
+			continue
+		}' \
+  'TestKillingEveryHolderRestoresFromStorage$' ./tests
+
+mutate "a membership change does not trigger a restore" \
+  promote.go \
+  '		p.cache.restoreGen.Add(1)
+' \
+  '' \
+  'TestKillingEveryHolderRestoresFromStorage$' ./tests
+
+mutate "a promoted replica's order is not carried" \
+  promote.go \
+  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
+  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
+  'TestAPromotedReplicasWriteOutranksItsOldOwner$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
