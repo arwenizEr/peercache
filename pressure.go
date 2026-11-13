@@ -86,6 +86,11 @@ func (p *pressure) used() int64 {
 		if ns.l1 != nil {
 			total += ns.l1.Bytes()
 		}
+		// Records waiting for a flush are memory like any other. Only a
+		// flush frees them, which relieve asks for.
+		if ns.persister != nil {
+			total += ns.persister.pendingBytes()
+		}
 	}
 	return total
 }
@@ -136,6 +141,14 @@ func (p *pressure) relieve() {
 	}
 	c.mu.RUnlock()
 
+	// Pending persistence records are freed by a flush, not by shedding.
+	// Asked for first, so the flush runs while the tiers below are shed.
+	for _, ns := range namespaces {
+		if ns.persister != nil {
+			ns.persister.flushSoon()
+		}
+	}
+
 	// 1. L1.
 	for _, ns := range namespaces {
 		if excess <= 0 {
@@ -174,6 +187,11 @@ func (p *pressure) relieve() {
 			freed := ns.store.Shed(share, func(key string, _ uint64) {
 				p.shedOwned.Add(1)
 				ns.replicateShed(key)
+				// Shedding is memory relief, never a deletion: the key
+				// stays in storage and comes back on its next access.
+				if ns.persister != nil {
+					ns.persister.noteShed(key)
+				}
 			})
 			if freed > 0 {
 				progress = true

@@ -219,9 +219,11 @@ everything else that follows.
 - **State is not durable.** Ungraceful pod termination loses that pod's owned
   data and any replicas not yet caught up. Graceful shutdown transfers ownership
   and streams state. Every namespace must therefore either be reconstructible
-  from a loader or tolerate loss. Opt-in persistence to disk or object storage
-  is designed (`docs/decisions/0029-persistence-as-a-segment-log.md`) and being
-  built as M14; until it ships, this holds for every namespace.
+  from a loader or tolerate loss — unless it is opened with `WithPersistence`,
+  which writes it behind to a blob store and loses at most the last 100 ms
+  flush interval (`docs/decisions/0029-persistence-as-a-segment-log.md`). The
+  disk and object-storage backends are still being built; `persist.Memory`
+  ships, for tests.
 - **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
   1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
   acknowledged inside it exists on one node only. `WithSyncReplication()` closes
@@ -399,13 +401,17 @@ ready.go          Readiness, its three conditions, and whether
 observe.go        Stats and the metric series they export
 pressure.go       The memory budget and the order it sheds in
 probation.go      Keeps young nodes out of the ranking
+persistence.go    Write-behind flush of persistent namespaces to a blob store
 
 membership/       Gossip membership over memberlist (public)
 transport/        gRPC client and server, optional mTLS (public)
+persist/          Blob-store interface for persistent namespaces, the
+                  memory backend, and the contract suite (public)
 
 internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
+  hlc/            Hybrid logical clock ordering persistent writes
   testkit/        In-process cluster harness with fault injection
   store/          Sharded owned store, TTL, versions
   l1/             Non-owned cache, TTL and version discipline
@@ -418,6 +424,7 @@ internal/
                   validation. The only code here that interprets
                   bytes it did not write.
   replication/    Replica store, version stamps, conflict detection
+  segment/        Storage format of persistent namespaces, bounded decoding
   rebalance/      Move planning
   metrics/        Metric collection, text format, histograms
 

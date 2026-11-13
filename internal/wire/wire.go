@@ -259,6 +259,10 @@ type ReplicateRequest struct {
 	// Deleted marks a removal. Deletions must replicate: a replica that
 	// missed one would resurrect the key the moment it was promoted.
 	Deleted bool `msgpack:"deleted"`
+	// Order is the write's persistence order, zero in a namespace without
+	// persistence. The replica keeps it so that a promotion continues it,
+	// and advances its own clock past it.
+	Order uint64 `msgpack:"order"`
 }
 
 // ReplicateResponse reports whether the copy collided with another writer's.
@@ -298,6 +302,8 @@ type CatchUpEntry struct {
 	Value    []byte `msgpack:"value"`
 	Stamp    Stamp  `msgpack:"stamp"`
 	TTLNanos int64  `msgpack:"ttl_ns"`
+	// Order is the entry's persistence order; see ReplicateRequest.Order.
+	Order uint64 `msgpack:"order"`
 }
 
 // InvalidateRequest tells a peer that keys it may be caching have changed.

@@ -28,6 +28,7 @@ and output-checked by `go test`:
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
+| `ExampleWithPersistence` | write, close, reopen over the same store: restored, and a delete stays deleted |
 | `ExampleWithReplicaReads` | the configurations replica reads refuse, and their counters |
 | `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
 
@@ -66,7 +67,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-50 series in the Prometheus text exposition format, and PeerCache imports no
+58 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -223,6 +224,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
 | `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
+| `WithPersistence(persist.BlobStore)` | off | Writes the namespace behind to a blob store so keys survive losing every holder. See below. |
 | `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
@@ -292,6 +294,44 @@ Not a tuning knob. Invalidation broadcasts are a latency optimisation and may be
 lost; this TTL is the only thing that turns an unbounded stale read into a
 bounded one. Longer means faster and staler, and the staleness is what a caller
 has to reason about.
+
+### Persistence — `WithPersistence`
+
+Off by default; a namespace without it is memory-only, exactly as before. With
+it (`docs/decisions/0029-persistence-as-a-segment-log.md`):
+
+- **Write-behind.** Each write is recorded in memory and flushed every 100 ms,
+  as one immutable segment object per partition touched. A key written a
+  thousand times between flushes costs one record. A write is acknowledged
+  before its flush: a crash loses at most the last interval, and a graceful
+  `Close` or drain flushes first.
+- **Restore.** A node that comes to own keys it does not hold — at start, or
+  because every holder of them died — restores their partition on first access,
+  keeping whichever of memory and storage is newer. Reads and writes of that
+  partition wait for it, within their deadline.
+- **Order.** Writes carry a hybrid logical clock through replication, catch-up
+  and promotion, so a replica that takes over continues the key's history. Two
+  writes to one key by owners that never exchanged an order, closer together
+  than their clocks' skew, may be restored either way; writes from a network
+  partition resolve last writer wins. Neither is merged.
+- **Compaction.** Each partition's compactor — the rendezvous owner of a
+  synthetic key — folds segments into snapshots once eight have collected, and
+  drops deletions an hour after they were written.
+- **Shedding.** Under `WithMemoryBudget`, an owned key may be dropped from
+  memory; it is never dropped from storage, and comes back on its next access.
+- **An unavailable store** never fails a write: records wait, one per key, and
+  are counted against the memory budget. A restore that cannot read the store
+  serves the partition from memory and retries a second later.
+
+Backends implement `persist.BlobStore`, four methods with an atomic `Put`, and
+run the contract in `persist/persisttest`. `persist.Memory` is for tests.
+`PersistPending`, `PersistFlushes`, `PersistRecordsWritten`, `PersistFailures`,
+`PersistRestored`, `PersistRestoreFailures`, `PersistCompactions` and
+`PersistCompactFailures` report it.
+
+Measured on Machine A: a persistent `Set` costs about twice a plain one
+(851 ns against 430), and a namespace without persistence is within noise of
+before M14.
 
 ### Hot keys — coalesced misses and `WithReplicaReads`
 
@@ -1067,13 +1107,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 50 series come out of it.
+format with the content type a scraper expects, and 58 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 50 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 58 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

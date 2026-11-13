@@ -7,6 +7,7 @@ import (
 
 	"github.com/arwenizEr/peercache"
 	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/persist"
 )
 
 // benchCache builds a cache on the real clock, since a benchmark measures real
@@ -167,6 +168,25 @@ func BenchmarkNamespaceSetParallel(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// BenchmarkPersistentSet is BenchmarkNamespaceSet in a persistent namespace:
+// the store write plus a hybrid-logical-clock order and a record in the dirty
+// map. The flush runs on its own goroutine and is not on this path.
+func BenchmarkPersistentSet(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench", peercache.WithPersistence(persist.Memory()))
+	ctx := context.Background()
+	ks := benchKeys(1 << 16)
+	value := make([]byte, 64)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ns.Set(ctx, ks[i%len(ks)], value, time.Minute); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+	}
 }
 
 // BenchmarkNamespaceIncrement is decision 0027's cost criterion: a local

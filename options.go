@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/persist"
 )
 
 // Option configures a [Cache] at construction. Options apply in order, so a
@@ -317,6 +318,31 @@ func WithReplicationFactor(rf int) NamespaceOption {
 // docs/decisions/0028-hot-key-reads.md.
 func WithReplicaReads() NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.ReplicaReads = true }
+}
+
+// WithPersistence makes the namespace persistent: its owners write every change
+// behind to store, so that keys survive the loss of every node holding them.
+//
+// Writes are recorded in memory and flushed every 100 ms as immutable segment
+// objects, one per partition touched; a write is acknowledged before its flush,
+// so a crash loses at most the last flush interval. A node that comes to own
+// keys it does not hold — at start, or because every holder of them died —
+// restores them from store on first access, keeping whichever of memory and
+// storage is newer. Each partition's compactor folds its segments into
+// snapshots and drops deletions after an hour's grace. Shedding under
+// WithMemoryBudget drops a key from memory, never from store; it comes back on
+// its next access.
+//
+// Writes are ordered by a hybrid logical clock carried through replication and
+// promotion. Two writes to one key by owners that never exchanged an order,
+// closer together than their clocks' skew, may be restored in either order, and
+// conflicting writes from a network partition are resolved last writer wins.
+//
+// store must be the same on every node. persist.Memory is for tests; real
+// backends live in package persist and in separate modules. See
+// docs/decisions/0029-persistence-as-a-segment-log.md.
+func WithPersistence(store persist.BlobStore) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.Persistence = store }
 }
 
 // WithCodec names the registered codec used for typed values.

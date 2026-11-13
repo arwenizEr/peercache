@@ -24,6 +24,9 @@ type UpdateResult struct {
 	// ExpiresAt is the stored entry's deadline in Unix nanoseconds, zero
 	// for none, on the same terms as Version.
 	ExpiresAt int64
+	// Order is the write's persistence order, or zero without
+	// [Options.Order] or when nothing was written.
+	Order uint64
 }
 
 // Update is the store's one read-modify-write: it calls fn with key's live
@@ -78,12 +81,13 @@ func (s *Store) Update(key string, fn func(cur []byte, ok bool) (m Mutation, wri
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	order := s.nextOrder()
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
 	}
 	sh.bytes.Add(delta)
 	sh.sets.Add(1)
-	return UpdateResult{Wrote: true, Version: version, ExpiresAt: expiresAt}, nil
+	return UpdateResult{Wrote: true, Version: version, ExpiresAt: expiresAt, Order: order}, nil
 }

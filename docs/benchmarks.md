@@ -978,6 +978,33 @@ RF 3 write on its owner, medians of five:
 `Replicas` cloned every member, so the old write cost grew with the cluster;
 the new one barely does.
 
+## M14 — opt-in persistence
+
+Machine A, `go test . -run '^$' -bench 'BenchmarkNamespace(Set|Get)$|BenchmarkPersistentSet$' -benchmem -count 5`,
+medians. "Before" is `c33d0fd`, the last commit before any M14 code, built in a
+worktree in the same session.
+
+| | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `BenchmarkNamespaceGet`, before | 420.0 | 0 | 0 |
+| `BenchmarkNamespaceGet`, after | 439.3 | 0 | 0 |
+| `BenchmarkNamespaceSet`, before | 512.1 | 86 | 2 |
+| `BenchmarkNamespaceSet`, after | 429.6 | 86 | 2 |
+| `BenchmarkPersistentSet` | 851.1 | 906 | 4 |
+
+A namespace without persistence is within noise: the five `Get` runs span
+387–436 ns before and 417–463 after, the allocations are identical, and `Set`
+came out faster, which is noise in the other direction. The added work on the
+path is a nil check.
+
+A persistent write is about twice a plain one. The time is the clock read and
+the record; the bytes are mostly the dirty map, which is replaced by a fresh one
+at every flush and regrown, amortised over the writes between. Reusing it is
+the obvious next step and is not done yet.
+
+The loss window — write acknowledged to record durable — belongs to a real
+backend and is measured with `persist.Dir` in M14c.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

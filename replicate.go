@@ -69,7 +69,9 @@ type replicaWork struct {
 	ttl       time.Duration
 	stamp     core.Stamp
 	deleted   bool
-	targets   []core.Node
+	// order is the write's persistence order; see wire.ReplicateRequest.
+	order   uint64
+	targets []core.Node
 }
 
 func newReplicator(c *cache) *replicator {
@@ -169,6 +171,7 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		Stamp:     w.stamp,
 		From:      r.cache.self().ID,
 		Deleted:   w.deleted,
+		Order:     w.order,
 	}
 
 	var failures error

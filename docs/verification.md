@@ -2202,6 +2202,31 @@ check of every entry's text against its file found five that M9 and the coverage
 sweep had silently turned into skips; they were repointed first. The drain entry
 recorded above as flaky was caught.
 
+### The full audit after M14b: 236, eleven repointed, one re-aimed
+
+Every entry run end to end after M14b, on Machine A, in 20 m 45 s: **caught:
+224, vacuous: 1, skipped: 11**. Not a clean run, and recorded as it was.
+
+The eleven skips were entries whose code the persistence plumbing had
+reshaped — order arguments threaded through `fanOut` and `Restore`, the
+`err :=` form open question 45 introduced, the `scan` refactor. Each was
+regenerated against the code as it is, its text asserted present exactly once.
+
+The vacuous one was "a promoted replica's order is not carried". Its test no
+longer showed it, because observing an order on receipt is what makes the
+replica's next write win. What the carried order protects is a later restore:
+installed at order zero, a promoted value is outranked by any stored record.
+`TestARestoreDoesNotUndoAPromotedWrite` was written for it — and was itself
+vacuous twice before it worked. First a restore's overlay of pending records
+masked the case; then it turned out the test helper `flushAll` returned when the
+pending map emptied, which a flush does *before* its writes reach the store, so
+the test had been running against an empty store. Both are fixed; the helper
+now waits for the flush counter.
+
+The twelve were then run by name: **caught: 12, vacuous: 0, skipped: 0, tree
+clean**. No library code changed between that and the full run, so the 236 are
+accounted for — but by two runs, not one, and this says so.
+
 ### The full audit after M13: 200 of 200
 
 Every entry run end to end after M13, on Machine A, in 18 m 5 s: **caught: 197,
@@ -2374,9 +2399,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-docs/design.md §4 carries eleven `**Acceptance:**` blocks, M0 through M6, M9, M10, M12 and M13;
+docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to forty-nine. Each one, and the named test that would fail if it regressed:
+testable claims they come to fifty-six. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2429,8 +2454,15 @@ testable claims they come to forty-nine. Each one, and the named test that would
 | M13 | with replication and invalidations lost, every node reads the new value one TTL later, and a replica copy is cached only for what is left of its TTL | `TestADroppedReplicationIsReadAfterOneTTL`, `TestAReplicaCopyIsCachedForWhatIsLeftOfItsTTL` |
 | M13 | replica reads at RF 1 or without an L1 tier are ErrInvalidOption | `TestReplicaReadsNeedReplicasAndAnL1` |
 | M13 | the coalesced and replica-read paths, measured | `BenchmarkRemoteGetOneHotKey`, `BenchmarkColdRemoteGet`, recorded in docs/benchmarks.md |
+| M14 | killing every holder of a key restores it on its new owner | `TestKillingEveryHolderRestoresFromStorage` |
+| M14 | a full restart reads every flushed key, and no deleted or expired one | `TestAWholeClusterRestartRestoresEverything`, `TestAColdStartRestoresWhatWasFlushed` |
+| M14 | a restore merges every snapshot; a failed snapshot deletes nothing | `TestARestoreMergesEverySnapshot`, `TestAFailedSnapshotDeletesNothing` |
+| M14 | a promoted replica's next write outranks its dead owner's records | `TestAPromotedReplicasWriteOutranksItsOldOwner` |
+| M14 | a shed owned key is restored on its next access | `TestAShedKeyIsRestoredNotLost` |
+| M14 | an unavailable store fails no write and loses nothing; a restore that cannot read it degrades to memory | `TestAnUnavailableStoreLosesNothing`, `TestAnUnavailableStoreDegradesToMemory` |
+| M14 | a namespace without persistence within noise of before, measured | `BenchmarkNamespaceSet`, `BenchmarkNamespaceGet`, `BenchmarkPersistentSet`, recorded in docs/benchmarks.md |
 
-All fifty-four names in the table were verified to exist before it was
+All sixty-three names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

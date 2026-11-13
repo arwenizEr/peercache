@@ -19,6 +19,12 @@ change the public API.
   Decision 0028.
 - `Stats.CoalescedReads`, `ReplicaReadsServed`, `ReplicaReadsReferred` and
   `ReplicaReadsFloored`, and their four metric series.
+- Opt-in persistence: `WithPersistence(persist.BlobStore)` writes a namespace
+  behind to a blob store as immutable segments, restores keys whose every
+  holder died, and compacts segments into snapshots. New package `persist`
+  (the `BlobStore` interface, `Memory`, and the `persisttest` contract suite);
+  eight `Persist*` stats and metric series. Design principle 4 changed to allow
+  it. Decision 0029, superseding 0026.
 
 ### Changed
 

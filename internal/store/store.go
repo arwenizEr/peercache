@@ -58,6 +58,13 @@ type Options struct {
 	SweepInterval time.Duration
 	// SweepShardsPerTick is how many shards one sweep visits.
 	SweepShardsPerTick int
+	// Order, if set, issues the persistence order of every write. It is
+	// called under the shard lock, so a key's orders rise in the same
+	// sequence as its versions: two concurrent writes can never be stored
+	// in one order and persisted in the other. Nil for a namespace without
+	// persistence, whose entries carry order zero. See
+	// docs/decisions/0029-persistence-as-a-segment-log.md.
+	Order func() uint64
 }
 
 // entry is one stored value.
@@ -70,6 +77,9 @@ type entry struct {
 	val       []byte
 	expiresAt int64
 	version   uint64
+	// order is the write's persistence order, or zero in a namespace
+	// without persistence. See [Options.Order].
+	order uint64
 }
 
 // shard is one independently locked partition.
@@ -113,6 +123,8 @@ type Store struct {
 	shards []*shard
 	mask   uint64
 	clk    clock.Clock
+	// order issues persistence orders; see [Options.Order].
+	order func() uint64
 
 	sweepPerTick int
 	// cursor is the next shard the sweeper will visit. It is only touched
@@ -155,6 +167,7 @@ func New(opts Options) (*Store, error) {
 		shards:       make([]*shard, count),
 		mask:         uint64(count - 1),
 		clk:          opts.Clock,
+		order:        opts.Order,
 		sweepPerTick: opts.SweepShardsPerTick,
 		done:         make(chan struct{}),
 		stopped:      make(chan struct{}),
@@ -278,6 +291,20 @@ func (s *Store) Exists(key string) bool {
 // "lower version" as proof that a value is stale; see docs/decisions/open.md
 // question 18.
 func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
+	return s.Put(key, val, ttl).Version
+}
+
+// Write is what one write to the store assigned.
+type Write struct {
+	Version uint64
+	// Order is the persistence order, or zero without [Options.Order].
+	Order uint64
+	// ExpiresAt is the stored deadline in Unix nanoseconds, zero for none.
+	ExpiresAt int64
+}
+
+// Put is [Store.Set], also reporting the order the write was given.
+func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 	var expiresAt int64
 	if ttl > 0 {
 		expiresAt = deadlineNanos(s.clk.Now(), ttl)
@@ -295,7 +322,8 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	order := s.nextOrder()
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -304,7 +332,29 @@ func (s *Store) Set(key string, val []byte, ttl time.Duration) uint64 {
 	sh.mu.Unlock()
 
 	sh.sets.Add(1)
-	return version
+	return Write{Version: version, Order: order, ExpiresAt: expiresAt}
+}
+
+// nextOrder issues an order, or zero without [Options.Order]. Callers hold the
+// shard lock.
+func (s *Store) nextOrder() uint64 {
+	if s.order == nil {
+		return 0
+	}
+	return s.order()
+}
+
+// Order returns the persistence order of key's live entry. A restore from
+// storage merges a record only if it is newer than this.
+func (s *Store) Order(key string) (uint64, bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, ok := sh.entries[key]
+	sh.mu.RUnlock()
+	if !ok || (e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt) {
+		return 0, false
+	}
+	return e.order, true
 }
 
 // SetIfAbsent stores val under key for ttl unless a live entry is already
@@ -335,7 +385,7 @@ func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, 
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()}
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -404,7 +454,7 @@ func (s *Store) Snapshot(after string, limit int, want func(key string) bool) ([
 		if ok && (e.expiresAt == 0 || now < e.expiresAt) {
 			val := make([]byte, len(e.val))
 			copy(val, e.val)
-			page = append(page, SnapshotEntry{Key: key, Value: val, Version: e.version, ExpiresAt: e.expiresAt})
+			page = append(page, SnapshotEntry{Key: key, Value: val, Version: e.version, ExpiresAt: e.expiresAt, Order: e.order})
 		}
 		// A key removed between the two passes is simply absent from the
 		// page. The caller's cursor is the last key returned, so the next
@@ -425,6 +475,9 @@ type SnapshotEntry struct {
 	// expiry. Sent as an absolute instant rather than a remaining duration
 	// so that a slow transfer does not extend the key's life.
 	ExpiresAt int64
+	// Order is the entry's persistence order, carried for the same reason
+	// as Version: a node that later owns the key must continue it.
+	Order uint64
 }
 
 // Restore installs a value at a version chosen by the caller, reporting
@@ -440,7 +493,11 @@ type SnapshotEntry struct {
 // ordinary writes — a caller can write to this node between the moment it
 // becomes the owner and the moment the drain reaches a key — and the newer
 // value must win whichever arrived first.
-func (s *Store) Restore(key string, val []byte, ttl time.Duration, version uint64) bool {
+//
+// order is the persistence order the value was written under, carried with the
+// replica; it is installed as it is, never reissued, so that the promoted value
+// keeps its place in the key's history.
+func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, order uint64) bool {
 	var expiresAt int64
 	if ttl > 0 {
 		expiresAt = deadlineNanos(s.clk.Now(), ttl)
@@ -457,7 +514,7 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version uint6
 	if ok && existing.version >= version {
 		return false
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
 	delta := size(key, stored)
 	if ok {
 		delta -= size(key, existing.val)
@@ -473,9 +530,19 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version uint6
 // holds. The boolean distinguishes the two for callers that care, such as
 // metrics.
 func (s *Store) Delete(key string) bool {
+	existed, _ := s.Remove(key)
+	return existed
+}
+
+// Remove is [Store.Delete], also returning the order the deletion was given.
+// A deletion gets an order whether or not the key was present: its tombstone
+// is persisted either way, because an older write of the key may already be in
+// storage and must not come back on restore.
+func (s *Store) Remove(key string) (bool, uint64) {
 	sh := s.shardFor(key)
 
 	sh.mu.Lock()
+	order := s.nextOrder()
 	e, ok := sh.entries[key]
 	if ok {
 		delete(sh.entries, key)
@@ -492,14 +559,14 @@ func (s *Store) Delete(key string) bool {
 
 	sh.deletes.Add(1)
 	if !ok {
-		return false
+		return false, order
 	}
 	if e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt {
 		// It was already gone as far as any reader was concerned, so
 		// report it as absent even though bytes were reclaimed.
-		return false
+		return false, order
 	}
-	return true
+	return true, order
 }
 
 // Len returns the number of stored entries.
@@ -708,4 +775,56 @@ func (s *Store) Close() error {
 	})
 	<-s.stopped
 	return nil
+}
+
+// MergeIfNewer applies a record read back from persistent storage, reporting
+// whether it changed anything.
+//
+// A record is applied only if this store holds nothing live for key, or holds
+// something with a lower order: memory that is newer than storage always wins,
+// which is what makes a restore safe to run concurrently with writes, more than
+// once, and in any order. A value is installed at a fresh version, as a first
+// write would be, above the shard's floor; a tombstone removes an older live
+// entry and does nothing otherwise. The caller drops expired records first.
+func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint64, tombstone bool) bool {
+	var stored []byte
+	if !tombstone {
+		stored = make([]byte, len(val))
+		copy(stored, val)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	old, had := sh.entries[key]
+	live := had && (old.expiresAt == 0 || s.clk.Now().UnixNano() < old.expiresAt)
+	if live && old.order >= order {
+		return false
+	}
+	if tombstone {
+		if !live {
+			return false
+		}
+		delete(sh.entries, key)
+		sh.bytes.Add(-size(key, old.val))
+		if old.version > sh.floor {
+			sh.floor = old.version
+		}
+		sh.deletes.Add(1)
+		return true
+	}
+
+	version := old.version + 1
+	if !had && version <= sh.floor {
+		version = sh.floor + 1
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	delta := size(key, stored)
+	if had {
+		delta -= size(key, old.val)
+	}
+	sh.bytes.Add(delta)
+	sh.sets.Add(1)
+	return true
 }

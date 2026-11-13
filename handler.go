@@ -147,6 +147,9 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 
+	if err := ns.awaitRestore(ctx, in.Key); err != nil {
+		return nil, err
+	}
 	stored, version, found := ns.store.Get(in.Key)
 	if !found {
 		return wire.Encode(&wire.GetResponse{})
@@ -358,6 +361,9 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			// the caller must already handle.
 			continue
 		}
+		if err := ns.awaitRestore(ctx, key); err != nil {
+			return nil, err
+		}
 		stored, version, found := ns.store.Get(key)
 		if !found {
 			continue
@@ -481,19 +487,26 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// in.Value is the sender's stored form, framed already, as every
 		// replicated copy is; framing it again stored a frame inside a
 		// frame and handed the header back to the next reader.
-		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {
+		h.cache.observeOrder(in.Order)
+		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {
 			h.cache.keysAdopted.Add(1)
+			if ns.persister != nil && in.Order != 0 {
+				ns.persister.record(in.Key, in.Value,
+					replication.DeadlineFrom(h.cache.opts.Clock.Now().UnixNano(), in.TTLNanos), in.Order, false)
+			}
 		}
 		h.cache.pressure.noteWrite(len(in.Value))
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 
 	now := h.cache.opts.Clock.Now().UnixNano()
+	h.cache.observeOrder(in.Order)
 	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
 		Value:      in.Value,
 		Stamp:      in.Stamp,
 		ExpiresAt:  replication.DeadlineFrom(now, in.TTLNanos),
 		ReceivedAt: now,
+		Order:      in.Order,
 		From:       in.From,
 	})
 	h.cache.pressure.noteWrite(len(in.Value))
@@ -596,6 +609,7 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 			Value:    ns.encode(value),
 			Stamp:    h.stamp(e.Version),
 			TTLNanos: ttl,
+			Order:    e.Order,
 		})
 	}
 	return wire.Encode(&out)

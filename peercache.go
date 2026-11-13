@@ -14,6 +14,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/codec"
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -219,6 +220,7 @@ func New(opts ...Option) (Cache, error) {
 	}
 
 	c := &cache{
+		orders:     hlc.New(resolved.Clock),
 		opts:       resolved,
 		groups:     groups,
 		guard:      guard,
@@ -398,6 +400,15 @@ type cache struct {
 	replicaReferred atomic.Int64
 	replicaFloored  atomic.Int64
 
+	// orders is the hybrid logical clock that orders writes to persistent
+	// namespaces. One per cache, because every order this node issues or
+	// observes must advance the same clock. See internal/hlc.
+	orders *hlc.Clock
+	// restoreGen counts membership changes. A persistent namespace restores
+	// a partition again on its first access after one, because the change
+	// may have made this node the owner of keys whose every holder died.
+	restoreGen atomic.Uint64
+
 	// degradedWrites counts synchronous writes acknowledged with fewer copies
 	// than the namespace's replication factor asked for. See
 	// docs/decisions/open.md question 37.
@@ -520,17 +531,25 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		ns.framer = framer
 	}
 
+	var order func() uint64
+	if opts.Persistence != nil {
+		order = func() uint64 { return uint64(c.orders.Next()) }
+	}
 	st, err := store.New(store.Options{
 		Shards: opts.Shards,
 		Clock:  c.opts.Clock,
 		// Sweeping is driven by the cache's single sweeper.
 		SweepInterval: 0,
+		Order:         order,
 	})
 	if err != nil {
 		ns.err = err
 		return ns
 	}
 	ns.store = st
+	if opts.Persistence != nil {
+		ns.persister = newPersister(ns, opts.Persistence)
+	}
 
 	// The non-owned tier only exists once there is somewhere else for a key
 	// to live. Without a membership authority this node owns the whole
@@ -642,6 +661,17 @@ func (c *cache) Stats() Stats {
 		stats.Loads += ns.flight.Loads()
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
+		if ns.persister != nil {
+			pc := ns.persister.counters()
+			stats.PersistPending += int64(pc.pending)
+			stats.PersistFlushes += pc.flushes
+			stats.PersistRecordsWritten += pc.written
+			stats.PersistFailures += pc.failures
+			stats.PersistRestored += pc.restored
+			stats.PersistRestoreFailures += pc.restoreFailures
+			stats.PersistCompactions += pc.compactions
+			stats.PersistCompactFailures += pc.compactFailures
+		}
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())
 		}
@@ -777,6 +807,11 @@ func (c *cache) Close(ctx context.Context) error {
 			if ns.store == nil {
 				continue
 			}
+			if ns.persister != nil {
+				if err := ns.persister.Close(ctx); err != nil {
+					closeErr = errors.Join(closeErr, fmt.Errorf("flushing namespace %q: %w", ns.name, err))
+				}
+			}
 			if err := ns.store.Close(); err != nil {
 				closeErr = errors.Join(closeErr, fmt.Errorf("closing namespace %q: %w", ns.name, err))
 			}
@@ -797,3 +832,12 @@ func (c *cache) Close(ctx context.Context) error {
 func (c *cache) isClosed() bool { return c.closed.Load() }
 
 var _ Cache = (*cache)(nil)
+
+// observeOrder advances this node's clock past an order learned from a peer, so
+// that its next write to a persistent namespace outranks it. Zero is a write
+// from a namespace without persistence and carries nothing to learn.
+func (c *cache) observeOrder(order uint64) {
+	if order != 0 {
+		c.orders.Observe(hlc.Order(order))
+	}
+}

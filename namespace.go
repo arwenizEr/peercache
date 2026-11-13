@@ -155,6 +155,10 @@ type namespace struct {
 	//
 	// See docs/decisions/open.md question 13.
 	l1 *l1.Cache
+
+	// persister writes this namespace's owned changes behind to its blob
+	// store. Nil unless the namespace was opened with WithPersistence.
+	persister *persister
 }
 
 // status returns the error every operation on this handle should report, or nil
@@ -236,13 +240,16 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	if p.local {
-		return n.localGet(key)
+		return n.localGet(ctx, key)
 	}
 	return n.remoteGet(ctx, p, key, true)
 }
 
 // localGet reads from this node's owned store.
-func (n *namespace) localGet(key string) ([]byte, error) {
+func (n *namespace) localGet(ctx context.Context, key string) ([]byte, error) {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return nil, err
+	}
 	stored, _, ok := n.store.Get(key)
 	if !ok {
 		// The bare sentinel, not a wrapped one. A miss is routine — it is
@@ -282,7 +289,7 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 				return nil, err
 			}
 			if next.local {
-				return n.localGet(key)
+				return n.localGet(ctx, key)
 			}
 			return n.remoteGet(ctx, next, key, false)
 		}
@@ -550,8 +557,11 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 // comes next, because it is the part a synchronous caller is waiting for. The
 // invalidation hint goes last and is never waited on.
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
-	version := n.store.Set(key, n.encode(val), ttl)
-	stamp := n.stamp(version)
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}
+	written := n.store.Put(key, n.encode(val), ttl)
+	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
 
 	// The invalidation goes out whether or not the fan-out succeeded. A
@@ -559,7 +569,10 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	// here -- there is no rollback -- so every other pod's copy is stale
 	// either way, and skipping the hint made a degraded write staler than
 	// an asynchronous one. Open question 45.
-	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
+	if n.persister != nil {
+		n.persister.record(key, n.encode(val), written.ExpiresAt, written.Order, false)
+	}
+	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		// Only synchronous replication can fail here: asynchronous
@@ -574,7 +587,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 }
 
 // fanOut sends a write or a deletion to this key's replicas.
-func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, deleted bool) error {
+func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, order uint64, deleted bool) error {
 	// The replication factor is checked once, inside replicaTargets, which
 	// is the only place that can act on it. Checking here as well would be
 	// two conditions that must agree forever, and breaking either on purpose
@@ -600,6 +613,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		value:     encoded,
 		ttl:       ttl,
 		stamp:     stamp,
+		order:     order,
 		deleted:   deleted,
 		targets:   targets,
 	}); err != nil {
@@ -731,7 +745,13 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // how the first version ended up replicating only the writes that happened to
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
-	n.store.Delete(key)
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}
+	_, order := n.store.Remove(key)
+	if n.persister != nil {
+		n.persister.record(key, nil, 0, order, true)
+	}
 	// A deletion invalidates every cached copy. The stamp carries this
 	// node's epoch with a version above anything the deleted entry could
 	// have held, so a peer holding an older copy drops it; a peer that has
@@ -741,7 +761,7 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 	// the key the moment it was promoted, which is worse than never having
 	// replicated it at all.
 	// Invalidated whether or not the fan-out succeeded; see localSet.
-	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
+	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
 	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	if err != nil {
 		return err
@@ -766,6 +786,9 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	if p.local {
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return false, err
+		}
 		return n.store.Exists(key), nil
 	}
 
@@ -844,6 +867,9 @@ func (n *namespace) localBatchGet(ctx context.Context, keys []string, out map[st
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+		}
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return err
 		}
 		stored, _, ok := n.store.Get(key)
 		if !ok {
@@ -953,6 +979,9 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 
 // localGetOrLoad is the single-node path: resident, or loaded under the flight.
 func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, error) {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return nil, err
+	}
 	if n.opts.Loader == nil {
 		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
 	}
@@ -1035,3 +1064,13 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 }
 
 var _ Namespace = (*namespace)(nil)
+
+// awaitRestore waits, in a persistent namespace, for key's partition to be
+// restored since the last membership change; see persister.await. Elsewhere it
+// is free.
+func (n *namespace) awaitRestore(ctx context.Context, key string) error {
+	if n.persister == nil {
+		return nil
+	}
+	return n.persister.await(ctx, key)
+}

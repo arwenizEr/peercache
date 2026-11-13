@@ -1,6 +1,6 @@
 # 0029 — Opt-in persistence as a segment log over a blob store
 
-**Status:** accepted, not yet built. Supersedes 0026.
+**Status:** accepted; M14b built, M14c and M14d not yet. Supersedes 0026.
 **Milestone:** M14, in four parts (below).
 **Changes:** design principle 4 (docs/design.md, CLAUDE.md). It said
 "Durability: none… nothing is written to disk in v1". On 2026-11-13 the project

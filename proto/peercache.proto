@@ -291,6 +291,9 @@ message ReplicateRequest {
   // deleted marks a removal rather than a write. A deletion has to replicate:
   // a replica that missed it would resurrect the key on promotion.
   bool deleted = 7;
+  // order is the write's persistence order, zero in a namespace without
+  // persistence. A promoted replica continues it.
+  uint64 order = 8;
 }
 
 message ReplicateResponse {
@@ -327,6 +330,7 @@ message CatchUpEntry {
   bytes value = 2;
   Stamp stamp = 3;
   int64 ttl_ns = 4;
+  uint64 order = 5;
 }
 
 message InvalidateRequest {

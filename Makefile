@@ -106,6 +106,7 @@ fuzz:
 	$(GO) test ./internal/codec -run '^$$' -fuzz '^FuzzCodecRoundTrip$$' -fuzztime $(FUZZTIME)
 	$(GO) test ./internal/wire -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME)
 	$(GO) test ./internal/wire -run '^$$' -fuzz '^FuzzDecodeEveryMessage$$' -fuzztime $(FUZZTIME)
+	$(GO) test ./internal/segment -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME)
 	$(GO) test . -run '^$$' -fuzz '^FuzzPartitionByPrefix$$' -fuzztime $(FUZZTIME)
 
 ## bench-l1-eval re-runs the L1 cache-library comparison. It lives in a nested
