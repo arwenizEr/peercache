@@ -9,6 +9,12 @@ change the public API.
 
 ### Added
 
+- `WithCatchUpGate`: a node refuses its peers' operations on keys it owns, in
+  namespaces with replicas, with `ErrActivationPending` until its first
+  `CatchUp` completes. Readiness keeps clients away from a restarted node but
+  not peers, whose forwarded writes landed on a base catch-up had not yet
+  restored and were then discarded as older. Opt-in. Found by M16's kill -9
+  on kind (open question 49).
 - `github.com/arwenizEr/peercache/otel`, an OpenTelemetry bridge in its own
   module: one observable instrument per metric series, with the node as an
   attribute and counters named so the Prometheus exporter does not double their

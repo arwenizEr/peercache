@@ -107,7 +107,9 @@ preStop        -> POST /drain -> cache.Drain(ctx)
 not yet hold what it owns. A node becomes an owner the instant it joins, because
 every peer recomputes the ranking — but it holds nothing until `CatchUp` runs.
 In between it answers `ErrNotFound`, confidently, for data that exists
-elsewhere. Without the gate, a rolling upgrade serves misses for a fraction of
+elsewhere. Readiness keeps clients away in that window, not peers, which forward
+writes to the new owner at once; open the cache with `WithCatchUpGate()` so they
+are held until catch-up completes (docs/api.md, "WithCatchUpGate"). Without the gate, a rolling upgrade serves misses for a fraction of
 the keyspace on every pod replacement.
 
 **PreStop** drains: mark unready, announce departure, hand off owned keys,

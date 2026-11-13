@@ -709,10 +709,33 @@ func (h *peerHandler) assertOwned(namespace, key string) error {
 		return nil
 	}
 	groupKey := key
-	if ns, ok := h.localNamespace(namespace); ok && ns.err == nil {
+	ns, ok := h.localNamespace(namespace)
+	if ok && ns.err == nil {
 		groupKey = ns.groupKeyFor(key)
 	}
-	return h.cache.guard.CanActivate(groupKey)
+	if err := h.cache.guard.CanActivate(groupKey); err != nil {
+		return err
+	}
+	// With WithCatchUpGate: a node that has not finished a catch-up since it
+	// started owns its keys
+	// but may not hold them: their newest copies are on its replicas. Serving
+	// a peer's write now would apply it to an empty or persisted-but-older
+	// base — an Increment counting from the wrong value, a SetIfAbsent
+	// succeeding over a key that exists — and the catch-up that follows
+	// would then discard the acknowledged write as older than the copy it
+	// brings. So until the first catch-up completes, a namespace with
+	// replicas to catch up from answers "ask again here shortly", which every
+	// caller already retries. Readiness waits for the same event; this
+	// closes the path readiness does not gate, peers forwarding to an owner.
+	// Opt-in, because a node whose application never calls CatchUp would
+	// refuse its peers indefinitely. Found by M16's kill -9 on kind; open
+	// question 49, part two.
+	if h.cache.opts.CatchUpGate && ok && ns.err == nil && ns.opts.ReplicationFactor >= 2 &&
+		!h.cache.readiness.caughtUp.Load() {
+		return fmt.Errorf("peercache: %q is owned here, but this node has not caught up since it started: %w",
+			key, core.ErrActivationPending)
+	}
+	return nil
 }
 
 // stamp pairs a store version with this node's current epoch.
