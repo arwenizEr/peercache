@@ -1481,3 +1481,21 @@ and 5 allocations at 7 nodes and 13 µs at 64 (docs/benchmarks.md, M13).
 140 ns and 525 ns with no allocation, and is tested to agree. Moving the write
 path to it is a contained change with a measurable benefit at large
 memberships; it was left out of M13 to keep that milestone to reads.
+
+---
+
+## 47. An internal sentinel escaped `Do` under concurrent refusals — found in M13, resolved
+
+`actor.Runtime.Do` retried once when the record it looked up had been removed
+by a refused activation on another goroutine. The fresh record could be removed
+the same way before the retry reached it, and then `errRecordRemoved` — an
+internal "look again" signal — was returned to the caller.
+`TestRecordRemovalIsSafeUnderConcurrentCallers` caught it about twice in two
+hundred race-detector runs, and the M13 race gate is where it first surfaced.
+
+**Fix:** the retry is a loop, bounded by the caller's context. Each pass means
+another caller's activation was refused, so it is progress, not a spin. A
+thousand runs under `-race` pass where two hundred failed twice. There is no
+mutation entry: reverting to a single retry fails one run in a hundred, and an
+audit entry that is caught by chance is the vacuous kind the audit exists to
+expose.

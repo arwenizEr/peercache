@@ -83,6 +83,9 @@ type replicaFabric struct {
 	*fabric
 	rf      int
 	filters map[string]*filteringTransport
+	// writes counts Sets this fabric made, so that drainReplication knows
+	// how many fan-outs to wait for.
+	writes int
 }
 
 type replicaFabricConfig struct {
@@ -198,6 +201,26 @@ func (r *replicaFabric) set(t *testing.T, ns, key, val string) {
 	if err := r.caches[owner].Namespace(ns).Set(context.Background(), key, []byte(val), 0); err != nil {
 		t.Fatalf("Set(%s, %q) on %s: %v", ns, key, owner, err)
 	}
+	r.writes++
+}
+
+// drainReplication waits until every write this fabric made has been fanned
+// out to each of its replicas, successfully or not.
+//
+// Waiting for one sender's count to rise is not enough under asynchronous
+// replication: a probe write made earlier can land first and satisfy it, which
+// is exactly how the floor test once primed its reader from an empty replica.
+func (r *replicaFabric) drainReplication(t *testing.T) {
+	t.Helper()
+	want := int64(r.writes * (r.rf - 1))
+	waitFor(t, "every queued replication to be sent", func() bool {
+		var done int64
+		for _, id := range r.ids {
+			s := r.caches[id].Stats()
+			done += s.ReplicationsSent + s.ReplicationsFailed + s.ReplicationsDropped
+		}
+		return done >= want
+	})
 }
 
 // setDegraded writes key on its owner while a test is refusing replication to
@@ -385,11 +408,8 @@ func TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded(t *testing.T) {
 	r := newReplicaFabric(t, replicaFabricConfig{nodes: 5, rf: 2})
 	p := r.findPick(t, remoteReader)
 
-	replicated := r.caches[p.owner].Stats().ReplicationsSent
 	r.set(t, "hot", p.key, "v1")
-	waitFor(t, "v1 to reach the replica", func() bool {
-		return r.caches[p.owner].Stats().ReplicationsSent > replicated
-	})
+	r.drainReplication(t)
 	if d := r.read("hot", p.reader, p.key); d.err != nil || string(d.val) != "v1" || d.served[p.replica] != 1 {
 		t.Fatalf("priming read = %q, %v, served by replica %d", d.val, d.err, d.served[p.replica])
 	}

@@ -218,9 +218,18 @@ func (rt *Runtime) Do(ctx context.Context, id string, fn func(core.GroupState) (
 		return nil, err
 	}
 	out, err := r.enqueue(ctx, fn, true)
-	if errors.Is(err, errRecordRemoved) {
-		// Removed after the lookup, by a refused activation on another
-		// goroutine. The fresh record is the one to use.
+	// Removed after the lookup, by a refused activation on another
+	// goroutine; the fresh record is the one to use. It is a loop, not one
+	// retry: the fresh record can be removed the same way before this
+	// caller reaches it, and a single retry let the internal sentinel
+	// escape to the caller about once in a hundred runs of
+	// TestRecordRemovalIsSafeUnderConcurrentCallers. Each pass means
+	// another caller's activation was refused, which is progress, and the
+	// context still bounds the wait.
+	for errors.Is(err, errRecordRemoved) {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		if r, err = rt.record(id); err != nil {
 			return nil, err
 		}
