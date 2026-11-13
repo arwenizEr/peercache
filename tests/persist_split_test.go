@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -132,15 +133,41 @@ func TestAFailedSplitLosesNothing(t *testing.T) {
 	}
 }
 
+// signallingStore reports every Put on a channel before doing it.
+type signallingStore struct {
+	persist.BlobStore
+	puts chan string
+}
+
+func (s *signallingStore) Put(ctx context.Context, name string, data []byte) error {
+	select {
+	case s.puts <- name:
+	default:
+	}
+	return s.BlobStore.Put(ctx, name, data)
+}
+
+// TestWithFlushIntervalSetsTheCadence: with a one-second interval, 100 ms
+// passing writes nothing and one second does.
+//
+// "Nothing yet" right after advancing the clock proves nothing — a flush the
+// tick started may not have run — so the store reports every Put on a channel
+// and the test watches it across many yields, which a started flush would not
+// outlast.
 func TestWithFlushIntervalSetsTheCadence(t *testing.T) {
-	store := persist.Memory()
+	store := &signallingStore{BlobStore: persist.Memory(), puts: make(chan string, 16)}
 	c, fc := newCache(t)
 	ns := c.Namespace("slow", peercache.WithPersistence(store, persist.WithFlushInterval(time.Second)))
 	_ = ns.Set(context.Background(), "k", []byte("v"), 0)
 
 	fc.Advance(flushInterval)
-	if got := c.Stats().PersistFlushes; got != 0 {
-		t.Fatalf("flushed %d times after 100 ms with a one-second interval", got)
+	for i := 0; i < 200_000; i++ {
+		select {
+		case name := <-store.puts:
+			t.Fatalf("wrote %s 100 ms in, with a one-second flush interval", name)
+		default:
+		}
+		runtime.Gosched()
 	}
 	fc.Advance(time.Second - flushInterval)
 	waitFor(t, "the one-second flush", func() bool { return c.Stats().PersistFlushes == 1 })
