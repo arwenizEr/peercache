@@ -2419,7 +2419,7 @@ level up.
 
 docs/design.md §4 carries thirteen `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13, M14 and M15;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to sixty-eight. Each one, and the named test that would fail if it regressed:
+testable claims they come to seventy. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2491,8 +2491,10 @@ testable claims they come to sixty-eight. Each one, and the named test that woul
 | M15 | DescribeKey agrees on owner and holders everywhere and tells each node's role and copies truly | `TestEveryNodeDescribesAKeyTheSameWay`, `TestDescribeKeyOfAnUnopenedNamespaceIsNotFound` |
 | M15 | no description or placement contains a value | `TestADescriptionNeverContainsAValue` |
 | M15 | the debug handler serves JSON, refuses other methods, and answers bad requests with a 4xx | `TestTheDebugHandlerServesJSONAndRefusesTheRest` |
+| M15 | the OpenTelemetry bridge makes each series one instrument of its kind, with help, node attribute and a counter's name less _total | `TestEverySeriesIsBridged`, `TestCounterNamesDropTheirTotal` |
+| M15 | the bridge follows the cache between collections and stops when unregistered | `TestValuesFollowTheCache`, `TestUnregisterStopsObserving` |
 
-All eighty-one names in the table were verified to exist before it was
+All eighty-five names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

@@ -594,7 +594,7 @@ through a restart in one PUT per flush.
 What a node believes, on request, and the measurements in OpenTelemetry. In
 parts: **M15a** introspection (`decisions/0031-introspection.md`) — `Describe`,
 `DescribeKey` and `DebugHandler`, standard library only; **M15b** an
-OpenTelemetry bridge as a separate module.
+OpenTelemetry bridge as a separate module (`decisions/0032-opentelemetry-bridge.md`).
 
 **Acceptance:** Describe reports this node, the members and epoch of its view,
 its readiness, and each namespace's options and counts, persistence included;
@@ -602,7 +602,10 @@ DescribeKey names the same owner and holders on every node of a cluster and
 says truly whether each holds the key as owner, replica or L1 copy; no
 description or placement contains a value; the debug handler serves its three
 routes as JSON, refuses other methods, and reports a missing parameter or an
-unopened namespace as a 4xx.
+unopened namespace as a 4xx; the OpenTelemetry bridge makes every series exactly
+one instrument of its kind, with its help and the node attribute, drops a
+counter's trailing _total, follows the cache between collections, and observes
+nothing once unregistered.
 
 ---
 
