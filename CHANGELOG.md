@@ -50,6 +50,11 @@ change the public API.
 
 ### Changed
 
+- A synchronous write applied on its owner whose replication then fails now
+  returns an error wrapping `ErrUnderReplicated` — written, held below its
+  factor — and is counted in `DegradedWrites`, instead of an error that could
+  not be told apart from a refusal and lost its identity across a forwarding
+  hop. Found by M16's real-world run (open question 37, option 2).
 - Tests live in `tests/` and `tests/repo/` instead of the root directory.
 - Concurrent `Get` misses of one key owned elsewhere share one request to its
   owner instead of sending one each.

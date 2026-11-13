@@ -1070,6 +1070,24 @@ genuine partitions, which would make flipping the default cheap.
 
 ---
 
+**Option 2 is done too — found by M16's real-world run (2026-11-13).** The
+partial-failure case above was where it hurt. A shop demo under load had a node
+killed with SIGKILL; for the seconds before the others noticed, synchronous
+writes to keys it replicated failed, *after* being applied on their owners. The
+application could not tell an applied `Increment` from a refused one, and its
+stock counts drifted both ways. The error also lost its identity: a write from a
+non-owner reached its owner over gRPC, and `ErrNodeUnreachable` did not survive
+the way back, so the application saw an opaque failure.
+
+Now a synchronous write applied on its owner whose replication fails for any
+reason returns an error wrapping `ErrUnderReplicated` — "written, held by fewer
+nodes than its factor" — and is counted in `DegradedWrites`, the same as the
+shrunken-view case. The transport checks it before deadline and cancellation,
+so a replication that ran out of time still says "held". Option 3 — refusing —
+remains what `WithRequireReplicationFactor` is for.
+`TestAFailedSyncReplicationReportsTheWriteAsHeld` covers both a direct and a
+forwarded write.
+
 ## 38. A simulation seed still loses keys after a single destruction — M8, resolved
 
 Seed `601996618416914900` lost two keys acknowledged under synchronous

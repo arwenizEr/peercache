@@ -181,6 +181,14 @@ func toStatus(err error) error {
 	// application error look like a network fault.
 	code := codes.Unknown
 	switch {
+	case errors.Is(err, core.ErrUnderReplicated):
+		// First: a synchronous write whose replication ran out of time or
+		// lost a replica is still a write that happened, and "held" is
+		// what its caller most needs to know. No gRPC code means "written,
+		// but not to enough nodes", and borrowing one would mislead
+		// anything that reads codes alone, so Internal plus the sentinel's
+		// text, recovered by fromStatus.
+		code = codes.Internal
 	case errors.Is(err, context.DeadlineExceeded):
 		code = codes.DeadlineExceeded
 	case errors.Is(err, context.Canceled):
@@ -208,11 +216,6 @@ func toStatus(err error) error {
 	case errors.Is(err, core.ErrNotAnInteger):
 		// The peer answered and refused; no gRPC code says why. Internal
 		// plus the sentinel's text, recovered by fromStatus.
-		code = codes.Internal
-	case errors.Is(err, core.ErrUnderReplicated):
-		// No gRPC code means "written, but not to enough nodes", and
-		// borrowing one would mislead anything that reads codes alone.
-		// Internal plus the sentinel's text, recovered by fromStatus.
 		code = codes.Internal
 	}
 	return status.Error(code, err.Error())

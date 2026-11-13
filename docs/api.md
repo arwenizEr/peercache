@@ -1296,7 +1296,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrNotAnInteger` | `Increment` of a value that is not a base-10 `int64`, or a sum that overflows. The value is unchanged. | no |
 | `ErrCodec` | A typed value would not encode, or stored bytes would not decode as the namespace's type — or a typed group function's argument or result would not. | no — the bytes will not change |
 | `ErrOverMemoryBudget` | `CatchUp` stopped pulling because this node is over its `WithMemoryBudget`. | yes, once memory is available |
-| `ErrUnderReplicated` | A synchronous write could not reach its replication factor, in a namespace opened with `WithRequireReplicationFactor`. The owner holds the value. | yes, once this node sees enough peers |
+| `ErrUnderReplicated` | A synchronous write was applied on its owner but is held by fewer nodes than its factor: a replica did not take the copy, or — with `WithRequireReplicationFactor` — this node sees too few peers. The write happened. | `Set`/`Delete` yes; not `SetIfAbsent`, `CompareAndSwap` or `Increment` — already applied |
 
 **A peer's own failure is not `ErrNodeUnreachable`.** When the peer answered and
 the answer was a failure — a loader whose database is down, say — the error
