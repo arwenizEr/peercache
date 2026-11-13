@@ -271,7 +271,7 @@ func checkout(st *stats, target, order, item, user string) string {
 		case err == nil && code == http.StatusTooManyRequests:
 			return "refused-rate" // nothing was attempted
 		}
-		time.Sleep(time.Duration(200*(attempt+1)) * time.Millisecond)
+		<-time.After(time.Duration(200*(attempt+1)) * time.Millisecond)
 	}
 	return "uncertain"
 }
@@ -403,7 +403,7 @@ func retryGet(url string) (int, string, time.Duration, error) {
 		if err == nil && code != http.StatusServiceUnavailable && code != http.StatusGatewayTimeout {
 			return code, body, took, nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		<-time.After(500 * time.Millisecond)
 	}
 	return code, body, took, err
 }
@@ -437,7 +437,7 @@ func stale(args []string) error {
 				if time.Since(written) > 30*time.Second {
 					return fmt.Errorf("%s never served price %s", u, price)
 				}
-				time.Sleep(10 * time.Millisecond)
+				<-time.After(10 * time.Millisecond)
 			}
 		}
 		waits = append(waits, time.Since(written))
@@ -462,7 +462,7 @@ func limit(args []string) error {
 	// Start just after a window boundary: a burst that straddles two
 	// windows is rightly admitted twice, and would read as a failure.
 	now := time.Now()
-	time.Sleep(time.Until(now.Truncate(time.Minute).Add(time.Minute + time.Second)))
+	<-time.After(time.Until(now.Truncate(time.Minute).Add(time.Minute + time.Second)))
 	start := time.Now()
 	for i := 0; i < total; i++ {
 		wg.Add(1)

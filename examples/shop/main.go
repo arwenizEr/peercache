@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -75,7 +74,7 @@ func main() {
 		httpAddr:   env("HTTP_ADDR", ":8080"),
 	}
 	if err := run(cfg); err != nil {
-		log.Fatal(err)
+		fatal(err)
 	}
 }
 
@@ -146,7 +145,7 @@ func run(cfg config) error {
 
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
-	log.Printf("shop %s serving on %s, peers on %s", cfg.nodeID, cfg.httpAddr, self.Addr)
+	logf("shop %s serving on %s, peers on %s", cfg.nodeID, cfg.httpAddr, self.Addr)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
@@ -160,7 +159,7 @@ func run(cfg config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
 	if err := cache.Drain(ctx); err != nil {
-		log.Printf("drain: %v", err)
+		logf("drain: %v", err)
 	}
 	_ = srv.Shutdown(ctx)
 	return cache.Close(ctx)
@@ -172,8 +171,9 @@ func run(cfg config) error {
 // (docs/api.md, "CatchUp").
 func catchUpLoop(cache peercache.Cache) {
 	var done uint64 = ^uint64(0)
-	for {
-		time.Sleep(2 * time.Second)
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for range tick.C {
 		st := cache.Stats()
 		r := cache.Ready()
 		if !r.Joined || !r.Settled || uint64(st.Epoch) == done {
@@ -183,15 +183,13 @@ func catchUpLoop(cache peercache.Cache) {
 		err := cache.CatchUp(ctx)
 		cancel()
 		if err != nil {
-			log.Printf("catch-up incomplete, will retry: %v", err)
+			logf("catch-up incomplete, will retry: %v", err)
 			continue
 		}
 		done = uint64(st.Epoch)
 	}
 }
 
-// joinLoop resolves the headless service and joins whoever answers, until
-// this node sees someone besides itself.
 // joinLoop joins the cluster and then keeps joining it. memberlist does not
 // reconnect to a peer it has declared dead, so after a partition heals the two
 // sides would stay two clusters — each owning every key — until something
@@ -200,14 +198,16 @@ func catchUpLoop(cache peercache.Cache) {
 func joinLoop(g *membership.Gossip, cfg config) {
 	if explicit := env("SEEDS", ""); explicit != "" {
 		for g.Join(strings.Split(explicit, ",")) != nil {
-			time.Sleep(time.Second)
+			<-time.After(time.Second)
 		}
 		return
 	}
 	if cfg.seedDNS == "" {
 		return
 	}
-	for {
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	for ; ; <-tick.C {
 		ips, err := net.LookupHost(cfg.seedDNS)
 		var seeds []string
 		for _, ip := range ips {
@@ -218,7 +218,6 @@ func joinLoop(g *membership.Gossip, cfg config) {
 		if err == nil && len(seeds) > 0 {
 			_ = g.Join(seeds)
 		}
-		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -254,11 +253,11 @@ func ensureBucket(client *awss3.Client, bucket string) {
 		_, err = client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(bucket)})
 		cancel()
 		if err == nil {
-			log.Printf("created bucket %q", bucket)
+			logf("created bucket %q", bucket)
 			return
 		}
-		log.Printf("bucket %q not ready: %v", bucket, err)
-		time.Sleep(2 * time.Second)
+		logf("bucket %q not ready: %v", bucket, err)
+		<-time.After(2 * time.Second)
 	}
 }
 
@@ -481,7 +480,7 @@ func (s *shop) checkout(w http.ResponseWriter, r *http.Request) {
 		pending(w)
 		return
 	case unknown:
-		log.Printf("checkout %s: decrement unknown, order stays pending: %v", order, err)
+		logf("checkout %s: decrement unknown, order stays pending: %v", order, err)
 		pending(w)
 		return
 	}
@@ -509,7 +508,7 @@ func (s *shop) checkout(w http.ResponseWriter, r *http.Request) {
 	if err := s.retrySet(ctx, func() error {
 		return s.orders.Set(ctx, order, []byte(statePlaced+" "+item), 0)
 	}, true); err != nil {
-		log.Printf("checkout %s: decremented, but not yet marked placed: %v", order, err)
+		logf("checkout %s: decremented, but not yet marked placed: %v", order, err)
 		pending(w)
 		return
 	}
@@ -600,7 +599,20 @@ func fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.DeadlineExceeded):
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
 	default:
-		log.Printf("500: %v", err)
+		logf("500: %v", err)
 		http.Error(w, strings.TrimSpace(err.Error()), http.StatusInternalServerError)
 	}
+}
+
+// logf writes one timestamped line to stderr, which is where a pod's log is
+// collected. The demo is an application, so it logs as one would; the library
+// it embeds takes a Logger and logs nothing by itself.
+func logf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{time.Now().UTC().Format(time.RFC3339Nano)}, args...)...)
+}
+
+// fatal logs v and exits non-zero.
+func fatal(v ...any) {
+	logf("%s", fmt.Sprint(v...))
+	os.Exit(1)
 }
