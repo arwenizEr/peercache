@@ -166,6 +166,34 @@ func ExampleWithPersistence() {
 	// deleted stays deleted: true
 }
 
+// ExampleCache_Describe shows the introspection surface: what this node
+// believes, per namespace and per key. Values never appear in it.
+func ExampleCache_Describe() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	orders := cache.Namespace("orders", peercache.WithReplicationFactor(2))
+	_ = orders.Set(context.Background(), "o:42", []byte("pending"), 0)
+
+	d := cache.Describe()
+	fmt.Println("node:", d.Node.ID, "members:", len(d.Members))
+	for _, ns := range d.Namespaces {
+		fmt.Println("namespace:", ns.Name, "RF", ns.ReplicationFactor, "owned", ns.OwnedKeys)
+	}
+	p, _ := cache.DescribeKey("orders", "o:42")
+	fmt.Println("o:42 owner:", p.Owner, "role:", p.Role, "owned here:", p.Owned)
+
+	// Mounted on an internal admin port, as one would net/http/pprof:
+	//   admin.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))
+	// Output:
+	// node: pod-0 members: 1
+	// namespace: orders RF 2 owned 1
+	// o:42 owner: pod-0 role: owner owned here: true
+}
+
 // ExampleWithLoader shows why GetOrLoad has no loader argument. The loader is
 // registered on the namespace, so it exists by name on every pod and the key's
 // owner can run it locally instead of shipping the miss back to the caller.

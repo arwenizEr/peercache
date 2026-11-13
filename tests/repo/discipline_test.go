@@ -746,6 +746,8 @@ var numberWords = map[int]string{
 	65: "sixty-five", 66: "sixty-six", 67: "sixty-seven", 68: "sixty-eight", 69: "sixty-nine",
 	70: "seventy", 71: "seventy-one", 72: "seventy-two", 73: "seventy-three", 74: "seventy-four",
 	75: "seventy-five", 76: "seventy-six", 77: "seventy-seven", 78: "seventy-eight", 79: "seventy-nine",
+	80: "eighty", 81: "eighty-one", 82: "eighty-two", 83: "eighty-three", 84: "eighty-four",
+	85: "eighty-five", 86: "eighty-six", 87: "eighty-seven", 88: "eighty-eight", 89: "eighty-nine",
 }
 
 // numberFromWord is the reverse lookup, for prose that states a count as a word

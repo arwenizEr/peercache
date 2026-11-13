@@ -399,6 +399,7 @@ handoff.go        Moves replicas on a membership change rather
 ready.go          Readiness, its three conditions, and whether
                   replicas are current for this view
 observe.go        Stats and the metric series they export
+describe.go       Describe, DescribeKey and the debug handler
 pressure.go       The memory budget and the order it sheds in
 probation.go      Keeps young nodes out of the ranking
 persistence.go    Write-behind flush of persistent namespaces to a blob store

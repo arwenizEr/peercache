@@ -2289,6 +2289,44 @@ mutate "persist/s3 lists only the first page" \
   '	for first := true; first && p.HasMorePages(); first = false {' \
   'TestTheStoreMeetsTheContract$' persist/s3::./
 
+# --- introspection (decision 0031, M15a) ---
+
+mutate "DescribeKey never names this node the owner" \
+  describe.go \
+  '				if i == 0 {
+					p.Role = "owner"
+				}' \
+  '' \
+  'TestEveryNodeDescribesAKeyTheSameWay$' ./tests
+
+mutate "the debug handler answers any method" \
+  describe.go \
+  '	if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
+  '	if false {' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+
+mutate "the debug handler accepts a key lookup without a key" \
+  describe.go \
+  '			if namespace == "" || !q.Has("key") {' \
+  '			if namespace == "" {' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+
+mutate "an unknown namespace is not a 404" \
+  describe.go \
+  '			case errors.Is(err, ErrNotFound):
+				return nil, http.StatusNotFound, err' \
+  '			case false:
+				return nil, http.StatusNotFound, err' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+
+mutate "a persistent namespace is described without its persistence" \
+  describe.go \
+  '	if ns.persister != nil {
+		pc := ns.persister.counters()' \
+  '	if false {
+		pc := ns.persister.counters()' \
+  'TestDescribeReportsTheNodeAndItsNamespaces$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

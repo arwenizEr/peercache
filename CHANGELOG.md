@@ -40,6 +40,9 @@ change the public API.
   that no longer answered could outlive the cache and hold up its final flush.
 - A persistent write allocates 437 bytes in 3 allocations instead of 705 in 4:
   the dirty map holds records by value and is recycled between flushes.
+- `Cache.Describe`, `DescribeKey` and `DebugHandler`: what a node believes —
+  its view, readiness, each namespace's options and counts, a key's placement —
+  as Go values and as JSON, never including a value. Decision 0031.
 
 ### Changed
 
