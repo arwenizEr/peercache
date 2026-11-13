@@ -186,6 +186,11 @@ func catchUpLoop(cache peercache.Cache) {
 
 // joinLoop resolves the headless service and joins whoever answers, until
 // this node sees someone besides itself.
+// joinLoop joins the cluster and then keeps joining it. memberlist does not
+// reconnect to a peer it has declared dead, so after a partition heals the two
+// sides would stay two clusters — each owning every key — until something
+// introduces them again. Re-joining the seeds every few seconds is that
+// something; joining a peer already in the view is a cheap state exchange.
 func joinLoop(g *membership.Gossip, cfg config) {
 	if explicit := env("SEEDS", ""); explicit != "" {
 		for g.Join(strings.Split(explicit, ",")) != nil {
@@ -205,11 +210,9 @@ func joinLoop(g *membership.Gossip, cfg config) {
 			}
 		}
 		if err == nil && len(seeds) > 0 {
-			if err := g.Join(seeds); err == nil {
-				return
-			}
+			_ = g.Join(seeds)
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -226,7 +229,31 @@ func blobStore(cfg config) (persist.BlobStore, error) {
 			return aws.Credentials{AccessKeyID: cfg.s3Key, SecretAccessKey: cfg.s3Secret}, nil
 		}),
 	})
+	ensureBucket(client, cfg.s3Bucket)
 	return pcs3.New(client, cfg.s3Bucket, "shop"), nil
+}
+
+// ensureBucket creates the bucket if it is missing, so the demo needs nothing
+// but an S3-compatible endpoint. Every pod tries; all but the first are told
+// it exists. It gives up quietly after a minute: a store that is down at start
+// is a scenario, not a reason to refuse to serve.
+func ensureBucket(client *awss3.Client, bucket string) {
+	for attempt := 0; attempt < 30; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String(bucket)})
+		if err == nil {
+			cancel()
+			return
+		}
+		_, err = client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(bucket)})
+		cancel()
+		if err == nil {
+			log.Printf("created bucket %q", bucket)
+			return
+		}
+		log.Printf("bucket %q not ready: %v", bucket, err)
+		time.Sleep(2 * time.Second)
+	}
 }
 
 type shop struct {

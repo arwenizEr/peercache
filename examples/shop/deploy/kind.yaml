@@ -1,0 +1,11 @@
+# M16's cluster: one control plane and three workers, so a five-pod
+# StatefulSet spreads with at least two pods sharing a worker -- which is what
+# a worker-level partition then splits.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: m16
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

@@ -158,6 +158,7 @@ func run(args []string) error {
 	users := fs.Int("users", 2000, "distinct users")
 	products := fs.Int("products", 500, "distinct products")
 	items := fs.Int("items", 50, "distinct stock items")
+	prefix := fs.String("prefix", "", "stock item name prefix; a fresh one per scenario keeps each run's stock its own")
 	ledgerDir := fs.String("ledger", "ledger", "directory for the checkout ledger")
 	_ = fs.Parse(args)
 
@@ -226,7 +227,7 @@ func run(args []string) error {
 					code, _, took, err := do("GET", *target+"/cart/"+user, user)
 					st.add("cart-get", code, took, err)
 				default:
-					item := fmt.Sprintf("i%d", r.IntN(*items))
+					item := fmt.Sprintf("%si%d", *prefix, r.IntN(*items))
 					order := fmt.Sprintf("%s-%d", runID, seq.Add(1))
 					write(attempted, order+" "+item)
 					outcome := checkout(st, *target, order, item, user)
