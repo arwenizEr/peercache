@@ -2054,9 +2054,8 @@ mutate "a restore skips a corrupt segment" \
 
 mutate "a failed restore is never retried" \
   persistence.go \
-  '		st.failedAt = 0
-' \
-  '' \
+  '			if st.failedAt != 0 && p.clk.Now().UnixNano()-st.failedAt < int64(restoreRetry) {' \
+  '			if st.failedAt != 0 {' \
   'TestAnUnavailableStoreDegradesToMemory$' ./tests
 
 mutate "a restore replaces newer memory" \
