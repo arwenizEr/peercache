@@ -31,6 +31,8 @@ change the public API.
 - `persist.WithFlushInterval`, and one object per flush: a flush writes a single
   log object, which a per-namespace splitter moves into partition segments
   (decision 0030). `PersistSplits` and `PersistSplitFailures`.
+- `github.com/arwenizEr/peercache/persist/s3`, an S3 and S3-compatible backend
+  in its own module, so the AWS SDK enters only programs that choose it.
 
 ### Changed
 

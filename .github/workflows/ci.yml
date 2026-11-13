@@ -96,6 +96,12 @@ jobs:
       - name: l1 evaluation harness compiles
         run: cd internal/l1/eval && go vet ./...
 
+      # persist/s3 is a nested module, for the same reason: the AWS SDK
+      # belongs to programs that choose it. Its tests use an in-memory S3;
+      # the real-endpoint test skips without PEERCACHE_S3_* set.
+      - name: S3 backend
+        run: cd persist/s3 && go vet ./... && go test -race ./...
+
   race:
     name: test -race
     runs-on: ubuntu-latest

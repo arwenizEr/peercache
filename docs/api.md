@@ -339,6 +339,15 @@ run the contract in `persist/persisttest`. Two ship in the core module:
   loss at once is the file system's journal's guarantee, not this package's.
 - `persist.Memory()` survives nothing and is for tests.
 
+And one in its own module, so that the AWS SDK is a dependency only of programs
+that use it:
+
+- `github.com/arwenizEr/peercache/persist/s3` — `s3.New(client, bucket, prefix)`
+  over an aws-sdk-go-v2 S3 client, for S3 and S3-compatible stores (MinIO, R2,
+  Ceph RGW). Several namespaces or clusters can share a bucket under different
+  prefixes. Use `persist.WithFlushInterval(time.Second)` or longer; see the
+  table below.
+
 The loss window on `persist.Dir`, measured on Machine A: a write is durable at
 most one flush interval plus one durable write after it is acknowledged — p99
 104–107 ms against the 100 ms interval.

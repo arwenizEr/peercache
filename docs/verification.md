@@ -2202,6 +2202,21 @@ check of every entry's text against its file found five that M9 and the coverage
 sweep had silently turned into skips; they were repointed first. The drain entry
 recorded above as flaky was caught.
 
+### The S3 backend is outside the audit script, so its mutations were run by hand
+
+`scripts/mutation-audit.sh` runs `go test "$pkg"` from the repository root, and
+`persist/s3` is a nested module the root cannot reach. Its two properties that
+matter most were broken by hand instead, and both were caught:
+
+| mutation | test | result |
+|---|---|---|
+| every API error counts as "not found" | `TestOtherErrorsAreNotNotFound` | caught |
+| a listing stops after its first page | `TestTheStoreMeetsTheContract` (the fake pages two keys at a time) | caught |
+
+The first is the dangerous one: an access-denied read as a miss would make a
+restore treat stored keys as absent. Teaching the script to run nested modules
+would make this repeatable; it is not done yet.
+
 ### The full audit after M14b: 236, eleven repointed, one re-aimed
 
 Every entry run end to end after M14b, on Machine A, in 20 m 45 s: **caught:
@@ -2401,7 +2416,7 @@ level up.
 
 docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to sixty-two. Each one, and the named test that would fail if it regressed:
+testable claims they come to sixty-four. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2467,8 +2482,10 @@ testable claims they come to sixty-two. Each one, and the named test that would 
 | M14 | one flush is one object; a split moves every log into partition segments and deletes the logs | `TestAFlushWritesOneObject`, `TestASplitMovesLogsIntoPartitions` |
 | M14 | a split that fails part-way loses nothing and the next one completes it | `TestAFailedSplitLosesNothing` |
 | M14 | the flush interval is a namespace option; a non-positive one is refused | `TestWithFlushIntervalSetsTheCadence`, `TestANonPositiveFlushIntervalIsRefused` |
+| M14 | the S3 backend meets the contract over paged listings and tells absent from refused | `TestTheStoreMeetsTheContract`, `TestNotFoundIsRecognisedEitherWay`, `TestOtherErrorsAreNotNotFound` |
+| M14 | a namespace survives a restart over S3, one PUT per flush | `TestACacheRestoresThroughS3` |
 
-All seventy-two names in the table were verified to exist before it was
+All seventy-six names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 
