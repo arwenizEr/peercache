@@ -274,9 +274,10 @@ type ReplicateRequest struct {
 	// Deleted marks a removal. Deletions must replicate: a replica that
 	// missed one would resurrect the key the moment it was promoted.
 	Deleted bool `msgpack:"deleted"`
-	// Order is the write's persistence order, zero in a namespace without
-	// persistence. The replica keeps it so that a promotion continues it,
-	// and advances its own clock past it.
+	// Order is the write's order from its owner's hybrid logical clock, in
+	// every namespace; a release before M16 sent it for persistent ones only,
+	// and zero means that. It orders replica copies, and the replica keeps it
+	// so that a promotion continues it, and advances its own clock past it.
 	Order uint64 `msgpack:"order"`
 }
 
@@ -303,6 +304,13 @@ type CatchUpRequest struct {
 	// which is the shape of every out-of-memory bug in this file's history.
 	After string `msgpack:"after"`
 	Limit int    `msgpack:"limit"`
+	// Replicas asks for the sender's *replica* copies of keys the asker
+	// owns, instead of the keys the sender owns. A node restarted faster
+	// than failure detection was never declared dead, so nobody was promoted
+	// in its place, and the newest copies of what it owns are replicas on its
+	// peers. A sender on an earlier release ignores the field and answers
+	// with its owned keys again, which the stamp check makes harmless.
+	Replicas bool `msgpack:"replicas"`
 }
 
 // CatchUpResponse carries one page of keys.
@@ -319,6 +327,12 @@ type CatchUpEntry struct {
 	TTLNanos int64  `msgpack:"ttl_ns"`
 	// Order is the entry's persistence order; see ReplicateRequest.Order.
 	Order uint64 `msgpack:"order"`
+	// From is the node that wrote the value, set when the sender relays a
+	// copy it holds as a replica. Empty means the sender wrote it. The
+	// receiver records the writer, not the relay, for the same reason a
+	// hand-off does: two relays of one write are not two writers, and filing
+	// them as such counts a split brain that never happened.
+	From string `msgpack:"from"`
 }
 
 // InvalidateRequest tells a peer that keys it may be caching have changed.

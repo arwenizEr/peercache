@@ -111,6 +111,31 @@ func WithActivationDelay(d time.Duration) Option {
 	return func(o *core.Options) { o.ActivationDelay = d }
 }
 
+// WithCatchUpGate makes this node refuse its peers' operations on keys it owns,
+// in namespaces with a replication factor of 2 or more, until its first
+// [Cache.CatchUp] has completed. They are answered with [ErrActivationPending],
+// "ask again here shortly", which the forwarding node retries and an
+// application already treats as refused before anything was applied.
+//
+// It closes a window readiness cannot. A restarted node owns its keys from the
+// moment it joins, but their newest copies are on its replicas until catch-up
+// brings them back. The readiness gate keeps clients away in that window; it
+// does not keep peers from forwarding writes, and a write applied to an empty
+// or persisted-but-older base is wrong — an Increment counts from the wrong
+// value, a SetIfAbsent succeeds over a key that exists — and the catch-up that
+// follows discards it as older. On kind, under kill -9, that was 1 to 3 lost
+// decrements on 5 of 50 stock counters.
+//
+// Turn it on wherever the application calls CatchUp before serving, as the
+// Kubernetes deployment in deploy/ does. Off by default because a node whose
+// application never calls CatchUp would refuse its peers indefinitely. Only
+// forwarded operations are held: this node's own calls are the application's,
+// and readiness already tells it when to make them. See docs/decisions/open.md
+// question 49.
+func WithCatchUpGate() Option {
+	return func(o *core.Options) { o.CatchUpGate = true }
+}
+
 // WithGroupMailboxSize bounds how many requests may queue for one group before
 // further calls are refused with [ErrGroupOverloaded]. The default is 64.
 //

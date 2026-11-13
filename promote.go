@@ -50,6 +50,12 @@ type promoter struct {
 	// rounds counts reconciliations, so that the counters above can be read
 	// as a rate rather than a total.
 	rounds atomic.Int64
+
+	// mu serializes reconciliations. They start from three places — the
+	// guard's update callback, the sweep loop, and the end of a catch-up —
+	// and two at once each read the hand-off queue's room and each drained
+	// that many orphans, overflowing it by a queue's worth.
+	mu sync.Mutex
 }
 
 func newPromoter(c *cache) *promoter {
@@ -97,6 +103,8 @@ func (p *promoter) reconcile() {
 	if c.guard == nil || c.isClosed() {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.rounds.Add(1)
 
 	self := c.self().ID
@@ -249,19 +257,25 @@ func (p *promoter) promoteKey(ns *namespace, key string) {
 
 // stillReplicaFor reports whether this node ranks as a replica for a group key
 // under the current membership.
+//
+// It runs for every replica this node holds, on every reconciliation — once a
+// second — so it ranks with Holders, which does not allocate, rather than
+// Replicas, which copies, sorts and clones the membership per call. On M16's
+// kind cluster, with 160,000 replicas a node, the allocating version was half
+// of an idle node's CPU and most of its garbage collection.
 func (c *cache) stillReplicaFor(groupKey string, rf int, self string) bool {
 	if rf < 2 {
 		return false
 	}
-	ranked, _, err := c.guard.Table().Replicas(groupKey, rf)
-	if err != nil {
+	ranked, n, _ := c.guard.Table().Holders(groupKey, rf)
+	if n == 0 {
 		// Membership is unknown. Keeping the copy is the safe direction:
 		// dropping data because the view is momentarily empty would turn
 		// a gossip hiccup into a loss of redundancy.
 		return true
 	}
-	for _, n := range ranked {
-		if n.ID == self {
+	for _, node := range ranked[:n] {
+		if node.ID == self {
 			return true
 		}
 	}

@@ -9,6 +9,12 @@ change the public API.
 
 ### Added
 
+- `WithCatchUpGate`: a node refuses its peers' operations on keys it owns, in
+  namespaces with replicas, with `ErrActivationPending` until its first
+  `CatchUp` completes. Readiness keeps clients away from a restarted node but
+  not peers, whose forwarded writes landed on a base catch-up had not yet
+  restored and were then discarded as older. Opt-in. Found by M16's kill -9
+  on kind (open question 49).
 - `github.com/arwenizEr/peercache/otel`, an OpenTelemetry bridge in its own
   module: one observable instrument per metric series, with the node as an
   attribute and counters named so the Prometheus exporter does not double their
@@ -77,6 +83,29 @@ change the public API.
 - `PressureCheckInterval` from the public API; the interval is unchanged.
 
 ### Fixed
+
+- A node restarted faster than failure detection — a SIGKILLed pod its kubelet
+  restarts in a second or two — lost every key it owned, even at a synchronous
+  replication factor of 3. Its peers never declared it dead, so nobody was
+  promoted in its place, and `CatchUp` pulled only the keys its peers *own*.
+  It now also pulls its peers' replica copies of the keys it owns. Found by
+  M16's kill -9 on kind (open question 49).
+
+- Replica copies are ordered by the hybrid logical clock, in every namespace,
+  instead of by a stamp whose epoch dominated. Epochs are per view, so after a
+  rolling restart a key's returning owner held a smaller epoch than the interim
+  owner it had caught up from, its replicas refused its writes as older, and a
+  synchronous write at RF 3 was lost once the owner and the interim owner
+  failed. On kind, version conflicts after one rolling restart grew with each
+  pod's epoch, to 1.1 million. Found by M16 (open question 50). A peer on an
+  earlier release sends no order for a non-persistent namespace; its copies
+  fall back to the stamp.
+
+- An idle node spent about a quarter of a core reconciling its replicas: every
+  second it ranked each one with an allocating call, and the garbage that made
+  was most of the rest. On M16's kind cluster, at 160,000 replicas a node, that
+  was 28% of a core with no traffic at all. Reconciliation and the catch-up
+  sender now rank without allocating.
 
 - A rebalance with more displaced replicas than the hand-off queue holds no
   longer cycles the excess through the replica store every second. Each round
