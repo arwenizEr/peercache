@@ -1636,12 +1636,16 @@ by it when both copies carry one, and so do tombstones and promotion
 release, which sends no order for a namespace without persistence.
 `TestAWriteByAnOwnerWithALowerEpochSurvivesFailover`.
 
-**Still open:** split-brain detection compares epochs too — "two writers in the
-same epoch" — and epochs on different nodes coincide by accident as easily as
-they differ. Its count after a rolling restart on kind (tens of thousands) is
-therefore not evidence of two owners. It needs a definition that does not rely
-on epochs being comparable; until then the counter is noise after churn, and
-docs that call it "deserves investigation whenever it is non-zero" overstate it.
+**Split-brain detection, resolved too.** It compared epochs as well — "two
+writers in the same epoch" — and epochs on different nodes coincide by accident
+as easily as they differ, so its count after a rolling restart on kind (tens of
+thousands) was handovers, not splits. It now detects a fork in the key's
+history: every replicated write carries `Prev`, the order of the value it
+replaced, and a replica reports two copies from different writers when neither
+replaced the other's (`replication.Forked`). A handover replaces the old owner's
+last value and is not reported; a replica that missed writes sees a later
+`Prev` and is not misled. A copy with no `Prev` is not judged, which accepts
+missed forks over invented ones.
 
 ## 51. An active group outlived its ownership — found in M16, resolved
 

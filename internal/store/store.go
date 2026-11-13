@@ -301,6 +301,10 @@ type Write struct {
 	Order uint64
 	// ExpiresAt is the stored deadline in Unix nanoseconds, zero for none.
 	ExpiresAt int64
+	// Prev is the order of the value this write replaced, zero if there was
+	// none or it carried none. A replica compares it with what it holds to
+	// tell a handover from a fork; see replication.Store.Put.
+	Prev uint64
 }
 
 // Put is [Store.Set], also reporting the order the write was given.
@@ -332,7 +336,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 	sh.mu.Unlock()
 
 	sh.sets.Add(1)
-	return Write{Version: version, Order: order, ExpiresAt: expiresAt}
+	return Write{Version: version, Order: order, ExpiresAt: expiresAt, Prev: old.order}
 }
 
 // nextOrder issues an order, or zero without [Options.Order]. Callers hold the

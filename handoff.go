@@ -224,6 +224,7 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 		Stamp:     w.entry.Stamp,
 		From:      from,
 		Order:     w.entry.Order,
+		Prev:      w.entry.Prev,
 	}
 
 	placed := false

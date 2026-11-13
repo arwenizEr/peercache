@@ -108,6 +108,10 @@ type Entry struct {
 	// that ordered persistent namespaces alone. Promotion installs it
 	// unchanged.
 	Order uint64
+	// Prev is the order of the value this write replaced on its owner, zero
+	// if none or unknown. With Order and From it is what fork detection
+	// compares; see [Store.Put].
+	Prev uint64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
 	// epoch means two of them believe they own it.
@@ -159,10 +163,7 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 
 	existing, held := nr.entries[key]
 	if held {
-		if existing.Stamp.Epoch == e.Stamp.Epoch && existing.From != "" && e.From != "" &&
-			existing.From != e.From {
-			conflict = true
-		}
+		conflict = Forked(existing, e)
 		if !Newer(e, existing) {
 			// Equal copies from the same writer are a retransmission,
 			// which is normal and not worth counting. A strictly older
@@ -180,6 +181,35 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	}
 	s.bytes.Add(delta)
 	return true, conflict
+}
+
+// Forked reports whether two copies of one key, from different writers, show
+// the key's history forking: neither write descends from the other.
+//
+// A write carries Prev, the order of the value it replaced on its owner. A new
+// owner that caught up before writing replaces the old owner's last value, so
+// its Prev is at least that value's order: a handover. A replica that missed
+// some writes sees a Prev above what it holds: also linear. Only when each
+// write's Prev is below the other's order did each writer replace something
+// older than the other's write — two owners writing at once, or one writing
+// over a value it never received. That is the split brain decision 5 says is
+// detected and never merged.
+//
+// It replaced a test of "two writers in one epoch", and epochs are per view: on
+// different nodes they coincide by accident as easily as they differ, so after
+// one rolling restart on kind the old test counted tens of thousands of splits
+// that never happened (M16, open question 50). A copy without the information
+// — no Prev, as from an earlier release, a first write, or a key its sender
+// owns and relays — is not judged: a missed fork is a smaller harm than an
+// invented one in the counter whose non-zero value means investigate.
+func Forked(held, in Entry) bool {
+	if held.From == "" || in.From == "" || held.From == in.From {
+		return false
+	}
+	if held.Order == 0 || in.Order == 0 || held.Prev == 0 || in.Prev == 0 {
+		return false
+	}
+	return in.Prev < held.Order && held.Prev < in.Order
 }
 
 // Newer reports whether a supersedes b.

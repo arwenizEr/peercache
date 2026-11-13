@@ -128,53 +128,70 @@ func TestALaterEpochWinsWhateverTheVersion(t *testing.T) {
 	}
 }
 
-// TestTwoOwnersInOneEpochIsAConflict is the split-brain detector docs/design.md §4
-// requires.
-//
-// One group has one owner, so two *different* nodes writing the same key under
-// the same epoch cannot happen unless two of them believe they own it. That is
-// the partition case, and the replica is the only party positioned to notice:
-// neither owner can see the other.
-func TestTwoOwnersInOneEpochIsAConflict(t *testing.T) {
-	s := replication.NewStore()
+// forkEntry is a copy written by from at order, replacing the value at prev.
+func forkEntry(from string, order, prev uint64, val string) replication.Entry {
+	return replication.Entry{Value: []byte(val), Stamp: core.Stamp{Epoch: 1, Version: order},
+		From: from, Order: order, Prev: prev}
+}
 
-	if _, conflict := s.Put("ns", "k", entry("node-a", 7, 1, "a")); conflict {
+// TestTwoWritersFromOneBaseIsAFork is the split-brain detector docs/design.md
+// §4 requires. Two owners at once each replace the same older value, so each
+// write's Prev is below the other's order, and the replica — the only party
+// that sees both — reports it. The write still applies: detection is not
+// resolution, and dropping one would be a merge policy chosen by accident.
+func TestTwoWritersFromOneBaseIsAFork(t *testing.T) {
+	s := replication.NewStore()
+	if _, conflict := s.Put("ns", "k", forkEntry("node-a", 10, 5, "a")); conflict {
 		t.Fatal("the first write reported a conflict")
 	}
-	_, conflict := s.Put("ns", "k", entry("node-b", 7, 2, "b"))
+	_, conflict := s.Put("ns", "k", forkEntry("node-b", 11, 5, "b"))
 	if !conflict {
-		t.Fatal("two different nodes wrote one key under the same epoch and it was not " +
-			"reported; that is a split brain, and the replica is the only node that " +
-			"can see it")
+		t.Fatal("two writers each replaced order 5, unaware of the other; that is a fork and was not reported")
 	}
-
-	// The write still applies. Detection is not resolution: the design is
-	// explicit that conflicting writes are not automatically merged, and
-	// dropping one silently would be a merge policy chosen by accident.
 	if got, _ := s.Get("ns", "k"); string(got.Value) != "b" {
-		t.Fatalf("the replica holds %q; a detected conflict must still apply the newer "+
-			"write rather than silently discarding it", got.Value)
+		t.Fatalf("the replica holds %q; a detected fork must still apply the newer write", got.Value)
 	}
 }
 
-// TestTheSameOwnerWritingTwiceIsNotAConflict guards the obvious false positive.
-// An owner updating its own key repeatedly within one epoch is the normal case.
-func TestTheSameOwnerWritingTwiceIsNotAConflict(t *testing.T) {
+// TestAHandoverIsNotAFork is the false positive the epoch rule produced at
+// scale: a new owner that caught up replaces the old owner's last value, so its
+// Prev is that value's order. Ownership moving is the system working.
+func TestAHandoverIsNotAFork(t *testing.T) {
 	s := replication.NewStore()
-	s.Put("ns", "k", entry("node-a", 7, 1, "one"))
-	if _, conflict := s.Put("ns", "k", entry("node-a", 7, 2, "two")); conflict {
-		t.Fatal("an owner updating its own key was reported as a split brain")
+	s.Put("ns", "k", forkEntry("node-a", 10, 5, "before"))
+	if _, conflict := s.Put("ns", "k", forkEntry("node-b", 12, 10, "after")); conflict {
+		t.Fatal("a handover was reported as a split brain")
 	}
 }
 
-// TestDifferentEpochsAreNotAConflict guards the other false positive. Ownership
-// moving is the system working, not a split brain.
-func TestDifferentEpochsAreNotAConflict(t *testing.T) {
+// TestAReplicaThatMissedWritesSeesNoFork: the new writer replaced a value this
+// replica never received. Its Prev is above what is held; the history is
+// linear, the replica merely behind.
+func TestAReplicaThatMissedWritesSeesNoFork(t *testing.T) {
 	s := replication.NewStore()
-	s.Put("ns", "k", entry("node-a", 7, 1, "before"))
-	if _, conflict := s.Put("ns", "k", entry("node-b", 8, 1, "after")); conflict {
-		t.Fatal("a handover between epochs was reported as a split brain; ownership " +
-			"moving is the normal case and counting it would bury the real ones")
+	s.Put("ns", "k", forkEntry("node-a", 10, 5, "old"))
+	if _, conflict := s.Put("ns", "k", forkEntry("node-b", 20, 15, "new")); conflict {
+		t.Fatal("a replica that missed writes reported a fork")
+	}
+}
+
+// TestTheSameWriterIsNeverAFork: one owner's writes arriving out of order are
+// a version conflict, not a split brain.
+func TestTheSameWriterIsNeverAFork(t *testing.T) {
+	s := replication.NewStore()
+	s.Put("ns", "k", forkEntry("node-a", 10, 5, "one"))
+	if _, conflict := s.Put("ns", "k", forkEntry("node-a", 11, 5, "two")); conflict {
+		t.Fatal("an owner's own writes were reported as a split brain")
+	}
+}
+
+// TestACopyWithoutPrevIsNotJudged: an earlier release, a first write, or an
+// owned key relayed by catch-up carries no Prev, and is not guessed about.
+func TestACopyWithoutPrevIsNotJudged(t *testing.T) {
+	s := replication.NewStore()
+	s.Put("ns", "k", forkEntry("node-a", 10, 5, "a"))
+	if _, conflict := s.Put("ns", "k", forkEntry("node-b", 11, 0, "b")); conflict {
+		t.Fatal("a copy with no Prev was reported as a fork")
 	}
 }
 

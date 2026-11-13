@@ -69,8 +69,10 @@ type replicaWork struct {
 	ttl       time.Duration
 	stamp     core.Stamp
 	deleted   bool
-	// order is the write's persistence order; see wire.ReplicateRequest.
-	order   uint64
+	// order is the write's order; see wire.ReplicateRequest.
+	order uint64
+	// prev is the order of the value the write replaced.
+	prev    uint64
 	targets []core.Node
 }
 
@@ -172,6 +174,7 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		From:      r.cache.self().ID,
 		Deleted:   w.deleted,
 		Order:     w.order,
+		Prev:      w.prev,
 	}
 
 	var failures error

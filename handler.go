@@ -508,6 +508,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		ReceivedAt: now,
 		Order:      in.Order,
 		From:       in.From,
+		Prev:       in.Prev,
 	})
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {
@@ -654,6 +655,7 @@ func (h *peerHandler) catchUpReplicas(ctx context.Context, ns *namespace, in wir
 			TTLNanos: ttl,
 			Order:    e.Order,
 			From:     e.From,
+			Prev:     e.Prev,
 		})
 	}
 	return wire.Encode(&out)

@@ -2444,6 +2444,25 @@ mutate "an active group is not rechecked for ownership" \
   '} else if false {' \
   'TestAnActiveGroupStopsServingWhenOwnershipMoves$' ./tests
 
+# --- open question 50: fork detection ---
+
+mutate "a handover is counted as a fork" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return held.Prev < in.Order' \
+  'TestAHandoverIsNotAFork$' ./internal/replication
+mutate "a fork is not counted" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return false' \
+  'TestTwoWritersFromOneBaseIsAFork$' ./internal/replication
+mutate "a write does not carry what it replaced" \
+  replicate.go \
+  '		Prev:      w.prev,
+' \
+  '' \
+  'TestAWriteOverAValueItNeverReceivedIsAFork$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

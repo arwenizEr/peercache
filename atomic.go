@@ -193,7 +193,7 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 	if n.persister != nil {
 		n.persister.record(key, encoded, res.ExpiresAt, res.Order, false)
 	}
-	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
+	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		return true, err

@@ -300,6 +300,8 @@ message ReplicateRequest {
   // order is the write's persistence order, zero in a namespace without
   // persistence. A promoted replica continues it.
   uint64 order = 8;
+  // The order of the value this write replaced; zero if none or unknown.
+  uint64 prev = 9;
 }
 
 message ReplicateResponse {
@@ -341,6 +343,8 @@ message CatchUpEntry {
   uint64 order = 5;
   // The writer of a relayed replica copy; empty when the sender wrote it.
   string from = 6;
+  // A relayed copy's prev; zero for a key the sender owns.
+  uint64 prev = 7;
 }
 
 message InvalidateRequest {

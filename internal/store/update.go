@@ -27,6 +27,8 @@ type UpdateResult struct {
 	// Order is the write's persistence order, or zero without
 	// [Options.Order] or when nothing was written.
 	Order uint64
+	// Prev is the order of the value the write replaced; see [Write.Prev].
+	Prev uint64
 }
 
 // Update is the store's one read-modify-write: it calls fn with key's live
@@ -89,5 +91,5 @@ func (s *Store) Update(key string, fn func(cur []byte, ok bool) (m Mutation, wri
 	}
 	sh.bytes.Add(delta)
 	sh.sets.Add(1)
-	return UpdateResult{Wrote: true, Version: version, ExpiresAt: expiresAt, Order: order}, nil
+	return UpdateResult{Wrote: true, Version: version, ExpiresAt: expiresAt, Order: order, Prev: old.order}, nil
 }
