@@ -108,6 +108,11 @@ func run(cfg config) error {
 		peercache.WithTransport(tr),
 		peercache.WithListener(l),
 		peercache.WithMemoryBudget(512<<20),
+		// The shop calls CatchUp before it is ready (catchUpLoop), so peers'
+		// writes to keys it owns can wait for it: without this, kill -9 lost
+		// 1 to 3 stock decrements on 5 of 50 counters (docs/api.md,
+		// "WithCatchUpGate").
+		peercache.WithCatchUpGate(),
 	)
 	if err != nil {
 		return err
