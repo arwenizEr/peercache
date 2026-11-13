@@ -558,15 +558,16 @@ records, ordered by a hybrid logical clock, as immutable segments to a
 `BlobStore`; a node that acquires a group it does not hold restores that group's
 partition by a last-writer-wins merge; a per-partition compactor folds segments
 into snapshots. See `decisions/0029-persistence-as-a-segment-log.md`, which
-supersedes `0026`.
+supersedes `0026`, as amended by `decisions/0030-one-object-per-flush.md`: a
+flush writes one log object, which a per-namespace splitter later moves into
+the partitions.
 
 Built in parts: **M14a** the design and this section; **M14b** the blob store
 interface, `persist.Memory`, the order carried through every write path, flush,
 restore and compaction; **M14c** `persist.Dir` and the measured loss window;
 **M14d** `persist/s3` as a separate module.
 
-M14b is built. M14c's measured loss window and M14d's module are criteria of
-their own parts and are added here when those are.
+M14b, M14c and M14d are built.
 
 **Acceptance:** killing every holder of a key restores it on its new owner at
 its last flushed value; a whole cluster stopped and started on the same store
@@ -577,7 +578,16 @@ deletes nothing; a promoted replica's next write outranks everything its dead
 owner flushed; a shed owned key is restored on its next access; an unavailable
 store fails no write, keeps one pending record per key, and loses nothing once
 it returns, and a restore that cannot read it serves memory and retries; a
-namespace without persistence performs within noise of before, benchmarked.
+namespace without persistence performs within noise of before, benchmarked;
+`persist.Dir` meets the blob-store contract, writes data, then renames, then
+syncs the directory, and a Put interrupted at any step leaves a whole object;
+the loss window on it is measured; one flush writes one object whatever it
+touches, a split moves every log into at most one segment per partition and
+deletes the logs only once those are durable, a split that fails part-way loses
+nothing, and the flush interval is a namespace option; the S3 backend, in its
+own module, meets the blob-store contract against an S3 fake with paged
+listings, tells an absent object from a refused one, and carries a namespace
+through a restart in one PUT per flush.
 
 ---
 

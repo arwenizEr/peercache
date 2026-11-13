@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/persist"
 )
 
@@ -242,4 +243,59 @@ func TestAShedKeyIsRestoredNotLost(t *testing.T) {
 			t.Fatalf("k%d came back as %q, want its newest write", i, got[:8])
 		}
 	}
+}
+
+// blockingListStore blocks every List until its context ends, then records
+// that it returned.
+type blockingListStore struct {
+	persist.BlobStore
+	entered  chan struct{}
+	returned atomic.Bool
+}
+
+func (s *blockingListStore) List(ctx context.Context, prefix string) ([]string, error) {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	s.returned.Store(true)
+	return nil, ctx.Err()
+}
+
+// TestCloseEndsARestoreInFlight: a restore runs on its own goroutine, and one
+// reading a store that does not answer must not outlive Close — nor hold up
+// its final flush, since a restore holds the flush lock while it reads. The
+// fake clock never advances here, so only Close can end it.
+func TestCloseEndsARestoreInFlight(t *testing.T) {
+	store := &blockingListStore{BlobStore: persist.Memory(), entered: make(chan struct{}, 1)}
+	fc := clock.NewFake(clock.Epoch)
+	c, err := peercache.New(peercache.WithNodeID("n0"), peercache.WithClock(fc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := c.Namespace("orders", peercache.WithPersistence(store))
+
+	got := make(chan error, 1)
+	go func() {
+		_, err := ns.Get(context.Background(), "k")
+		got <- err
+	}()
+	<-store.entered // the restore is reading, and will until its context ends
+
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close(context.Background()) }()
+	waitFor(t, "Close to return", func() bool {
+		select {
+		case err := <-closed:
+			closed <- err
+			return true
+		default:
+			return false
+		}
+	})
+	if !store.returned.Load() {
+		t.Fatal("Close returned while a restore was still reading the store")
+	}
+	<-got
 }

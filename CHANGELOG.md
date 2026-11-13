@@ -25,6 +25,21 @@ change the public API.
   (the `BlobStore` interface, `Memory`, and the `persisttest` contract suite);
   eight `Persist*` stats and metric series. Design principle 4 changed to allow
   it. Decision 0029, superseding 0026.
+- `persist.Dir`, a durable file-system backend: temporary file, fsync, rename,
+  directory fsync; crash leftovers cleaned on open; names encoded so any
+  namespace is a legal file name on every platform.
+- `persist.WithFlushInterval`, and one object per flush: a flush writes a single
+  log object, which a per-namespace splitter moves into partition segments
+  (decision 0030). `PersistSplits` and `PersistSplitFailures`.
+- `github.com/arwenizEr/peercache/persist/s3`, an S3 and S3-compatible backend
+  in its own module, so the AWS SDK enters only programs that choose it.
+- A key a persistent namespace restores from storage is sent to its replicas
+  again, instead of sitting at a replication factor of one until its next
+  write.
+- `Close` cancels and waits for restores still in flight; one reading a store
+  that no longer answered could outlive the cache and hold up its final flush.
+- A persistent write allocates 437 bytes in 3 allocations instead of 705 in 4:
+  the dirty map holds records by value and is recycled between flushes.
 
 ### Changed
 

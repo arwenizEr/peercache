@@ -2202,6 +2202,24 @@ check of every entry's text against its file found five that M9 and the coverage
 sweep had silently turned into skips; they were repointed first. The drain entry
 recorded above as flaky was caught.
 
+### The S3 backend is outside the audit script, so its mutations were run by hand
+
+`scripts/mutation-audit.sh` runs `go test "$pkg"` from the repository root, and
+`persist/s3` is a nested module the root cannot reach. Its two properties that
+matter most were broken by hand instead, and both were caught:
+
+| mutation | test | result |
+|---|---|---|
+| every API error counts as "not found" | `TestOtherErrorsAreNotNotFound` | caught |
+| a listing stops after its first page | `TestTheStoreMeetsTheContract` (the fake pages two keys at a time) | caught |
+
+The first is the dangerous one: an access-denied read as a miss would make a
+restore treat stored keys as absent.
+
+**Since then the script reaches nested modules.** An entry whose package is
+written `dir::pkg` runs `go test -C dir pkg`, inside that module's own
+`go.mod`; both mutations above are now ordinary entries and run with the rest.
+
 ### The full audit after M14b: 236, eleven repointed, one re-aimed
 
 Every entry run end to end after M14b, on Machine A, in 20 m 45 s: **caught:
@@ -2401,7 +2419,7 @@ level up.
 
 docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to fifty-six. Each one, and the named test that would fail if it regressed:
+testable claims they come to sixty-four. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2461,8 +2479,16 @@ testable claims they come to fifty-six. Each one, and the named test that would 
 | M14 | a shed owned key is restored on its next access | `TestAShedKeyIsRestoredNotLost` |
 | M14 | an unavailable store fails no write and loses nothing; a restore that cannot read it degrades to memory | `TestAnUnavailableStoreLosesNothing`, `TestAnUnavailableStoreDegradesToMemory` |
 | M14 | a namespace without persistence within noise of before, measured | `BenchmarkNamespaceSet`, `BenchmarkNamespaceGet`, `BenchmarkPersistentSet`, recorded in docs/benchmarks.md |
+| M14 | `persist.Dir` meets the blob-store contract and writes data, renames, then syncs the directory | `TestDirMeetsTheContract`, `TestPutIsWriteSyncRenameSyncDir` |
+| M14 | a Dir Put interrupted at any step leaves a whole object; a crash's leftovers are invisible and cleaned up | `TestAnInterruptedPutLeavesTheOldObjectOrTheNew`, `TestACrashsLeftoversAreInvisibleAndCleanedUp` |
+| M14 | the loss window on `persist.Dir`, measured | `BenchmarkPersistLossWindow`, `BenchmarkPersistFlushSpread`, `BenchmarkDirPut`, recorded in docs/benchmarks.md |
+| M14 | one flush is one object; a split moves every log into partition segments and deletes the logs | `TestAFlushWritesOneObject`, `TestASplitMovesLogsIntoPartitions` |
+| M14 | a split that fails part-way loses nothing and the next one completes it | `TestAFailedSplitLosesNothing` |
+| M14 | the flush interval is a namespace option; a non-positive one is refused | `TestWithFlushIntervalSetsTheCadence`, `TestANonPositiveFlushIntervalIsRefused` |
+| M14 | the S3 backend meets the contract over paged listings and tells absent from refused | `TestTheStoreMeetsTheContract`, `TestNotFoundIsRecognisedEitherWay`, `TestOtherErrorsAreNotNotFound` |
+| M14 | a namespace survives a restart over S3, one PUT per flush | `TestACacheRestoresThroughS3` |
 
-All sixty-three names in the table were verified to exist before it was
+All seventy-six names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

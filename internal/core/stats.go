@@ -83,6 +83,11 @@ type Stats struct {
 	// could not finish; their objects are folded by the next one.
 	PersistCompactions     int64
 	PersistCompactFailures int64
+	// PersistSplits counts log sets this node moved into partition segments
+	// as its namespace's splitter, and PersistSplitFailures splits that
+	// stopped part-way; the next one completes them. See decision 0030.
+	PersistSplits        int64
+	PersistSplitFailures int64
 
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the

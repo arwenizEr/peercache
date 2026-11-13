@@ -221,7 +221,14 @@ PY
     return
   fi
 
-  if go test "$pkg" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
+  # A package written dir::pkg is in a nested module: go test -C dir pkg runs
+  # it from inside that module, so its own go.mod applies. The mutated file
+  # is still named from the repository root, like every other entry's.
+  local run=(go test "$pkg")
+  if [[ "$pkg" == *::* ]]; then
+    run=(go test -C "${pkg%%::*}" "${pkg#*::}")
+  fi
+  if "${run[@]}" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
     echo "VACUOUS  $name -- $test PASSED with the behaviour broken"
     vacuous=$((vacuous + 1))
   else
@@ -1424,8 +1431,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '58 series come out of it' \
-  '57 series come out of it' \
+  '60 series come out of it' \
+  '59 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -1884,36 +1891,11 @@ mutate "an atomic update stores no order" \
 
 # --- persistence: write-behind flush (decision 0029) ---
 
-mutate "a failed flush drops its records" \
-  persistence.go \
-  '			p.restorePending(records)
-' \
-  '' \
-  'TestAnUnavailableStoreLosesNothing$' ./tests
-
-mutate "a failed flush's records replace newer writes" \
-  persistence.go \
-  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(cur) {
-			continue
-		} else if ok {' \
-  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(cur) {
-			continue
-		} else if ok {' \
-  'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
-
 mutate "a pending record shares the caller's buffer" \
   persistence.go \
   '		r.Value = append([]byte(nil), value...)' \
   '		r.Value = value' \
   'TestThePendingRecordIsACopy$' ./tests
-
-mutate "a pending record is never replaced by a newer write" \
-  persistence.go \
-  '		if !r.Newer(cur) {
-			// An older write recorded late' \
-  '		if true {
-			// An older write recorded late' \
-  'TestAHotKeyCoalescesToOneRecord$' ./tests
 
 mutate "a persistent delete writes no tombstone" \
   namespace.go \
@@ -2139,6 +2121,173 @@ mutate "a promoted replica's order is not carried" \
   '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
   '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
   'TestARestoreDoesNotUndoAPromotedWrite$' ./tests
+
+# --- persist.Dir (decision 0029, M14c) ---
+
+mutate "Dir renames before the data is written" \
+  persist/dir.go \
+  '	lock := d.lockFor(target)
+	lock.Lock()
+	err = d.fs.Rename(tmp, target)
+	lock.Unlock()
+	if err != nil {
+		_ = d.fs.Remove(tmp)
+		return fmt.Errorf("persist: placing %s: %w", name, err)
+	}
+	if err := d.fs.SyncDir(parent); err != nil {' \
+  '	if err := d.fs.SyncDir(parent); err != nil {
+		return err
+	}
+	lock := d.lockFor(target)
+	lock.Lock()
+	err = d.fs.Rename(tmp, target)
+	lock.Unlock()
+	if err != nil {
+		_ = d.fs.Remove(tmp)
+		return fmt.Errorf("persist: placing %s: %w", name, err)
+	}
+	if err := error(nil); err != nil {' \
+  'TestPutIsWriteSyncRenameSyncDir$' ./persist/
+
+mutate "Dir lists a crash's temporary files" \
+  persist/dir.go \
+  '		if strings.Contains(rel, tempMarker) {
+			return
+		}' \
+  '		if false {
+			return
+		}' \
+  'TestACrashsLeftoversAreInvisibleAndCleanedUp$' ./persist/
+
+mutate "Dir never removes a crash's temporary files" \
+  persist/dir.go \
+  '	if err := d.removeTemps(); err != nil {
+		return nil, err
+	}' \
+  '' \
+  'TestACrashsLeftoversAreInvisibleAndCleanedUp$' ./persist/
+
+mutate "Dir accepts names that escape its root" \
+  persist/dir.go \
+  '		if part == "" || part == "." || part == ".." {' \
+  '		if part == "" {' \
+  'TestNamesThatEscapeAreRefused$' ./persist/
+
+mutate "Dir lists files it did not write" \
+  persist/dir.go \
+  '			if !ok {
+				return // not a file this store wrote
+			}' \
+  '			_ = ok' \
+  'TestFilesNotWrittenByTheStoreAreIgnored$' ./persist/
+
+# --- persistence: one object per flush (decision 0030) ---
+
+mutate "a split deletes logs its segments failed to cover" \
+  persistence.go \
+  '	wg.Wait()
+	if failed != nil {
+		return failed
+	}
+	for _, name := range logs {' \
+  '	wg.Wait()
+	for _, name := range logs {' \
+  'TestAFailedSplitLosesNothing$' ./tests
+
+mutate "a restore ignores logs not yet split" \
+  persistence.go \
+  '	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil {
+		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+	}' \
+  '	var logs []string' \
+  'TestAColdStartRestoresWhatWasFlushed$' ./tests
+
+mutate "a flush writes one object per partition" \
+  persistence.go \
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted' \
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	for i := range records {
+		_ = p.store.Put(ctx, fmt.Sprintf("%s.%d", name, i), nil)
+	}
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted' \
+  'TestAFlushWritesOneObject$' ./tests
+
+mutate "the persistence flush interval option is ignored" \
+  persistence.go \
+  '	interval := ns.opts.PersistFlushInterval' \
+  '	interval := time.Duration(0)' \
+  'TestWithFlushIntervalSetsTheCadence$' ./tests
+
+mutate "a non-positive flush interval is accepted" \
+  internal/core/options.go \
+  '	if o.PersistFlushInterval < 0 {' \
+  '	if false {' \
+  'TestANonPositiveFlushIntervalIsRefused$' ./tests
+
+# --- persistence: re-replicating restored keys ---
+
+mutate "a restored key is not replicated again" \
+  persistence.go \
+  '		p.replicateRestored(key, r, version, now)' \
+  '		_ = version' \
+  'TestARestoredKeyIsReplicatedAgain$' ./tests
+
+# --- persistence: Close and restores in flight ---
+
+mutate "Close does not cancel restores in flight" \
+  persistence.go \
+  '	p.rcancel()
+	p.rwg.Wait()' \
+  '	p.rwg.Wait()' \
+  'TestCloseEndsARestoreInFlight$' ./tests
+
+# --- repointed after the dirty map was recycled ---
+
+mutate "a failed flush drops its records" \
+  persistence.go \
+  '		p.restorePending(records)
+' \
+  '' \
+  'TestAnUnavailableStoreLosesNothing$' ./tests
+
+mutate "a failed flush's records replace newer writes" \
+  persistence.go \
+  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
+			continue
+		} else if ok {' \
+  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(&cur) {
+			continue
+		} else if ok {' \
+  'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
+
+mutate "a pending record is never replaced by a newer write" \
+  persistence.go \
+  '		if !r.Newer(&cur) {
+			// An older write recorded late' \
+  '		if true {
+			// An older write recorded late' \
+  'TestAHotKeyCoalescesToOneRecord$' ./tests
+
+# --- persist/s3, a nested module (decision 0029, M14d) ---
+
+mutate "persist/s3 reads every API error as not found" \
+  persist/s3/s3.go \
+  '		switch api.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		}' \
+  '		return true' \
+  'TestOtherErrorsAreNotNotFound$' persist/s3::./
+
+mutate "persist/s3 lists only the first page" \
+  persist/s3/s3.go \
+  '	for p.HasMorePages() {' \
+  '	for first := true; first && p.HasMorePages(); first = false {' \
+  'TestTheStoreMeetsTheContract$' persist/s3::./
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

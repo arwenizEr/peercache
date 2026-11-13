@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -25,7 +26,13 @@ const (
 	// persistPartitions is how many partitions a persistent namespace's keys
 	// are spread over. Fixed: a key's partition is part of where its records
 	// live, so changing it would orphan every record already written.
-	persistPartitions = 256
+	//
+	// 64, not the 256 decision 0029 first said. A flush writes one durable
+	// object per partition it touches, and durable writes overlap only about
+	// threefold on Machine A's disk: a flush touching all of 256 took 40 to
+	// 600 ms, past its own 100 ms interval, where 64 takes about 5. A restore
+	// still reads a sixty-fourth of the namespace.
+	persistPartitions = 64
 	// persistFlushInterval is the loss window's main term: a write is
 	// in memory only until the next flush.
 	persistFlushInterval = 100 * time.Millisecond
@@ -44,6 +51,13 @@ const (
 	// written. A segment from a slow writer can arrive late with an older
 	// write of the key; while the tombstone is kept it still wins.
 	persistTombstoneGrace = time.Hour
+	// persistSplitInterval is how often a namespace's splitter moves its
+	// logs into partition segments. It bounds how many logs a restore reads:
+	// a few seconds of flushes per node.
+	persistSplitInterval = 10 * time.Second
+	// persistSplitParallel is how many partition segments one split writes
+	// at once.
+	persistSplitParallel = 16
 	// persistFlushTimeout bounds one flush. A store that does not answer
 	// must not hold the flusher, and the records stay pending for the next.
 	persistFlushTimeout = 10 * time.Second
@@ -72,9 +86,20 @@ type persister struct {
 	store core.BlobStore
 	clk   clock.Clock
 
-	mu      sync.Mutex
-	pending map[string]*segment.Record
-	bytes   int
+	mu sync.Mutex
+	// pending holds records by value, not pointer: one allocation fewer per
+	// write, which was a third of a persistent Set's bytes.
+	pending map[string]segment.Record
+	// spare is the map the last flush emptied, cleared and kept so that the
+	// next flush's pending map does not regrow from nothing. Touched only by
+	// flush, under flushMu.
+	spare map[string]segment.Record
+	// recBuf is the last flush's record slice, kept for the same reason.
+	recBuf []segment.Record
+	// pendingHigh and spareHigh are the most entries pending and spare have
+	// held since they were made: a cleared map keeps that many buckets.
+	pendingHigh, spareHigh int
+	bytes                  int
 	// shed holds keys the memory budget dropped from the owned store. Their
 	// records are still in storage, or still pending here; the first access
 	// to one restores that key alone (see restoreShed). Restoring the whole
@@ -94,10 +119,20 @@ type persister struct {
 
 	compactions     atomic.Int64
 	compactFailures atomic.Int64
+	splits          atomic.Int64
+	splitFailures   atomic.Int64
 
-	// rmu guards parts, the per-partition restore state.
-	rmu             sync.Mutex
-	parts           [persistPartitions]partitionState
+	// rmu guards parts, the per-partition restore state, and rclosed.
+	rmu   sync.Mutex
+	parts [persistPartitions]partitionState
+	// Restores run on their own goroutines, under rctx. Close cancels it and
+	// waits on rwg: a restore left running outlived the cache, and since it
+	// holds the flush lock while it reads, one stuck on a dead store would
+	// also have held up Close's final flush.
+	rctx            context.Context
+	rcancel         context.CancelFunc
+	rwg             sync.WaitGroup
+	rclosed         bool
 	restored        atomic.Int64
 	restoreFailures atomic.Int64
 }
@@ -107,26 +142,32 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 		ns:      ns,
 		store:   store,
 		clk:     ns.cache.opts.Clock,
-		pending: map[string]*segment.Record{},
+		pending: map[string]segment.Record{},
 		shed:    map[string]struct{}{},
 		kick:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 	}
+	p.rctx, p.rcancel = context.WithCancel(context.Background())
 	// The ticker is created here, not in run: a ticker armed on the
 	// goroutine misses any clock advance that lands before the goroutine is
 	// scheduled, and the first flush then comes an interval late — on the
 	// fake clock, never.
-	ticker := p.clk.NewTicker(persistFlushInterval)
+	interval := ns.opts.PersistFlushInterval
+	if interval <= 0 {
+		interval = persistFlushInterval
+	}
+	ticker := p.clk.NewTicker(interval)
 	compact := p.clk.NewTicker(persistCompactInterval)
+	split := p.clk.NewTicker(persistSplitInterval)
 	p.wg.Add(1)
-	go p.run(ticker, compact)
+	go p.run(ticker, compact, split)
 	return p
 }
 
 // record notes a key's new state for the next flush. value is the stored
 // (framed) form; a tombstone has none.
 func (p *persister) record(key string, value []byte, expiresAt int64, order uint64, tombstone bool) {
-	r := &segment.Record{
+	r := segment.Record{
 		Namespace: p.ns.name,
 		Key:       key,
 		Writer:    p.ns.cache.self().ID,
@@ -146,16 +187,16 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	// was written since costs a read and changes nothing, because the
 	// merge keeps the newer value in memory.
 	if cur, ok := p.pending[key]; ok {
-		if !r.Newer(cur) {
+		if !r.Newer(&cur) {
 			// An older write recorded late — a promotion racing a
 			// fresh write — must not replace the newer one.
 			p.mu.Unlock()
 			return
 		}
-		p.bytes -= recordSize(cur)
+		p.bytes -= recordSize(&cur)
 	}
 	p.pending[key] = r
-	p.bytes += recordSize(r)
+	p.bytes += recordSize(&r)
 	full := p.bytes >= persistFlushBytes
 	p.mu.Unlock()
 
@@ -190,10 +231,11 @@ func recordSize(r *segment.Record) int {
 	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + 32
 }
 
-func (p *persister) run(ticker, compact clock.Ticker) {
+func (p *persister) run(ticker, compact, split clock.Ticker) {
 	defer p.wg.Done()
 	defer ticker.Stop()
 	defer compact.Stop()
+	defer split.Stop()
 	for {
 		select {
 		case <-p.done:
@@ -205,6 +247,15 @@ func (p *persister) run(ticker, compact clock.Ticker) {
 			p.compactOwned(ctx)
 			cancel()
 			continue
+		case <-split.C():
+			if p.splitsLogs() {
+				ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+				if err := p.split(ctx); err != nil {
+					p.splitFailures.Add(1)
+				}
+				cancel()
+			}
+			continue
 		}
 		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
 		_ = p.flush(ctx)
@@ -212,7 +263,10 @@ func (p *persister) run(ticker, compact clock.Ticker) {
 	}
 }
 
-// flush writes everything pending, one segment per partition.
+// flush writes everything pending as one log object, whatever partitions its
+// records belong to: one request per flush, which is what an object store
+// charges for (decision 0030). The splitter moves the records into their
+// partitions later.
 func (p *persister) flush(ctx context.Context) error {
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
@@ -223,37 +277,53 @@ func (p *persister) flush(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
-	p.pending = map[string]*segment.Record{}
+	batchHigh := max(p.pendingHigh, len(batch))
+	if p.spare != nil {
+		p.pending, p.pendingHigh = p.spare, p.spareHigh
+		p.spare = nil
+	} else {
+		p.pending, p.pendingHigh = make(map[string]segment.Record, len(batch)), 0
+	}
 	p.bytes = 0
 	p.mu.Unlock()
 
-	byPartition := map[int][]segment.Record{}
-	for key, r := range batch {
-		part := persistPartition(p.ns.groupKeyFor(key))
-		byPartition[part] = append(byPartition[part], *r)
-	}
-
-	var failed error
-	for part, records := range byPartition {
-		sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
-		var maxOrder uint64
-		for i := range records {
-			if records[i].Order > maxOrder {
-				maxOrder = records[i].Order
-			}
+	records := p.recBuf[:0]
+	var maxOrder uint64
+	for _, r := range batch {
+		records = append(records, r)
+		if r.Order > maxOrder {
+			maxOrder = r.Order
 		}
-		name := segmentName(p.ns.name, part, maxOrder, p.ns.cache.self().ID)
-		data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
-		if err := p.store.Put(ctx, name, data); err != nil {
-			p.failures.Add(1)
-			failed = errors.Join(failed, fmt.Errorf("peercache: persisting %s: %w", name, err))
-			p.restorePending(records)
-			continue
-		}
-		p.written.Add(int64(len(records)))
 	}
-	p.flushes.Add(1)
-	return failed
+	// Recycled while the workload still fills it. clear keeps a map's
+	// buckets, so a map that once held a burst of a million keys would hold
+	// that memory — unaccounted for by the memory budget — for the life of
+	// the namespace. A batch under a quarter of the map's high-water mark
+	// lets it go instead. Measured on Machine A, recycling took a persistent
+	// Set from 705 to 421 bytes and 4 to 3 allocations.
+	defer func() {
+		clear(records) // drop the values the slice still points at
+		if len(batch)*4 < batchHigh {
+			p.spare, p.spareHigh, p.recBuf = nil, 0, nil
+			return
+		}
+		clear(batch)
+		p.spare, p.spareHigh = batch, batchHigh
+		p.recBuf = records[:0]
+	}()
+	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted whether or not the write succeeded: PersistFlushes is flush
+	// attempts, and a waiter on it is waiting for the attempt to be over.
+	defer p.flushes.Add(1)
+	if err := p.store.Put(ctx, name, data); err != nil {
+		p.failures.Add(1)
+		p.restorePending(records)
+		return fmt.Errorf("peercache: persisting %s: %w", name, err)
+	}
+	p.written.Add(int64(len(records)))
+	return nil
 }
 
 // restorePending puts records from a failed segment back, keeping any newer
@@ -263,12 +333,12 @@ func (p *persister) restorePending(records []segment.Record) {
 	defer p.mu.Unlock()
 	for i := range records {
 		r := records[i]
-		if cur, ok := p.pending[r.Key]; ok && !r.Newer(cur) {
+		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
 			continue
 		} else if ok {
-			p.bytes -= recordSize(cur)
+			p.bytes -= recordSize(&cur)
 		}
-		p.pending[r.Key] = &r
+		p.pending[r.Key] = r
 		p.bytes += recordSize(&r)
 	}
 }
@@ -277,6 +347,13 @@ func (p *persister) restorePending(records []segment.Record) {
 func (p *persister) Close(ctx context.Context) error {
 	close(p.done)
 	p.wg.Wait()
+	// Restores before the final flush, and cancelled rather than awaited:
+	// one reading a store that no longer answers holds the flush lock.
+	p.rmu.Lock()
+	p.rclosed = true
+	p.rmu.Unlock()
+	p.rcancel()
+	p.rwg.Wait()
 	return p.flush(ctx)
 }
 
@@ -286,6 +363,7 @@ type persistCounters struct {
 	flushes, written, failures   int64
 	restored, restoreFailures    int64
 	compactions, compactFailures int64
+	splits, splitFailures        int64
 }
 
 func (p *persister) counters() persistCounters {
@@ -296,6 +374,7 @@ func (p *persister) counters() persistCounters {
 		pending: pending, flushes: p.flushes.Load(), written: p.written.Load(), failures: p.failures.Load(),
 		restored: p.restored.Load(), restoreFailures: p.restoreFailures.Load(),
 		compactions: p.compactions.Load(), compactFailures: p.compactFailures.Load(),
+		splits: p.splits.Load(), splitFailures: p.splitFailures.Load(),
 	}
 }
 
@@ -311,11 +390,15 @@ func partitionPrefix(namespace string, part int) string {
 	return fmt.Sprintf("%s/p%03d/", url.PathEscape(namespace), part)
 }
 
-// segmentName names a segment by the largest order it holds and its writer,
-// hex-encoded for the same reason as the namespace. Two segments from one
-// writer never share a largest order, because a writer's orders never repeat.
-func segmentName(namespace string, part int, maxOrder uint64, writer string) string {
-	return fmt.Sprintf("%sseg-%016x-%s.bin", partitionPrefix(namespace, part), maxOrder, hex.EncodeToString([]byte(writer)))
+// logPrefix is the object-name prefix of a namespace's unsplit logs.
+func logPrefix(namespace string) string {
+	return url.PathEscape(namespace) + "/log/"
+}
+
+// logName names one flush's log object by the largest order it holds and its
+// writer. A writer's orders never repeat, so neither do its log names.
+func logName(namespace string, maxOrder uint64, writer string) string {
+	return fmt.Sprintf("%sseg-%016x-%s.bin", logPrefix(namespace), maxOrder, hex.EncodeToString([]byte(writer)))
 }
 
 // restoreRetry is how long after a failed restore a partition is tried again.
@@ -363,6 +446,11 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 			p.rmu.Unlock()
 			return nil
 		}
+		if st.running == nil && p.rclosed {
+			// Closing: no new restore starts, and memory answers.
+			p.rmu.Unlock()
+			return nil
+		}
 		if st.running == nil {
 			if st.failedAt != 0 && p.clk.Now().UnixNano()-st.failedAt < int64(restoreRetry) {
 				// Failed recently: serve from memory, retry later.
@@ -370,6 +458,7 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 				return nil
 			}
 			st.running = make(chan struct{})
+			p.rwg.Add(1)
 			go p.restorePartition(part, want, st.running)
 		}
 		running := st.running
@@ -385,7 +474,8 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
-	ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+	defer p.rwg.Done()
+	ctx, cancel := clock.WithTimeout(p.rctx, p.clk, persistFlushTimeout)
 	err := p.restore(ctx, part)
 	cancel()
 
@@ -414,14 +504,13 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	// read storage, and the restore would see it in neither place.
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
-	prefix := partitionPrefix(p.ns.name, part)
 	// A compactor can delete a segment between our List and our Get. The
 	// snapshot that covers it is then newer than the one we chose, so
 	// listing again finds it; three tries covers a compaction per try.
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		var newest map[string]*segment.Record
-		newest, err = p.read(ctx, prefix)
+		newest, err = p.read(ctx, part)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -436,7 +525,8 @@ func (p *persister) restore(ctx context.Context, part int) error {
 				continue
 			}
 			if cur, ok := newest[key]; !ok || r.Newer(cur) {
-				newest[key] = r
+				r := r // a copy: the map's value must not be aliased
+				newest[key] = &r
 			}
 		}
 		p.mu.Unlock()
@@ -446,9 +536,9 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	return err
 }
 
-// read collects the newest record per key under prefix.
-func (p *persister) read(ctx context.Context, prefix string) (map[string]*segment.Record, error) {
-	sc, err := p.scan(ctx, prefix)
+// read collects the newest record per key of one partition.
+func (p *persister) read(ctx context.Context, part int) (map[string]*segment.Record, error) {
+	sc, err := p.scan(ctx, part)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +563,12 @@ type scanned struct {
 // covers, so a record can survive in an older snapshot alone. The union is
 // always right: records merge as a last-writer-wins map, and a segment is
 // deleted only after a snapshot covering it is durable.
-func (p *persister) scan(ctx context.Context, prefix string) (*scanned, error) {
+//
+// Logs not yet split are read too, keeping only this partition's records
+// (decision 0030). They are not counted in merged or segments: compaction
+// neither folds nor deletes them, the splitter does.
+func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
+	prefix := partitionPrefix(p.ns.name, part)
 	names, err := p.store.List(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
@@ -517,6 +612,25 @@ func (p *persister) scan(ctx context.Context, prefix string) (*scanned, error) {
 		sc.merged = append(sc.merged, name)
 		sc.segments++
 	}
+
+	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil {
+		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+	}
+	for _, name := range logs {
+		f, err := p.load(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		kept := f.Records[:0]
+		for _, r := range f.Records {
+			if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
+				kept = append(kept, r)
+			}
+		}
+		f.Records = kept
+		merge(f)
+	}
 	return sc, nil
 }
 
@@ -550,9 +664,12 @@ func (p *persister) apply(newest map[string]*segment.Record) {
 		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
 			continue
 		}
-		if p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone) {
-			p.restored.Add(1)
+		version, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
+		if !merged {
+			continue
 		}
+		p.restored.Add(1)
+		p.replicateRestored(key, r, version, now)
 	}
 	// This node's next write to any of these keys must outrank what it
 	// just read, whatever its own clock says.
@@ -588,7 +705,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	// look at pending.
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
-	newest, err := p.read(ctx, partitionPrefix(p.ns.name, persistPartition(p.ns.groupKeyFor(key))))
+	newest, err := p.read(ctx, persistPartition(p.ns.groupKeyFor(key)))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -601,7 +718,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	delete(p.shed, key)
 	r := newest[key]
 	if pending, ok := p.pending[key]; ok && (r == nil || pending.Newer(r)) {
-		r = pending
+		r = &pending
 	}
 	p.mu.Unlock()
 
@@ -644,7 +761,7 @@ func (p *persister) compactsPartition(part int) bool {
 // least threshold segments are uncovered, then deletes what it folded.
 func (p *persister) compact(ctx context.Context, part, threshold int) error {
 	prefix := partitionPrefix(p.ns.name, part)
-	sc, err := p.scan(ctx, prefix)
+	sc, err := p.scan(ctx, part)
 	if err != nil {
 		return err
 	}
@@ -693,4 +810,132 @@ func (p *persister) compact(ctx context.Context, part, threshold int) error {
 	}
 	p.compactions.Add(1)
 	return nil
+}
+
+// splitsLogs reports whether this node is the namespace's splitter: the
+// rendezvous owner of a synthetic group key, as a partition's compactor is.
+func (p *persister) splitsLogs() bool {
+	c := p.ns.cache
+	if c.guard == nil {
+		return true
+	}
+	owner, _, err := c.guard.Table().Owner(fmt.Sprintf("persist/%s/log", p.ns.name))
+	return err == nil && owner.ID == c.self().ID
+}
+
+// split moves every log's records into partition segments, then deletes the
+// logs (decision 0030).
+//
+// The logs are deleted only once every segment is durable. A split that stops
+// part-way leaves logs and segments both holding the same records, which the
+// merge reads as once; the next split writes the segments again and finishes.
+// A segment's name carries a hash of the logs it came from, so two splits of
+// different log sets never write to the same name.
+func (p *persister) split(ctx context.Context) error {
+	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil || len(logs) == 0 {
+		return err
+	}
+	byPartition := map[int]map[string]*segment.Record{}
+	for _, name := range logs {
+		f, err := p.load(ctx, name)
+		if err != nil {
+			return err
+		}
+		for i := range f.Records {
+			r := &f.Records[i]
+			part := persistPartition(p.ns.groupKeyFor(r.Key))
+			keys := byPartition[part]
+			if keys == nil {
+				keys = map[string]*segment.Record{}
+				byPartition[part] = keys
+			}
+			if cur, ok := keys[r.Key]; !ok || r.Newer(cur) {
+				keys[r.Key] = r
+			}
+		}
+	}
+
+	h := xxhash.New()
+	for _, name := range logs {
+		_, _ = h.WriteString(name)
+	}
+	tag := fmt.Sprintf("%016x", h.Sum64())
+	writer := hex.EncodeToString([]byte(p.ns.cache.self().ID))
+
+	var (
+		failed  error
+		errMu   sync.Mutex
+		wg      sync.WaitGroup
+		workers = make(chan struct{}, persistSplitParallel)
+	)
+	for part, keys := range byPartition {
+		records := make([]segment.Record, 0, len(keys))
+		var maxOrder uint64
+		for _, r := range keys {
+			records = append(records, *r)
+			if r.Order > maxOrder {
+				maxOrder = r.Order
+			}
+		}
+		sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+		name := fmt.Sprintf("%sseg-%016x-%s-%s.bin", partitionPrefix(p.ns.name, part), maxOrder, writer, tag)
+		data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+
+		wg.Add(1)
+		workers <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-workers }()
+			if err := p.store.Put(ctx, name, data); err != nil {
+				errMu.Lock()
+				failed = errors.Join(failed, fmt.Errorf("peercache: writing %s: %w", name, err))
+				errMu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if failed != nil {
+		return failed
+	}
+	for _, name := range logs {
+		if err := p.store.Delete(ctx, name); err != nil {
+			return fmt.Errorf("peercache: deleting %s: %w", name, err)
+		}
+	}
+	p.splits.Add(1)
+	return nil
+}
+
+// replicateRestored sends a value or deletion a restore just installed to the
+// key's replicas.
+//
+// A restore runs because this node came to own keys it did not hold — at
+// start, or because every holder of them died. What it installs exists on
+// this node alone, so without this the key sat at a replication factor of one
+// until its next write, and losing this node as well meant restoring from
+// storage again. Always asynchronous: a restore has no caller waiting for
+// durability, and it runs inside one, where waiting on a slow replica would
+// stall the read that triggered it.
+func (p *persister) replicateRestored(key string, r *segment.Record, version uint64, now int64) {
+	ns := p.ns
+	if ns.opts.ReplicationFactor < 2 {
+		return
+	}
+	targets, _, err := ns.cache.replicaTargets(ns.groupKeyFor(key), ns.opts.ReplicationFactor)
+	if err != nil || len(targets) == 0 {
+		return
+	}
+	w := replicaWork{namespace: ns.name, key: key, order: r.Order, targets: targets}
+	if r.Tombstone {
+		w.stamp = ns.stamp(math.MaxUint64)
+		w.deleted = true
+	} else {
+		w.value = r.Value
+		w.stamp = ns.stamp(version)
+		if r.ExpiresAt != 0 {
+			w.ttl = time.Duration(r.ExpiresAt - now)
+		}
+	}
+	_ = ns.cache.replicator.replicate(context.Background(), false, w)
 }

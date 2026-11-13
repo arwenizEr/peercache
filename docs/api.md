@@ -67,7 +67,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-58 series in the Prometheus text exposition format, and PeerCache imports no
+60 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -300,11 +300,15 @@ has to reason about.
 Off by default; a namespace without it is memory-only, exactly as before. With
 it (`docs/decisions/0029-persistence-as-a-segment-log.md`):
 
-- **Write-behind.** Each write is recorded in memory and flushed every 100 ms,
-  as one immutable segment object per partition touched. A key written a
-  thousand times between flushes costs one record. A write is acknowledged
-  before its flush: a crash loses at most the last interval, and a graceful
-  `Close` or drain flushes first.
+- **Write-behind.** Each write is recorded in memory and flushed every 100 ms
+  (`persist.WithFlushInterval` changes it) as **one** immutable log object per
+  flush, whatever partitions it touches. A key written a thousand times between
+  flushes costs one record. A write is acknowledged before its flush: a crash
+  loses at most the last interval, and a graceful `Close` or drain flushes
+  first.
+- **Split.** Every 10 s a namespace's splitter — the rendezvous owner of a
+  synthetic key — moves the logs into per-partition segments, and deletes the
+  logs only once those are durable (`docs/decisions/0030-one-object-per-flush.md`).
 - **Restore.** A node that comes to own keys it does not hold — at start, or
   because every holder of them died — restores their partition on first access,
   keeping whichever of memory and storage is newer. Reads and writes of that
@@ -324,10 +328,47 @@ it (`docs/decisions/0029-persistence-as-a-segment-log.md`):
   serves the partition from memory and retries a second later.
 
 Backends implement `persist.BlobStore`, four methods with an atomic `Put`, and
-run the contract in `persist/persisttest`. `persist.Memory` is for tests.
+run the contract in `persist/persisttest`. Two ship in the core module:
+
+- `persist.Dir(root)` keeps each object as a file: written to a temporary file,
+  fsynced, renamed into place, directory fsynced. A crash at any point leaves
+  the old object or the new one, and its leftovers are cleaned up when the
+  directory is next opened. It is one process's store; for a key to survive
+  the loss of its node, every node must reach the same files — a shared volume.
+  On Windows a directory cannot be fsynced, so whether a rename survives a power
+  loss at once is the file system's journal's guarantee, not this package's.
+- `persist.Memory()` survives nothing and is for tests.
+
+And one in its own module, so that the AWS SDK is a dependency only of programs
+that use it:
+
+- `github.com/arwenizEr/peercache/persist/s3` — `s3.New(client, bucket, prefix)`
+  over an aws-sdk-go-v2 S3 client, for S3 and S3-compatible stores (MinIO, R2,
+  Ceph RGW). Several namespaces or clusters can share a bucket under different
+  prefixes. Use `persist.WithFlushInterval(time.Second)` or longer; see the
+  table below.
+
+The loss window on `persist.Dir`, measured on Machine A: a write is durable at
+most one flush interval plus one durable write after it is acknowledged — p99
+104–107 ms against the 100 ms interval.
 `PersistPending`, `PersistFlushes`, `PersistRecordsWritten`, `PersistFailures`,
-`PersistRestored`, `PersistRestoreFailures`, `PersistCompactions` and
-`PersistCompactFailures` report it.
+`PersistRestored`, `PersistRestoreFailures`, `PersistCompactions`,
+`PersistCompactFailures`, `PersistSplits` and `PersistSplitFailures` report it.
+
+**Choosing a flush interval.** Each flush is one request per node; each split at
+most 64 per cluster. On a local disk the default 100 ms is cheap. On an object
+store that charges per request, a second is the usual choice:
+
+| flush interval | requests per loaded node | loss window | ≈ S3 Standard PUTs per node per month |
+|---:|---:|---:|---:|
+| 100 ms | 10/s | ~100 ms | $130 |
+| 1 s | 1/s | ~1 s | $13 |
+| 5 s | 0.2/s | ~5 s | $2.60 |
+
+Plus at most 6.4 split requests a second per cluster (≤ $83 a month). Prices
+are list prices at the time of writing; check them. Before decision 0030 a
+loaded node wrote one object per partition per flush — 640 requests a second,
+about $8,000 a month per node — which is why a flush is one object.
 
 Measured on Machine A: a persistent `Set` costs about twice a plain one
 (851 ns against 430), and a namespace without persistence is within noise of
@@ -1107,13 +1148,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 58 series come out of it.
+format with the content type a scraper expects, and 60 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 58 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 60 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
