@@ -2391,7 +2391,7 @@ mutate "the replica pass ignores the request" \
 mutate "the replica pass sends what the asker does not own" \
   handler.go \
   'return err == nil && owner.ID == in.Requester' \
-  'return err == nil' \
+  'return err == nil && owner.ID != ""' \
   'TestCatchUpOnlySendsKeysTheAskerRanksFor$' ./tests
 
 echo
