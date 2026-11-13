@@ -111,9 +111,17 @@ type persister struct {
 	splits          atomic.Int64
 	splitFailures   atomic.Int64
 
-	// rmu guards parts, the per-partition restore state.
-	rmu             sync.Mutex
-	parts           [persistPartitions]partitionState
+	// rmu guards parts, the per-partition restore state, and rclosed.
+	rmu   sync.Mutex
+	parts [persistPartitions]partitionState
+	// Restores run on their own goroutines, under rctx. Close cancels it and
+	// waits on rwg: a restore left running outlived the cache, and since it
+	// holds the flush lock while it reads, one stuck on a dead store would
+	// also have held up Close's final flush.
+	rctx            context.Context
+	rcancel         context.CancelFunc
+	rwg             sync.WaitGroup
+	rclosed         bool
 	restored        atomic.Int64
 	restoreFailures atomic.Int64
 }
@@ -128,6 +136,7 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 		kick:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 	}
+	p.rctx, p.rcancel = context.WithCancel(context.Background())
 	// The ticker is created here, not in run: a ticker armed on the
 	// goroutine misses any clock advance that lands before the goroutine is
 	// scheduled, and the first flush then comes an interval late — on the
@@ -305,6 +314,13 @@ func (p *persister) restorePending(records []segment.Record) {
 func (p *persister) Close(ctx context.Context) error {
 	close(p.done)
 	p.wg.Wait()
+	// Restores before the final flush, and cancelled rather than awaited:
+	// one reading a store that no longer answers holds the flush lock.
+	p.rmu.Lock()
+	p.rclosed = true
+	p.rmu.Unlock()
+	p.rcancel()
+	p.rwg.Wait()
 	return p.flush(ctx)
 }
 
@@ -397,6 +413,11 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 			p.rmu.Unlock()
 			return nil
 		}
+		if st.running == nil && p.rclosed {
+			// Closing: no new restore starts, and memory answers.
+			p.rmu.Unlock()
+			return nil
+		}
 		if st.running == nil {
 			if st.failedAt != 0 && p.clk.Now().UnixNano()-st.failedAt < int64(restoreRetry) {
 				// Failed recently: serve from memory, retry later.
@@ -404,6 +425,7 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 				return nil
 			}
 			st.running = make(chan struct{})
+			p.rwg.Add(1)
 			go p.restorePartition(part, want, st.running)
 		}
 		running := st.running
@@ -419,7 +441,8 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
-	ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+	defer p.rwg.Done()
+	ctx, cancel := clock.WithTimeout(p.rctx, p.clk, persistFlushTimeout)
 	err := p.restore(ctx, part)
 	cancel()
 
