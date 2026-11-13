@@ -38,6 +38,8 @@ change the public API.
   write.
 - `Close` cancels and waits for restores still in flight; one reading a store
   that no longer answered could outlive the cache and hold up its final flush.
+- A persistent write allocates 437 bytes in 3 allocations instead of 705 in 4:
+  the dirty map holds records by value and is recycled between flushes.
 
 ### Changed
 
