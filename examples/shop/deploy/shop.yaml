@@ -1,0 +1,101 @@
+# The shop as deploy/statefulset.yaml prescribes, with five replicas and the
+# shop's own probes: /healthz is cache.Ready(), and SIGTERM runs Drain, so no
+# PreStop hook is needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop-peers
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: shop}
+  ports:
+    - {name: gossip, port: 7946, targetPort: gossip, protocol: TCP}
+    - {name: gossip-udp, port: 7946, targetPort: gossip-udp, protocol: UDP}
+    - {name: data, port: 7947, targetPort: data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+spec:
+  selector: {app: shop}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: shop
+spec:
+  serviceName: shop-peers
+  replicas: 5
+  selector:
+    matchLabels: {app: shop}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels: {app: shop}
+    spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {app: shop}
+      containers:
+        - name: shop
+          image: peercache-shop:m16
+          imagePullPolicy: Never
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: gossip, containerPort: 7946, protocol: TCP}
+            - {name: gossip-udp, containerPort: 7946, protocol: UDP}
+            - {name: data, containerPort: 7947}
+          env:
+            - name: NODE_ID
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - {name: SEED_DNS, value: shop-peers.default.svc.cluster.local}
+            - {name: S3_ENDPOINT, value: "http://minio:9000"}
+            - {name: S3_BUCKET, value: peercache}
+            - {name: S3_ACCESS_KEY, value: m16access}
+            - {name: S3_SECRET_KEY, value: m16secret}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 3
+            initialDelaySeconds: 2
+          # Not the readiness probe: unready is not dead.
+          livenessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {memory: 256Mi, cpu: 250m}
+            limits: {memory: 1Gi}
+---
+# The load generator: the same image, idle, so the scenarios can exec runs
+# into it and copy its ledger out. Pinned to the control plane with MinIO, so
+# a worker partition never takes the client with it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: loadgen
+spec:
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      effect: NoSchedule
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  containers:
+    - name: loadgen
+      image: peercache-shop:m16
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]

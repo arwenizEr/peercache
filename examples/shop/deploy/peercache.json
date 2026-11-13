@@ -1,0 +1,860 @@
+{
+  "uid": "peercache-m16",
+  "title": "PeerCache M16",
+  "tags": [
+    "peercache"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Cluster totals",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Owned keys (sum)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(peercache_owned_keys)",
+          "legendFormat": "owned",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Replica keys (sum)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(peercache_replica_keys)",
+          "legendFormat": "replicas",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Replicas per owned key",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(peercache_replica_keys) / clamp_min(sum(peercache_owned_keys), 1)",
+          "legendFormat": "ratio",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Members seen (min/max)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(peercache_members)",
+          "legendFormat": "min",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "max(peercache_members)",
+          "legendFormat": "max",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Traffic",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Hits / misses per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_hits_total[1m]))",
+          "legendFormat": "hits",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_misses_total[1m]))",
+          "legendFormat": "misses",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_loads_total[1m]))",
+          "legendFormat": "loads",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Replication per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_replications_sent_total[1m]))",
+          "legendFormat": "sent",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_replications_failed_total[1m]))",
+          "legendFormat": "failed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_replications_dropped_total[1m]))",
+          "legendFormat": "dropped",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(peercache_degraded_writes_total[1m]))",
+          "legendFormat": "degraded writes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Replica reads per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_replica_reads_served_total[1m]))",
+          "legendFormat": "served",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_replica_reads_referred_total[1m]))",
+          "legendFormat": "referred",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Membership and ownership",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Epoch per pod (per view: they need not agree)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_epoch",
+          "legendFormat": "{{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Owned keys per pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_owned_keys",
+          "legendFormat": "{{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Replica keys per pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_replica_keys",
+          "legendFormat": "{{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Ready to lose a node (replicas current)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_replicas_current",
+          "legendFormat": "{{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Churn: what membership changes cost",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Replica hand-off per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_replicas_evicted_total[1m]))",
+          "legendFormat": "evicted",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_replicas_rehomed_total[1m]))",
+          "legendFormat": "rehomed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_replicas_retained_total[1m]))",
+          "legendFormat": "retained",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Promotion and catch-up per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_keys_promoted_total[1m]))",
+          "legendFormat": "promoted",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_replicas_pulled_total[1m]))",
+          "legendFormat": "pulled",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_keys_handed_off_total[1m]))",
+          "legendFormat": "handed off",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(peercache_keys_adopted_total[1m]))",
+          "legendFormat": "adopted",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Conflicts per second, per pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(peercache_version_conflicts_total[1m])",
+          "legendFormat": "version {{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "rate(peercache_split_brain_detections_total[1m])",
+          "legendFormat": "split brain {{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Refusals per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_stale_epoch_refusals_total[1m]))",
+          "legendFormat": "stale epoch",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_deferred_activations_total[1m]))",
+          "legendFormat": "deferred activation",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_refused_activations_total[1m]))",
+          "legendFormat": "refused activation",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(peercache_mailbox_rejections_total[1m]))",
+          "legendFormat": "mailbox full",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Persistence and memory",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Records waiting to flush, per pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_persist_pending",
+          "legendFormat": "{{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Flushes and failures per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 57,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(peercache_persist_flushes_total[1m]))",
+          "legendFormat": "flushes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(peercache_persist_records_written_total[1m]))",
+          "legendFormat": "records",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(peercache_persist_failures_total[1m]))",
+          "legendFormat": "failures",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Memory used vs budget, per pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "peercache_memory_used_bytes",
+          "legendFormat": "used {{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "peercache_memory_budget_bytes",
+          "legendFormat": "budget {{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          }
+        }
+      ]
+    }
+  ]
+}

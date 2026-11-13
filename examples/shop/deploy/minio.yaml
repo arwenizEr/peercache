@@ -1,0 +1,54 @@
+# The object store persistence flushes to, as S3. MinIO's images are no
+# longer published, so this is RustFS, an S3-compatible server; the shop
+# creates its bucket on start. Single node, ephemeral volume: it outlives the
+# shop pods, which is all the scenarios need. The service keeps the name
+# "minio" because it is what the scenarios call the object store.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: minio}
+  template:
+    metadata:
+      labels: {app: minio}
+    spec:
+      # On the control plane, so a worker partition never cuts every pod off
+      # from it at once by accident; "store down" is its own scenario.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      containers:
+        - name: s3
+          image: rustfs/rustfs:1.0.5
+          env:
+            - {name: RUSTFS_ACCESS_KEY, value: m16access}
+            - {name: RUSTFS_SECRET_KEY, value: m16secret}
+            - {name: RUSTFS_VOLUMES, value: /data}
+            - {name: RUSTFS_ADDRESS, value: ":9000"}
+          ports:
+            - {name: s3, containerPort: 9000}
+          readinessProbe:
+            tcpSocket: {port: s3}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: logs, mountPath: /logs}
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector: {app: minio}
+  ports:
+    - {name: s3, port: 9000, targetPort: s3}

@@ -76,6 +76,11 @@ var realTimeFiles = []string{
 	"examples/replication/main.go",
 	"examples/rolling-upgrade/main.go",
 	"examples/observability/main.go",
+	// The M16 shop and its load generator are a real service and a real
+	// client, run on Kubernetes: their backoffs and latencies are wall-clock
+	// by definition. They wait with tickers and timers, never time.Sleep.
+	"examples/shop/main.go",
+	"examples/shop/cmd/shopload/main.go",
 }
 
 // exemptFromClockRule reports whether path may use the time package directly.
