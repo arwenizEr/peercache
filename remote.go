@@ -131,6 +131,17 @@ func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]
 	return resp.Value, resp.Stamp, nil
 }
 
+// replicaGet asks one of a key's replicas for its copy.
+func (r *router) replicaGet(ctx context.Context, node core.Node, epoch uint64, ns, key string) (wire.ReplicaGetResponse, error) {
+	var resp wire.ReplicaGetResponse
+	err := r.invoke(ctx, node, transport.MethodReplicaGet, &wire.ReplicaGetRequest{
+		Namespace: ns,
+		Key:       key,
+		Epoch:     epoch,
+	}, &resp)
+	return resp, err
+}
+
 // remoteLoad asks an owner for a key, letting it reconstruct if absent.
 func (r *router) remoteLoad(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, error) {
 	var resp wire.LoadResponse

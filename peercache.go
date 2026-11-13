@@ -390,6 +390,14 @@ type cache struct {
 	// sustained rate under stable membership means views are not settling.
 	epochSkew atomic.Int64
 
+	// replicaServed and replicaReferred count reads this node answered as a
+	// replica and reads it declined; replicaFloored counts replica answers
+	// this node discarded as a reader because it already knew of a newer
+	// stamp. See docs/decisions/0028-hot-key-reads.md.
+	replicaServed   atomic.Int64
+	replicaReferred atomic.Int64
+	replicaFloored  atomic.Int64
+
 	// degradedWrites counts synchronous writes acknowledged with fewer copies
 	// than the namespace's replication factor asked for. See
 	// docs/decisions/open.md question 37.
@@ -594,6 +602,9 @@ func (c *cache) Stats() Stats {
 		stats.DeferredActivations = owned.Deferrals
 		stats.StaleEpochRefusals = owned.StaleEpochs
 		stats.EpochSkew = c.epochSkew.Load()
+		stats.ReplicaReadsServed = c.replicaServed.Load()
+		stats.ReplicaReadsReferred = c.replicaReferred.Load()
+		stats.ReplicaReadsFloored = c.replicaFloored.Load()
 		sent, dropped, failed := c.invalidator.counters()
 		stats.InvalidationsSent = sent
 		stats.InvalidationsDropped = dropped

@@ -29,6 +29,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 	seeds := []any{
 		&wire.GetRequest{Namespace: "n", Key: "k", Epoch: 1},
 		&wire.GetResponse{Found: true, Value: []byte("v")},
+		&wire.ReplicaGetRequest{Namespace: "n", Key: "k", Epoch: 1},
+		&wire.ReplicaGetResponse{Served: true, Value: []byte("v"), AgeNanos: 1},
 		&wire.LoadRequest{Namespace: "n", Key: "k"},
 		&wire.LoadResponse{Found: true, Value: []byte("v")},
 		&wire.SetRequest{Namespace: "n", Key: "k", Value: []byte("v")},
@@ -98,6 +100,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		var (
 			getReq   wire.GetRequest
 			getResp  wire.GetResponse
+			rgReq    wire.ReplicaGetRequest
+			rgResp   wire.ReplicaGetResponse
 			loadReq  wire.LoadRequest
 			loadResp wire.LoadResponse
 			setReq   wire.SetRequest
@@ -131,6 +135,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		)
 		_ = wire.Decode(data, &getReq)
 		_ = wire.Decode(data, &getResp)
+		_ = wire.Decode(data, &rgReq)
+		_ = wire.Decode(data, &rgResp)
 		_ = wire.Decode(data, &loadReq)
 		_ = wire.Decode(data, &loadResp)
 		_ = wire.Decode(data, &setReq)

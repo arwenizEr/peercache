@@ -254,6 +254,7 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 
 	implemented := []string{
 		"Stamp", "GetRequest", "GetResponse", "SetRequest", "SetResponse",
+		"ReplicaGetRequest", "ReplicaGetResponse",
 		"LoadRequest", "LoadResponse", "ReplicateRequest", "ReplicateResponse",
 		"CatchUpRequest", "CatchUpResponse", "CatchUpEntry",
 		"DeleteRequest", "DeleteResponse", "BatchGetRequest", "BatchGetResponse",
@@ -289,6 +290,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 
 	types := []any{
 		&wire.Stamp{}, &wire.GetRequest{}, &wire.GetResponse{},
+		&wire.ReplicaGetRequest{}, &wire.ReplicaGetResponse{},
 		&wire.SetRequest{}, &wire.SetResponse{}, &wire.DeleteRequest{},
 		&wire.BatchGetRequest{}, &wire.BatchGetResponse{}, &wire.BatchEntry{},
 		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},

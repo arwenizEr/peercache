@@ -1755,6 +1755,94 @@ mutate "an L1 floor is set for a key with no copy" \
   '	if ok && (now >= existing.expiresAt || !stamp.NewerThan(existing.stamp)) {' \
   'TestAFloorIsNotSetWithoutACopy$' ./internal/l1
 
+mutate "a replica serves a copy older than the TTL" \
+  namespace.go \
+  '	if age < 0 || age >= n.opts.L1TTL {' \
+  '	if age < 0 {' \
+  'TestAReplicaCopyOlderThanTheTTLGoesToTheOwner$' ./tests
+
+mutate "a replica serves a key it no longer ranks for" \
+  namespace.go \
+  '	if !ranked {
+		return nil, core.Stamp{}, 0, false
+	}' \
+  '	if false {
+		return nil, core.Stamp{}, 0, false
+	}' \
+  'TestANodeThatNoLongerRanksRefersTheRead$' ./tests
+
+mutate "a replica decline is reported as a miss" \
+  namespace.go \
+  '	if !served {
+		return n.fetchOwner(ctx, p, key)
+	}' \
+  '	if !served {
+		return nil, ErrNotFound
+	}' \
+  'TestAReplicaWithoutTheKeyIsNotAMiss$' ./tests
+
+mutate "an invalidation deletes instead of leaving a floor" \
+  handler.go \
+  '			if ns.opts.ReplicaReads {
+				ns.l1.Floor(' \
+  '			if false {
+				ns.l1.Floor(' \
+  'TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded$' ./tests
+
+mutate "a replica answer below a floor is used" \
+  namespace.go \
+  '		if n.l1.Below(key, stamp) {' \
+  '		if false {' \
+  'TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded$' ./tests
+
+mutate "a self-replica reads over the network" \
+  namespace.go \
+  '	if holder.ID == n.cache.self().ID {' \
+  '	if false {' \
+  'TestASelfReplicaServesWithoutAnRPC$' ./tests
+
+mutate "a replica copy is cached for a full TTL from the read" \
+  namespace.go \
+  '			n.l1.Put(key, val, stamp, remaining)' \
+  '			n.l1.Put(key, val, stamp, n.opts.L1TTL)' \
+  'TestAReplicaCopyIsCachedForWhatIsLeftOfItsTTL$' ./tests
+
+mutate "replica reads always go to the owner" \
+  namespace.go \
+  '			if n.opts.ReplicaReads {
+				val, err := n.fetchHolder(fetchCtx, p, key)' \
+  '			if false {
+				val, err := n.fetchHolder(fetchCtx, p, key)' \
+  'TestReplicaReadsSpreadAcrossHolders$' ./tests
+
+mutate "a failed replica fails the read" \
+  namespace.go \
+  '		if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}' \
+  '		if err != nil {
+			return nil, err
+		}' \
+  'TestAPeerWithoutReplicaGetFallsBackToTheOwner$' ./tests
+
+mutate "a replica copy carries no receipt time" \
+  handler.go \
+  '		ReceivedAt: now,' \
+  '		ReceivedAt: 0,' \
+  'TestReplicaReadsSpreadAcrossHolders$' ./tests
+
+mutate "replica reads are accepted at replication factor 1" \
+  internal/core/options.go \
+  '	if o.ReplicaReads && o.ReplicationFactor < 2 {' \
+  '	if false {' \
+  'TestReplicaReadsNeedReplicasAndAnL1$' ./tests
+
+mutate "replica reads are accepted with the L1 tier disabled" \
+  internal/core/options.go \
+  '	if o.ReplicaReads && o.L1TTL < 0 {' \
+  '	if false {' \
+  'TestReplicaReadsNeedReplicasAndAnL1$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

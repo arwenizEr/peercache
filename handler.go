@@ -40,6 +40,8 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 	switch method {
 	case transport.MethodGet:
 		return h.get(ctx, req)
+	case transport.MethodReplicaGet:
+		return h.replicaGet(ctx, req)
 	case transport.MethodLoad:
 		return h.load(ctx, req)
 	case transport.MethodSet:
@@ -162,6 +164,37 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		// own L1 maximum. That is the safe direction: the caller's
 		// bound always applies, and an owner can only ever shorten it.
 		TTLRemainingNanos: 0,
+	})
+}
+
+// replicaGet answers a read from this node's replica copy, or declines.
+//
+// There is no ownership check: the caller chose this node because it ranks as
+// a replica. Whether it still does is decided here, under this node's own view,
+// for the same reason [peerHandler.assertOwned] uses its own: epochs are
+// per-view and cannot be compared across nodes. A decline is never an error,
+// so a reader treats it exactly like a peer that predates this method.
+func (h *peerHandler) replicaGet(ctx context.Context, req []byte) ([]byte, error) {
+	var in wire.ReplicaGetRequest
+	if err := wire.Decode(req, &in); err != nil {
+		return nil, err
+	}
+	h.noteEpoch(in.Epoch)
+
+	ns, ok := h.localNamespace(in.Namespace)
+	if !ok || ns.err != nil || !ns.opts.ReplicaReads {
+		h.cache.replicaReferred.Add(1)
+		return wire.Encode(&wire.ReplicaGetResponse{})
+	}
+	val, stamp, age, ok := ns.replicaCopy(in.Key)
+	if !ok {
+		return wire.Encode(&wire.ReplicaGetResponse{})
+	}
+	return wire.Encode(&wire.ReplicaGetResponse{
+		Served:   true,
+		Value:    val,
+		Stamp:    stamp,
+		AgeNanos: int64(age),
 	})
 }
 
@@ -455,11 +488,13 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 
+	now := h.cache.opts.Clock.Now().UnixNano()
 	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
-		Value:     in.Value,
-		Stamp:     in.Stamp,
-		ExpiresAt: replication.DeadlineFrom(h.cache.opts.Clock.Now().UnixNano(), in.TTLNanos),
-		From:      in.From,
+		Value:      in.Value,
+		Stamp:      in.Stamp,
+		ExpiresAt:  replication.DeadlineFrom(now, in.TTLNanos),
+		ReceivedAt: now,
+		From:       in.From,
 	})
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {
@@ -577,6 +612,14 @@ func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte
 	// copies are most likely. Correctness does not depend on it either way.
 	if ns, ok := h.localNamespace(in.Namespace); ok && ns.l1 != nil {
 		for _, key := range in.Keys {
+			// With replica reads the next refill may come from a
+			// replica that has not yet received in.Stamp, so the
+			// copy is replaced by a floor rather than deleted. See
+			// docs/decisions/0028-hot-key-reads.md.
+			if ns.opts.ReplicaReads {
+				ns.l1.Floor(key, in.Stamp, ns.opts.L1TTL)
+				continue
+			}
 			ns.l1.InvalidateOlderThan(key, in.Stamp)
 		}
 	}

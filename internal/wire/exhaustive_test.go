@@ -28,6 +28,8 @@ func everyMessage() []struct {
 	}{
 		{"GetRequest", func() (any, func() int) { v := new(wire.GetRequest); return v, func() int { return 0 } }},
 		{"GetResponse", func() (any, func() int) { v := new(wire.GetResponse); return v, func() int { return 0 } }},
+		{"ReplicaGetRequest", func() (any, func() int) { v := new(wire.ReplicaGetRequest); return v, func() int { return 0 } }},
+		{"ReplicaGetResponse", func() (any, func() int) { v := new(wire.ReplicaGetResponse); return v, func() int { return 0 } }},
 		{"LoadRequest", func() (any, func() int) { v := new(wire.LoadRequest); return v, func() int { return 0 } }},
 		{"LoadResponse", func() (any, func() int) { v := new(wire.LoadResponse); return v, func() int { return 0 } }},
 		{"SetRequest", func() (any, func() int) { v := new(wire.SetRequest); return v, func() int { return 0 } }},

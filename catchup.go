@@ -192,12 +192,14 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 			// check applies: a page that arrives after a live write
 			// must not undo it. Catch-up is not privileged just
 			// because it is bulk.
+			now := c.opts.Clock.Now().UnixNano()
 			accepted, conflict := c.replicas.Put(ns.name, e.Key, replication.Entry{
 				Value: e.Value,
 				Stamp: e.Stamp,
 				// The page carries the time left; held as a deadline.
-				ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano(), e.TTLNanos),
-				From:      peer.ID,
+				ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),
+				ReceivedAt: now,
+				From:       peer.ID,
 			})
 			if accepted {
 				cu.pulled.Add(1)

@@ -30,6 +30,13 @@ service Peer {
   // Get reads one key from the namespace's owned store on this node.
   rpc Get(GetRequest) returns (GetResponse);
 
+  // ReplicaGet asks a node holding a replica of a key for its copy, in a
+  // namespace opened with replica reads. The replica answers only with a copy
+  // it received within the namespace's L1 TTL and only while it still ranks as
+  // a replica; otherwise it declines and the caller asks the owner. It never
+  // answers "absent", because only the owner knows that.
+  rpc ReplicaGet(ReplicaGetRequest) returns (ReplicaGetResponse);
+
   // Load reads one key, reconstructing it from the namespace's registered
   // loader if it is absent.
   //
@@ -118,6 +125,23 @@ message GetResponse {
   // non-owned tier. Zero means the owner set no TTL, in which case the
   // caller applies its own L1 maximum. The caller always clamps.
   int64 ttl_remaining_ns = 4;
+}
+
+message ReplicaGetRequest {
+  string namespace = 1;
+  string key = 2;
+  uint64 epoch = 3;
+}
+
+message ReplicaGetResponse {
+  // served is false when the replica declines; the caller then asks the
+  // owner. Nothing else in the message is meaningful in that case.
+  bool served = 1;
+  bytes value = 2;
+  Stamp stamp = 3;
+  // age_ns is how long ago, by the replica's clock, it received this copy.
+  // The caller caches the value for its L1 TTL minus this.
+  int64 age_ns = 4;
 }
 
 message LoadRequest {

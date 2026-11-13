@@ -177,6 +177,11 @@ type NamespaceOptions struct {
 	// Shards is the number of independently locked partitions in this
 	// namespace's store. Zero takes the store's default.
 	Shards int
+
+	// ReplicaReads lets a read of a key owned elsewhere be answered by one
+	// of the key's replicas. Requires ReplicationFactor of at least 2 and an
+	// enabled L1 tier. See docs/decisions/0028-hot-key-reads.md.
+	ReplicaReads bool
 }
 
 // NamespaceOption mutates [NamespaceOptions].
@@ -235,6 +240,14 @@ func (o *NamespaceOptions) Validate() error {
 	if o.CompressionThreshold < 0 {
 		return fmt.Errorf("peercache: compression threshold %d must not be negative: %w",
 			o.CompressionThreshold, ErrInvalidOption)
+	}
+	if o.ReplicaReads && o.ReplicationFactor < 2 {
+		return fmt.Errorf("peercache: replica reads need a replication factor of at least 2, got %d: %w",
+			o.ReplicationFactor, ErrInvalidOption)
+	}
+	if o.ReplicaReads && o.L1TTL < 0 {
+		return fmt.Errorf("peercache: replica reads are bounded by the L1 TTL, and this namespace "+
+			"disables the L1 tier: %w", ErrInvalidOption)
 	}
 	if o.Shards < 0 {
 		return fmt.Errorf("peercache: shard count %d must not be negative: %w", o.Shards, ErrInvalidOption)

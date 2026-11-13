@@ -50,6 +50,18 @@ type Stats struct {
 	// instead of sending their own. See docs/decisions/0028.
 	CoalescedReads int64
 
+	// ReplicaReadsServed counts reads this node answered from its replica
+	// copy, for a peer or for itself, in namespaces opened with
+	// WithReplicaReads. ReplicaReadsReferred counts the ones it declined --
+	// no copy, a copy older than the L1 TTL, or no longer a replica -- which
+	// the reader then sent to the owner. A rising referred count with a
+	// steady served count is what keys quieter than the TTL look like.
+	ReplicaReadsServed   int64
+	ReplicaReadsReferred int64
+	// ReplicaReadsFloored counts replica answers this node discarded as a
+	// reader because an invalidation had already told it of a newer stamp.
+	ReplicaReadsFloored int64
+
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the
 	// group had just been acquired.

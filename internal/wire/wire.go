@@ -45,6 +45,26 @@ type GetResponse struct {
 	TTLRemainingNanos int64 `msgpack:"ttl_remaining_ns"`
 }
 
+// ReplicaGetRequest asks a replica for its copy of a key. See
+// docs/decisions/0028-hot-key-reads.md.
+type ReplicaGetRequest struct {
+	Namespace string `msgpack:"namespace"`
+	Key       string `msgpack:"key"`
+	Epoch     uint64 `msgpack:"epoch"`
+}
+
+// ReplicaGetResponse is a replica's answer. Served false means it declined and
+// the caller must ask the owner; a replica never reports a key absent.
+type ReplicaGetResponse struct {
+	Served bool   `msgpack:"served"`
+	Value  []byte `msgpack:"value"`
+	Stamp  Stamp  `msgpack:"stamp"`
+	// AgeNanos is how long ago the replica received this copy, by its own
+	// clock. The caller caches the value for its L1 TTL minus this, so the
+	// copy's whole life stays inside one TTL of its arrival.
+	AgeNanos int64 `msgpack:"age_ns"`
+}
+
 // LoadRequest asks an owner for a key, reconstructing it if absent.
 type LoadRequest struct {
 	Namespace string `msgpack:"namespace"`

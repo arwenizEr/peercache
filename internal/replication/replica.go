@@ -98,6 +98,11 @@ type Entry struct {
 	// one. An expiry is never replicated — it happens on every holder at the
 	// same instant — so every holder has to agree on the instant.
 	ExpiresAt int64
+	// ReceivedAt is when this node accepted the copy, in Unix nanoseconds
+	// by its own clock. It is set by the receiver and never crosses the
+	// network. Replica reads serve a copy only while it is younger than the
+	// namespace's L1 TTL; see docs/decisions/0028-hot-key-reads.md.
+	ReceivedAt int64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
 	// epoch means two of them believe they own it.

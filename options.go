@@ -292,6 +292,33 @@ func WithReplicationFactor(rf int) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.ReplicationFactor = rf }
 }
 
+// WithReplicaReads lets a read of a key owned elsewhere be answered by one of
+// the key's replicas instead of only its owner, spreading a hot key's refills
+// across every node that holds it.
+//
+// Each node always asks the same holder for a given key -- the owner or one of
+// its replicas, chosen by rendezvous hash -- so a key's readers divide among its
+// holders. A node that is itself a replica answers from its own copy.
+//
+// A replica answers only with a copy it received less than the namespace's L1
+// TTL ago, and only while it still ranks as a replica; the reader caches the
+// copy for what is left of that TTL. So a value read this way is stale by at
+// most the L1 TTL plus the replication delay, and the replication delay is
+// measured (docs/benchmarks.md), not bounded. A replica that declines, lacks
+// the key, or answers with a copy this node already knows to be superseded
+// sends the read to the owner. A key quiet for longer than the TTL is
+// therefore always read from its owner.
+//
+// It applies to Get only. GetOrLoad, BatchGet, Exists and every write go to
+// the owner as before.
+//
+// It requires a replication factor of at least 2 and an enabled L1 tier;
+// otherwise the namespace reports [ErrInvalidOption]. See
+// docs/decisions/0028-hot-key-reads.md.
+func WithReplicaReads() NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.ReplicaReads = true }
+}
+
 // WithCodec names the registered codec used for typed values.
 func WithCodec(name string) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.Codec = name }

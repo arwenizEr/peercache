@@ -15,6 +15,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/singleflight"
 	"github.com/arwenizEr/peercache/internal/store"
+	"github.com/cespare/xxhash/v2"
 )
 
 // Namespace is a handle to a named keyspace.
@@ -319,6 +320,10 @@ func (n *namespace) sharedFetch(ctx context.Context, p placement, key string) ([
 				fetchCtx, cancel = context.WithDeadline(fetchCtx, deadline)
 				defer cancel()
 			}
+			if n.opts.ReplicaReads {
+				val, err := n.fetchHolder(fetchCtx, p, key)
+				return val, 0, err
+			}
 			val, err := n.fetchOwner(fetchCtx, p, key)
 			return val, 0, err
 		})
@@ -333,6 +338,137 @@ func (n *namespace) sharedFetch(ctx context.Context, p placement, key string) ([
 		}
 	}
 	return n.fetchOwner(ctx, p, key)
+}
+
+// fetchHolder reads key from the holder this node is assigned to -- the owner or
+// one of its replicas -- and falls back to the owner whenever a replica cannot
+// give an answer this node may use.
+//
+// The fallback is deliberately unconditional. A replica that declines, fails,
+// predates the method, or answers with a copy this node already knows to be
+// superseded costs one extra hop, and no outcome of the replica leg is ever
+// returned as the read's answer except a served, current copy. In particular a
+// replica never produces ErrNotFound: only the owner knows a key is absent.
+func (n *namespace) fetchHolder(ctx context.Context, p placement, key string) ([]byte, error) {
+	if n.l1 != nil {
+		if val, _, ok := n.l1.Get(key); ok {
+			return val, nil
+		}
+	}
+	holder, ok := n.holderFor(key)
+	if !ok || holder.ID == p.owner.ID {
+		return n.fetchOwner(ctx, p, key)
+	}
+
+	var (
+		val    []byte
+		stamp  core.Stamp
+		age    time.Duration
+		served bool
+	)
+	if holder.ID == n.cache.self().ID {
+		val, stamp, age, served = n.replicaCopy(key)
+	} else {
+		resp, err := n.cache.route.replicaGet(ctx, holder, p.epoch, n.name, key)
+		if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err == nil && resp.Served {
+			val, stamp, age, served = resp.Value, resp.Stamp, time.Duration(resp.AgeNanos), true
+		}
+	}
+	if !served {
+		return n.fetchOwner(ctx, p, key)
+	}
+	if n.l1 != nil {
+		if n.l1.Below(key, stamp) {
+			n.cache.replicaFloored.Add(1)
+			return n.fetchOwner(ctx, p, key)
+		}
+		// The copy's life in this tier ends one L1 TTL after the replica
+		// received it, not one TTL from now, so the bound holds end to end.
+		if remaining := n.opts.L1TTL - age; remaining > 0 {
+			n.l1.Put(key, val, stamp, remaining)
+		}
+	}
+	return val, nil
+}
+
+// holderFor picks which of key's holders this node reads it from.
+//
+// Rendezvous over the holders, seeded by this node's ID: each node always asks
+// the same holder for a key, which keeps that holder's own coalescing
+// effective, and nodes as a whole divide among all of them.
+func (n *namespace) holderFor(key string) (core.Node, bool) {
+	if n.cache.guard == nil {
+		return core.Node{}, false
+	}
+	holders, _, err := n.cache.guard.Table().Replicas(n.groupKeyFor(key), n.opts.ReplicationFactor)
+	if err != nil || len(holders) == 0 {
+		return core.Node{}, false
+	}
+	self := n.cache.self().ID
+	var (
+		best      core.Node
+		bestScore uint64
+	)
+	for i, h := range holders {
+		score := xxhash.Sum64String(self + "\x00" + key + "\x00" + h.ID)
+		if i == 0 || score > bestScore {
+			best, bestScore = h, score
+		}
+	}
+	return best, true
+}
+
+// replicaCopy returns this node's replica copy of key, decoded, with its age --
+// but only if this node may serve it: it ranks as a replica for key under its
+// own current view, the copy is live, and it was received less than one L1 TTL
+// ago. It counts what it served and what it declined.
+func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age time.Duration, ok bool) {
+	defer func() {
+		if ok {
+			n.cache.replicaServed.Add(1)
+		} else {
+			n.cache.replicaReferred.Add(1)
+		}
+	}()
+	if n.cache.guard == nil {
+		return nil, core.Stamp{}, 0, false
+	}
+	holders, _, err := n.cache.guard.Table().Replicas(n.groupKeyFor(key), n.opts.ReplicationFactor)
+	if err != nil || len(holders) < 2 {
+		return nil, core.Stamp{}, 0, false
+	}
+	self := n.cache.self().ID
+	ranked := false
+	for _, h := range holders[1:] {
+		if h.ID == self {
+			ranked = true
+			break
+		}
+	}
+	if !ranked {
+		return nil, core.Stamp{}, 0, false
+	}
+
+	e, found := n.cache.replicas.Get(n.name, key)
+	if !found || e.ReceivedAt == 0 {
+		return nil, core.Stamp{}, 0, false
+	}
+	now := n.cache.opts.Clock.Now().UnixNano()
+	if e.ExpiresAt != 0 && now >= e.ExpiresAt {
+		return nil, core.Stamp{}, 0, false
+	}
+	age = time.Duration(now - e.ReceivedAt)
+	if age < 0 || age >= n.opts.L1TTL {
+		return nil, core.Stamp{}, 0, false
+	}
+	val, err = n.decode(e.Value)
+	if err != nil {
+		return nil, core.Stamp{}, 0, false
+	}
+	return val, e.Stamp, age, true
 }
 
 // fetchOwner sends one read to the owner and caches the answer in L1.

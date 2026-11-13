@@ -80,6 +80,9 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_misses_total", Counter, "Namespace reads not served locally. An expired key counts as a miss.", float64(s.Misses)},
 		{"peercache_loads_total", Counter, "Loader invocations.", float64(s.Loads)},
 		{"peercache_collapsed_loads_total", Counter, "GetOrLoad calls that joined a load already in flight instead of starting one.", float64(s.CollapsedLoads)},
+		{"peercache_replica_reads_served_total", Counter, "Reads this node answered from its replica copy, in namespaces with replica reads.", float64(s.ReplicaReadsServed)},
+		{"peercache_replica_reads_referred_total", Counter, "Replica reads this node declined and the reader sent to the owner: no copy, a copy older than the L1 TTL, or no longer a replica.", float64(s.ReplicaReadsReferred)},
+		{"peercache_replica_reads_floored_total", Counter, "Replica answers this node discarded because an invalidation had already told it of a newer stamp.", float64(s.ReplicaReadsFloored)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 
