@@ -15,6 +15,9 @@ K="kubectl --context kind-m16"
 OUT=${OUT:-m16-out}
 mkdir -p "$OUT"
 WORKERS=${WORKERS:-32}
+# A fresh stock prefix per invocation: stock persists across runs, so a
+# repeated scenario name would otherwise start from the last run's counts.
+RUN=$(date +%s)
 
 log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -43,7 +46,7 @@ wait_ready() {
 load() {
   $K exec loadgen -- rm -rf "/tmp/$1"
   $K exec loadgen -- shopload run -target http://shop -duration "${2}s" \
-    -workers "$WORKERS" -prefix "$1-" -ledger "/tmp/$1" > "$OUT/$1/load.txt" 2>&1 &
+    -workers "$WORKERS" -prefix "$1-$RUN-" -ledger "/tmp/$1" > "$OUT/$1/load.txt" 2>&1 &
   LOADPID=$!
 }
 

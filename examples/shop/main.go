@@ -25,6 +25,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -128,6 +129,11 @@ func run(cfg config) error {
 	s.routes(mux)
 	mux.Handle("GET /metrics", cache.MetricsHandler())
 	mux.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))
+	// Profiles, because M16 is where the library first runs at a scale whose
+	// costs are worth looking at.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		r := cache.Ready()
 		if !r.Ready {
