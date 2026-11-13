@@ -1424,8 +1424,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '58 series come out of it' \
-  '57 series come out of it' \
+  '60 series come out of it' \
+  '59 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -2198,6 +2198,53 @@ mutate "Dir lists files it did not write" \
 			}' \
   '			_ = ok' \
   'TestFilesNotWrittenByTheStoreAreIgnored$' ./persist/
+
+# --- persistence: one object per flush (decision 0030) ---
+
+mutate "a split deletes logs its segments failed to cover" \
+  persistence.go \
+  '	wg.Wait()
+	if failed != nil {
+		return failed
+	}
+	for _, name := range logs {' \
+  '	wg.Wait()
+	for _, name := range logs {' \
+  'TestAFailedSplitLosesNothing$' ./tests
+
+mutate "a restore ignores logs not yet split" \
+  persistence.go \
+  '	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil {
+		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+	}' \
+  '	var logs []string' \
+  'TestAColdStartRestoresWhatWasFlushed$' ./tests
+
+mutate "a flush writes one object per partition" \
+  persistence.go \
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted' \
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	for i := range records {
+		_ = p.store.Put(ctx, fmt.Sprintf("%s.%d", name, i), nil)
+	}
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted' \
+  'TestAFlushWritesOneObject$' ./tests
+
+mutate "the persistence flush interval option is ignored" \
+  persistence.go \
+  '	interval := ns.opts.PersistFlushInterval' \
+  '	interval := time.Duration(0)' \
+  'TestWithFlushIntervalSetsTheCadence$' ./tests
+
+mutate "a non-positive flush interval is accepted" \
+  internal/core/options.go \
+  '	if o.PersistFlushInterval < 0 {' \
+  '	if false {' \
+  'TestANonPositiveFlushIntervalIsRefused$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

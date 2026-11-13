@@ -50,11 +50,13 @@ const (
 	// written. A segment from a slow writer can arrive late with an older
 	// write of the key; while the tombstone is kept it still wins.
 	persistTombstoneGrace = time.Hour
-	// persistFlushParallel is how many segments one flush writes at once.
-	// Each is an fsync on a disk or a request to an object store, so they
-	// overlap well; the bound keeps one flush from opening a connection or
-	// a file per partition at once.
-	persistFlushParallel = 16
+	// persistSplitInterval is how often a namespace's splitter moves its
+	// logs into partition segments. It bounds how many logs a restore reads:
+	// a few seconds of flushes per node.
+	persistSplitInterval = 10 * time.Second
+	// persistSplitParallel is how many partition segments one split writes
+	// at once.
+	persistSplitParallel = 16
 	// persistFlushTimeout bounds one flush. A store that does not answer
 	// must not hold the flusher, and the records stay pending for the next.
 	persistFlushTimeout = 10 * time.Second
@@ -105,6 +107,8 @@ type persister struct {
 
 	compactions     atomic.Int64
 	compactFailures atomic.Int64
+	splits          atomic.Int64
+	splitFailures   atomic.Int64
 
 	// rmu guards parts, the per-partition restore state.
 	rmu             sync.Mutex
@@ -127,10 +131,15 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 	// goroutine misses any clock advance that lands before the goroutine is
 	// scheduled, and the first flush then comes an interval late — on the
 	// fake clock, never.
-	ticker := p.clk.NewTicker(persistFlushInterval)
+	interval := ns.opts.PersistFlushInterval
+	if interval <= 0 {
+		interval = persistFlushInterval
+	}
+	ticker := p.clk.NewTicker(interval)
 	compact := p.clk.NewTicker(persistCompactInterval)
+	split := p.clk.NewTicker(persistSplitInterval)
 	p.wg.Add(1)
-	go p.run(ticker, compact)
+	go p.run(ticker, compact, split)
 	return p
 }
 
@@ -201,10 +210,11 @@ func recordSize(r *segment.Record) int {
 	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + 32
 }
 
-func (p *persister) run(ticker, compact clock.Ticker) {
+func (p *persister) run(ticker, compact, split clock.Ticker) {
 	defer p.wg.Done()
 	defer ticker.Stop()
 	defer compact.Stop()
+	defer split.Stop()
 	for {
 		select {
 		case <-p.done:
@@ -216,6 +226,15 @@ func (p *persister) run(ticker, compact clock.Ticker) {
 			p.compactOwned(ctx)
 			cancel()
 			continue
+		case <-split.C():
+			if p.splitsLogs() {
+				ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+				if err := p.split(ctx); err != nil {
+					p.splitFailures.Add(1)
+				}
+				cancel()
+			}
+			continue
 		}
 		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
 		_ = p.flush(ctx)
@@ -223,7 +242,10 @@ func (p *persister) run(ticker, compact clock.Ticker) {
 	}
 }
 
-// flush writes everything pending, one segment per partition.
+// flush writes everything pending as one log object, whatever partitions its
+// records belong to: one request per flush, which is what an object store
+// charges for (decision 0030). The splitter moves the records into their
+// partitions later.
 func (p *persister) flush(ctx context.Context) error {
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
@@ -238,52 +260,27 @@ func (p *persister) flush(ctx context.Context) error {
 	p.bytes = 0
 	p.mu.Unlock()
 
-	byPartition := map[int][]segment.Record{}
-	for key, r := range batch {
-		part := persistPartition(p.ns.groupKeyFor(key))
-		byPartition[part] = append(byPartition[part], *r)
+	records := make([]segment.Record, 0, len(batch))
+	var maxOrder uint64
+	for _, r := range batch {
+		records = append(records, *r)
+		if r.Order > maxOrder {
+			maxOrder = r.Order
+		}
 	}
-
-	// The segments are independent objects, so they are written side by
-	// side. One after another, a flush touching every partition was one
-	// fsync per partition in a row — with 256 partitions, nearly a second
-	// on Machine A — and the loss window under load was ten times the flush
-	// interval it claims.
-	var (
-		failed  error
-		errMu   sync.Mutex
-		wg      sync.WaitGroup
-		workers = make(chan struct{}, persistFlushParallel)
-	)
-	for part, records := range byPartition {
-		wg.Add(1)
-		workers <- struct{}{}
-		go func(part int, records []segment.Record) {
-			defer wg.Done()
-			defer func() { <-workers }()
-			sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
-			var maxOrder uint64
-			for i := range records {
-				if records[i].Order > maxOrder {
-					maxOrder = records[i].Order
-				}
-			}
-			name := segmentName(p.ns.name, part, maxOrder, p.ns.cache.self().ID)
-			data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
-			if err := p.store.Put(ctx, name, data); err != nil {
-				p.failures.Add(1)
-				errMu.Lock()
-				failed = errors.Join(failed, fmt.Errorf("peercache: persisting %s: %w", name, err))
-				errMu.Unlock()
-				p.restorePending(records)
-				return
-			}
-			p.written.Add(int64(len(records)))
-		}(part, records)
+	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// Counted whether or not the write succeeded: PersistFlushes is flush
+	// attempts, and a waiter on it is waiting for the attempt to be over.
+	defer p.flushes.Add(1)
+	if err := p.store.Put(ctx, name, data); err != nil {
+		p.failures.Add(1)
+		p.restorePending(records)
+		return fmt.Errorf("peercache: persisting %s: %w", name, err)
 	}
-	wg.Wait()
-	p.flushes.Add(1)
-	return failed
+	p.written.Add(int64(len(records)))
+	return nil
 }
 
 // restorePending puts records from a failed segment back, keeping any newer
@@ -316,6 +313,7 @@ type persistCounters struct {
 	flushes, written, failures   int64
 	restored, restoreFailures    int64
 	compactions, compactFailures int64
+	splits, splitFailures        int64
 }
 
 func (p *persister) counters() persistCounters {
@@ -326,6 +324,7 @@ func (p *persister) counters() persistCounters {
 		pending: pending, flushes: p.flushes.Load(), written: p.written.Load(), failures: p.failures.Load(),
 		restored: p.restored.Load(), restoreFailures: p.restoreFailures.Load(),
 		compactions: p.compactions.Load(), compactFailures: p.compactFailures.Load(),
+		splits: p.splits.Load(), splitFailures: p.splitFailures.Load(),
 	}
 }
 
@@ -341,11 +340,15 @@ func partitionPrefix(namespace string, part int) string {
 	return fmt.Sprintf("%s/p%03d/", url.PathEscape(namespace), part)
 }
 
-// segmentName names a segment by the largest order it holds and its writer,
-// hex-encoded for the same reason as the namespace. Two segments from one
-// writer never share a largest order, because a writer's orders never repeat.
-func segmentName(namespace string, part int, maxOrder uint64, writer string) string {
-	return fmt.Sprintf("%sseg-%016x-%s.bin", partitionPrefix(namespace, part), maxOrder, hex.EncodeToString([]byte(writer)))
+// logPrefix is the object-name prefix of a namespace's unsplit logs.
+func logPrefix(namespace string) string {
+	return url.PathEscape(namespace) + "/log/"
+}
+
+// logName names one flush's log object by the largest order it holds and its
+// writer. A writer's orders never repeat, so neither do its log names.
+func logName(namespace string, maxOrder uint64, writer string) string {
+	return fmt.Sprintf("%sseg-%016x-%s.bin", logPrefix(namespace), maxOrder, hex.EncodeToString([]byte(writer)))
 }
 
 // restoreRetry is how long after a failed restore a partition is tried again.
@@ -444,14 +447,13 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	// read storage, and the restore would see it in neither place.
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
-	prefix := partitionPrefix(p.ns.name, part)
 	// A compactor can delete a segment between our List and our Get. The
 	// snapshot that covers it is then newer than the one we chose, so
 	// listing again finds it; three tries covers a compaction per try.
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		var newest map[string]*segment.Record
-		newest, err = p.read(ctx, prefix)
+		newest, err = p.read(ctx, part)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -476,9 +478,9 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	return err
 }
 
-// read collects the newest record per key under prefix.
-func (p *persister) read(ctx context.Context, prefix string) (map[string]*segment.Record, error) {
-	sc, err := p.scan(ctx, prefix)
+// read collects the newest record per key of one partition.
+func (p *persister) read(ctx context.Context, part int) (map[string]*segment.Record, error) {
+	sc, err := p.scan(ctx, part)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +505,12 @@ type scanned struct {
 // covers, so a record can survive in an older snapshot alone. The union is
 // always right: records merge as a last-writer-wins map, and a segment is
 // deleted only after a snapshot covering it is durable.
-func (p *persister) scan(ctx context.Context, prefix string) (*scanned, error) {
+//
+// Logs not yet split are read too, keeping only this partition's records
+// (decision 0030). They are not counted in merged or segments: compaction
+// neither folds nor deletes them, the splitter does.
+func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
+	prefix := partitionPrefix(p.ns.name, part)
 	names, err := p.store.List(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
@@ -546,6 +553,25 @@ func (p *persister) scan(ctx context.Context, prefix string) (*scanned, error) {
 		merge(f)
 		sc.merged = append(sc.merged, name)
 		sc.segments++
+	}
+
+	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil {
+		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+	}
+	for _, name := range logs {
+		f, err := p.load(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		kept := f.Records[:0]
+		for _, r := range f.Records {
+			if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
+				kept = append(kept, r)
+			}
+		}
+		f.Records = kept
+		merge(f)
 	}
 	return sc, nil
 }
@@ -618,7 +644,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	// look at pending.
 	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
-	newest, err := p.read(ctx, partitionPrefix(p.ns.name, persistPartition(p.ns.groupKeyFor(key))))
+	newest, err := p.read(ctx, persistPartition(p.ns.groupKeyFor(key)))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -674,7 +700,7 @@ func (p *persister) compactsPartition(part int) bool {
 // least threshold segments are uncovered, then deletes what it folded.
 func (p *persister) compact(ctx context.Context, part, threshold int) error {
 	prefix := partitionPrefix(p.ns.name, part)
-	sc, err := p.scan(ctx, prefix)
+	sc, err := p.scan(ctx, part)
 	if err != nil {
 		return err
 	}
@@ -722,5 +748,100 @@ func (p *persister) compact(ctx context.Context, part, threshold int) error {
 		}
 	}
 	p.compactions.Add(1)
+	return nil
+}
+
+// splitsLogs reports whether this node is the namespace's splitter: the
+// rendezvous owner of a synthetic group key, as a partition's compactor is.
+func (p *persister) splitsLogs() bool {
+	c := p.ns.cache
+	if c.guard == nil {
+		return true
+	}
+	owner, _, err := c.guard.Table().Owner(fmt.Sprintf("persist/%s/log", p.ns.name))
+	return err == nil && owner.ID == c.self().ID
+}
+
+// split moves every log's records into partition segments, then deletes the
+// logs (decision 0030).
+//
+// The logs are deleted only once every segment is durable. A split that stops
+// part-way leaves logs and segments both holding the same records, which the
+// merge reads as once; the next split writes the segments again and finishes.
+// A segment's name carries a hash of the logs it came from, so two splits of
+// different log sets never write to the same name.
+func (p *persister) split(ctx context.Context) error {
+	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+	if err != nil || len(logs) == 0 {
+		return err
+	}
+	byPartition := map[int]map[string]*segment.Record{}
+	for _, name := range logs {
+		f, err := p.load(ctx, name)
+		if err != nil {
+			return err
+		}
+		for i := range f.Records {
+			r := &f.Records[i]
+			part := persistPartition(p.ns.groupKeyFor(r.Key))
+			keys := byPartition[part]
+			if keys == nil {
+				keys = map[string]*segment.Record{}
+				byPartition[part] = keys
+			}
+			if cur, ok := keys[r.Key]; !ok || r.Newer(cur) {
+				keys[r.Key] = r
+			}
+		}
+	}
+
+	h := xxhash.New()
+	for _, name := range logs {
+		_, _ = h.WriteString(name)
+	}
+	tag := fmt.Sprintf("%016x", h.Sum64())
+	writer := hex.EncodeToString([]byte(p.ns.cache.self().ID))
+
+	var (
+		failed  error
+		errMu   sync.Mutex
+		wg      sync.WaitGroup
+		workers = make(chan struct{}, persistSplitParallel)
+	)
+	for part, keys := range byPartition {
+		records := make([]segment.Record, 0, len(keys))
+		var maxOrder uint64
+		for _, r := range keys {
+			records = append(records, *r)
+			if r.Order > maxOrder {
+				maxOrder = r.Order
+			}
+		}
+		sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+		name := fmt.Sprintf("%sseg-%016x-%s-%s.bin", partitionPrefix(p.ns.name, part), maxOrder, writer, tag)
+		data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+
+		wg.Add(1)
+		workers <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-workers }()
+			if err := p.store.Put(ctx, name, data); err != nil {
+				errMu.Lock()
+				failed = errors.Join(failed, fmt.Errorf("peercache: writing %s: %w", name, err))
+				errMu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if failed != nil {
+		return failed
+	}
+	for _, name := range logs {
+		if err := p.store.Delete(ctx, name); err != nil {
+			return fmt.Errorf("peercache: deleting %s: %w", name, err)
+		}
+	}
+	p.splits.Add(1)
 	return nil
 }

@@ -91,6 +91,8 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_persist_restore_failures_total", Counter, "Restores that could not read their partition; it is served from memory until a retry succeeds.", float64(s.PersistRestoreFailures)},
 		{"peercache_persist_compactions_total", Counter, "Partitions this node folded into a snapshot as their compactor.", float64(s.PersistCompactions)},
 		{"peercache_persist_compact_failures_total", Counter, "Compactions that could not finish; the next one folds what they left.", float64(s.PersistCompactFailures)},
+		{"peercache_persist_splits_total", Counter, "Log sets this node moved into partition segments as its namespace's splitter.", float64(s.PersistSplits)},
+		{"peercache_persist_split_failures_total", Counter, "Splits that stopped part-way; the next one completes them.", float64(s.PersistSplitFailures)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 

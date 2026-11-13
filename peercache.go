@@ -671,6 +671,8 @@ func (c *cache) Stats() Stats {
 			stats.PersistRestoreFailures += pc.restoreFailures
 			stats.PersistCompactions += pc.compactions
 			stats.PersistCompactFailures += pc.compactFailures
+			stats.PersistSplits += pc.splits
+			stats.PersistSplitFailures += pc.splitFailures
 		}
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())

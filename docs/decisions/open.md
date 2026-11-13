@@ -1526,7 +1526,7 @@ expose.
 
 ---
 
-## 48. Objects per flush, and what an object store charges for them — found in M14c, open
+## 48. Objects per flush, and what an object store charges for them — found in M14c, resolved
 
 A flush writes one object per partition it touches. M14c measured what that
 costs on a disk: durable writes overlap only about threefold on Machine A, so a
@@ -1545,4 +1545,11 @@ trades the loss window.
 store wants seconds, not milliseconds), and possibly one object per flush holding
 every partition, indexed, instead of one per partition. Measure the PUT rate of a
 loaded node before choosing.
+
+**Resolved by decision 0030,** the project owner's choice: a flush writes one
+log object whatever it touches, a per-namespace splitter moves logs into
+partition segments every ten seconds, and the flush interval is a namespace
+option. Measured: a thousand keys over every partition flush as one request
+(`TestAFlushWritesOneObject`); a split writes at most one segment per partition
+(`TestASplitMovesLogsIntoPartitions`).
 

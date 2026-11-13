@@ -20,10 +20,21 @@ const (
 	compactInterval = time.Minute
 	compactAfter    = 8
 	tombstoneGrace  = time.Hour
+	splitInterval   = 10 * time.Second
 )
 
+// split advances past a split interval and waits for the splitter to move the
+// logs into partition segments (decision 0030).
+func split(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Duration) }) {
+	t.Helper()
+	before := c.Stats().PersistSplits
+	fc.Advance(splitInterval)
+	waitFor(t, "a split", func() bool { return c.Stats().PersistSplits > before })
+}
+
 // partitionOf finds the object-name prefix of key's partition by writing it
-// alone and seeing where its segment lands. The tests do not assume the hash.
+// alone, splitting, and seeing where its segment lands. The tests do not
+// assume the hash.
 func partitionOf(t *testing.T, key string) string {
 	t.Helper()
 	store := persist.Memory()
@@ -31,9 +42,10 @@ func partitionOf(t *testing.T, key string) string {
 	ns := c.Namespace("orders", peercache.WithPersistence(store))
 	_ = ns.Set(context.Background(), key, []byte("x"), 0)
 	flushed(t, c, fc, 1)
+	split(t, c, fc)
 	names, _ := store.List(context.Background(), "")
-	if len(names) != 1 {
-		t.Fatalf("one write produced %d objects", len(names))
+	if len(names) != 1 || strings.Contains(names[0], "/log/") {
+		t.Fatalf("one write, flushed and split, left %v; want one partition segment", names)
 	}
 	return names[0][:strings.LastIndex(names[0], "/")+1]
 }
@@ -71,7 +83,8 @@ func objectsUnder(t *testing.T, store persist.BlobStore, prefix string) (snaps, 
 	return snaps, segs
 }
 
-// writeFlushed writes key once per flush, so each write is its own segment.
+// writeFlushed writes key once per flush and splits after each, so each write
+// becomes its own partition segment.
 func writeFlushed(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Duration) }, ns peercache.Namespace, key string, times int) {
 	t.Helper()
 	for i := 0; i < times; i++ {
@@ -79,6 +92,7 @@ func writeFlushed(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Du
 			t.Fatal(err)
 		}
 		flushed(t, c, fc, 1)
+		split(t, c, fc)
 	}
 }
 
@@ -135,6 +149,7 @@ func TestATombstoneIsKeptForItsGrace(t *testing.T) {
 		writeFlushed(t, c, fc, ns, "k", compactAfter)
 		_ = ns.Delete(context.Background(), "k")
 		flushed(t, c, fc, 1)
+		split(t, c, fc)
 		compacted(t, c, fc)
 		if r, ok := snapshotRecord(t, store, prefix, "k"); !ok || !r.Tombstone {
 			t.Fatalf("a compaction inside the grace dropped the deletion: %+v, %v", r, ok)
