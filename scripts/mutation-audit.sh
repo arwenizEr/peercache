@@ -137,8 +137,9 @@ then
 fi
 
 # Refuse to run on a dirty tree. Reverting is done with `git checkout --`, which
-# would silently discard uncommitted work in the files being mutated.
-if [ -n "$(git status --porcelain)" ]; then
+# would silently discard uncommitted work in the files being mutated. Untracked
+# files are not at risk -- checkout never touches them -- so they do not count.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "refusing to run: the working tree has uncommitted changes." >&2
   echo "this script reverts mutations with 'git checkout --', which would discard them." >&2
   git status --short >&2
@@ -2387,7 +2388,7 @@ if [ "$filtered" -ne 0 ]; then
   echo "this run makes no claim about them."
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "ERROR: mutations were left behind:" >&2
   git status --short >&2
   exit 1
