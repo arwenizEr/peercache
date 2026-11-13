@@ -79,6 +79,11 @@ type Options struct {
 	// change, before activating a group it has just acquired. Zero takes
 	// the default; negative disables deferral.
 	ActivationDelay time.Duration
+
+	// CatchUpGate refuses peers' operations on this node's keys, in
+	// namespaces with replicas, until its first catch-up completes. See
+	// WithCatchUpGate.
+	CatchUpGate bool
 }
 
 // Option mutates [Options]. Options are applied in order, so a later option

@@ -103,8 +103,10 @@ type Entry struct {
 	// network. Replica reads serve a copy only while it is younger than the
 	// namespace's L1 TTL; see docs/decisions/0028-hot-key-reads.md.
 	ReceivedAt int64
-	// Order is the write's persistence order, zero in a namespace without
-	// persistence. Promotion installs it unchanged.
+	// Order is the write's order from its owner's hybrid logical clock. It
+	// is what orders copies (see [Newer]); zero only from a peer on a release
+	// that ordered persistent namespaces alone. Promotion installs it
+	// unchanged.
 	Order uint64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
@@ -161,11 +163,11 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 			existing.From != e.From {
 			conflict = true
 		}
-		if !e.Stamp.NewerThan(existing.Stamp) {
-			// Equal stamps from the same writer are a retransmission,
+		if !Newer(e, existing) {
+			// Equal copies from the same writer are a retransmission,
 			// which is normal and not worth counting. A strictly older
-			// stamp is a genuine out-of-order delivery, and is.
-			if existing.Stamp.NewerThan(e.Stamp) {
+			// copy is a genuine out-of-order delivery, and is.
+			if Newer(existing, e) {
 				s.versionConflicts.Add(1)
 			}
 			return false, conflict
@@ -178,6 +180,21 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	}
 	s.bytes.Add(delta)
 	return true, conflict
+}
+
+// Newer reports whether a supersedes b.
+//
+// By order when both carry one: an order is issued by a hybrid logical clock
+// every owner advances past whatever it has received, so it agrees with the
+// key's history across ownership changes. The stamp is the fallback for a copy
+// from a peer that issues no order — an earlier release — and is only sound
+// within one owner's lineage, because its epoch is per view: a returning owner
+// holds a smaller epoch than the interim owner whose copy it supersedes.
+func Newer(a, b Entry) bool {
+	if a.Order != 0 && b.Order != 0 {
+		return a.Order > b.Order
+	}
+	return a.Stamp.NewerThan(b.Stamp)
 }
 
 // Get returns a replicated value.
@@ -221,7 +238,7 @@ func (s *Store) Delete(namespace, key string) bool {
 // It is the deletion counterpart of [Store.Put]'s ordering. A tombstone from an
 // owner on an older epoch — arriving after a partition heals, say — must not
 // remove a copy a newer owner wrote, any more than an old write may replace it.
-func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp) bool {
+func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp, order uint64) bool {
 	s.mu.RLock()
 	nr, ok := s.ns[namespace]
 	s.mu.RUnlock()
@@ -232,7 +249,7 @@ func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp) bool 
 	nr.mu.Lock()
 	defer nr.mu.Unlock()
 	e, held := nr.entries[key]
-	if !held || e.Stamp.NewerThan(stamp) {
+	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {
 		return false
 	}
 	delete(nr.entries, key)
@@ -287,6 +304,21 @@ func (s *Store) Namespaces() []string {
 // a copy in behind the drain and leave it stranded in the replica store after
 // this node has taken ownership.
 func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]Entry {
+	return s.DrainUpTo(namespace, -1, keep)
+}
+
+// DrainUpTo is [Store.Drain] that stops after max entries; a negative max is
+// no limit, and zero takes nothing.
+//
+// It exists for a consumer with bounded room. Hand-off can queue only so many
+// orphans; draining the rest only to put them back, as reconciliation once
+// did, cycled every orphan beyond the queue through the store once a second —
+// 10.5 million returns on one kind pod to rehome 97,000. What is not taken
+// stays where it is, untouched, for the next round.
+func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool) map[string]Entry {
+	if max == 0 {
+		return nil
+	}
 	s.mu.RLock()
 	nr, ok := s.ns[namespace]
 	s.mu.RUnlock()
@@ -299,6 +331,9 @@ func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]E
 
 	var taken map[string]Entry
 	for key, e := range nr.entries {
+		if max > 0 && len(taken) >= max {
+			break
+		}
 		if !keep(key) {
 			continue
 		}
@@ -511,6 +546,64 @@ func (s *Store) Keys(namespace string) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+// KeyedEntry is one key's worth of a [Store.Snapshot].
+type KeyedEntry struct {
+	Key string
+	Entry
+}
+
+// Snapshot returns up to limit live replicas in namespace whose keys sort
+// after after and satisfy want, in key order, and whether more remain.
+//
+// It is catch-up's view of the replica store, paged and sorted for the same
+// reasons as the owned store's Snapshot: a stable cursor, and no message
+// proportional to the namespace. It exists because a node restarted faster than
+// failure detection still owns its keys, and their newest copies are held here,
+// as replicas, by its peers; nobody was ever promoted to hold them as owner.
+func (s *Store) Snapshot(namespace, after string, limit int, now int64, want func(key string) bool) ([]KeyedEntry, bool) {
+	if limit <= 0 {
+		return nil, false
+	}
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	nr.mu.RLock()
+	var candidates []string
+	for key, e := range nr.entries {
+		if key <= after || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
+			continue
+		}
+		if want != nil && !want(key) {
+			continue
+		}
+		candidates = append(candidates, key)
+	}
+	nr.mu.RUnlock()
+
+	sort.Strings(candidates)
+	more := len(candidates) > limit
+	if more {
+		candidates = candidates[:limit]
+	}
+
+	page := make([]KeyedEntry, 0, len(candidates))
+	nr.mu.RLock()
+	defer nr.mu.RUnlock()
+	for _, key := range candidates {
+		e, ok := nr.entries[key]
+		if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
+			continue // removed between the passes; the cursor still advances
+		}
+		e.Value = append([]byte(nil), e.Value...)
+		page = append(page, KeyedEntry{Key: key, Entry: e})
+	}
+	return page, more
 }
 
 // String implements [fmt.Stringer] for debugging.

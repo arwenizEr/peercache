@@ -132,6 +132,29 @@ func ExampleWithReplicaReads() {
 	// served by a replica: 0 coalesced: 0
 }
 
+// ExampleWithCatchUpGate opens a cache that holds its peers' operations on the
+// keys it owns until its first catch-up. Alone, it has no peers to hold and
+// nothing to catch up from, so it is ready at once.
+func ExampleWithCatchUpGate() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithCatchUpGate())
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	ctx := context.Background()
+
+	if err := cache.CatchUp(ctx); err != nil {
+		fmt.Println(err)
+		return
+	}
+	ns := cache.Namespace("orders", peercache.WithReplicationFactor(3), peercache.WithSyncReplication())
+	stored, err := ns.SetIfAbsent(ctx, "order-1", []byte("placed"), 0)
+	fmt.Println("ready:", cache.Ready().Ready, "stored:", stored, err)
+	// Output:
+	// ready: true stored: true <nil>
+}
+
 // ExampleWithPersistence writes through one cache, closes it — Close flushes —
 // and reads the key back through a new cache over the same store, as a pod
 // replacing one that shut down would.

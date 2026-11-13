@@ -1571,6 +1571,78 @@ option. Measured: a thousand keys over every partition flush as one request
 (`TestAFlushWritesOneObject`); a split writes at most one segment per partition
 (`TestASplitMovesLogsIntoPartitions`).
 
+## 49. A node restarted faster than failure detection — found in M16
+
+**Found** by M16's kill -9 on kind. A SIGKILLed pod was back in two seconds,
+same name, same address; the failure detector never fired, so no peer's epoch
+moved and nothing was promoted. The restarted owner came back empty to keys it
+still owned, and `CatchUp` asked each peer only for the keys *that peer* owns.
+The copies of the restarted node's own keys sat in its peers' replica stores,
+unasked for. 60 acknowledged orders were missing or older after the run, at
+synchronous RF 3 with persistence — and without persistence it would have been
+every key the node owned.
+
+**Resolved, part one:** catch-up now makes a second pass per peer for its
+replica copies of keys the asker owns (`CatchUpRequest.Replicas`). They arrive
+through the replica store's stamp check and are promoted by the ordinary
+reconciliation, which refuses anything older than what the node already holds
+— so a value restored from persistence, or written since the restart, is not
+overwritten by an older copy. `TestANodeRestartedFasterThanDetectionRecoversWhatItOwns`.
+
+**Open, part two: the window before catch-up.** Between the restart and the end
+of its first catch-up, the node owns its keys and its peers route to it — the
+readiness gate keeps *clients* away, not peers forwarding writes. A write in
+that window lands on an empty or persisted-but-stale base: an `Increment` counts
+from the wrong value, a `SetIfAbsent` of an existing key succeeds again. And a
+version restarted from the store's floor can be older than the replica copy
+catch-up then brings, so promotion discards the acknowledged write instead.
+
+Options:
+
+1. **Refuse owner operations until the first catch-up completes**, with
+   `ErrActivationPending`, which every caller already retries. Correct, and the
+   readiness gate already waits for the same event; but a node whose
+   application never calls `CatchUp` would refuse its keys forever.
+2. **Make the restart visible**: a per-process boot ID in gossip metadata, so a
+   peer that sees the same name with a new boot ID treats it as a departure and
+   an arrival — epochs move, the activation delay applies, promotion runs.
+3. **Seed versions from the replicas** on first touch. Fixes ordering, not the
+   stale base.
+
+Leaning towards 1, measured before deciding: M16's next kill -9 run says how
+often the window is hit under load.
+
+## 50. Replica copies were ordered by a per-view epoch — found in M16, resolved
+
+**Found** by M16 on kind. After one rolling restart the five pods held epochs 5,
+7, 9, 11 and 13 — each counts the membership changes it has seen, and the pods
+restarted first saw the most — and `peercache_version_conflicts_total` grew with
+the epoch, to 1.1 million on the highest. `core.Stamp` compares the epoch first.
+That is sound within one owner's lineage and wrong across them: a key's owner
+returns from a restart with a smaller epoch than the interim owner it catches up
+from, writes, and its replicas refuse the write as older. Nothing reports it —
+the write is acknowledged, the owner holds it — until the owner and the interim
+owner have both gone and the remaining replica answers with the older value.
+ADR 0026 named the hazard for persistence and gave persistence its own order for
+it; the replica store kept the stamp, on the assumption that in-cluster copies
+only ever compare within one lineage. A rolling restart is the counterexample.
+
+**Resolved:** every namespace's writes take an order from the hybrid logical
+clock persistence already used. It is observed on every copy a node receives —
+replication, catch-up, hand-off, promotion — so an owner's next order is above
+everything it has caught up on, whatever its epoch. `replication.Newer` orders
+by it when both copies carry one, and so do tombstones and promotion
+(`store.Restore`); the stamp remains the fallback for a copy from an earlier
+release, which sends no order for a namespace without persistence.
+`TestAWriteByAnOwnerWithALowerEpochSurvivesFailover`.
+
+**Still open:** split-brain detection compares epochs too — "two writers in the
+same epoch" — and epochs on different nodes coincide by accident as easily as
+they differ. Its count after a rolling restart on kind (tens of thousands) is
+therefore not evidence of two owners. It needs a definition that does not rely
+on epochs being comparable; until then the counter is noise after churn, and
+docs that call it "deserves investigation whenever it is non-zero" overstate it.
+
 ## 51. An active group outlived its ownership — found in M16, resolved
 
 **Found** writing M16's epoch-lineage test, whose probe for "who owns this key"

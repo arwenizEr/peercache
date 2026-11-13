@@ -77,8 +77,8 @@ type entry struct {
 	val       []byte
 	expiresAt int64
 	version   uint64
-	// order is the write's persistence order, or zero in a namespace
-	// without persistence. See [Options.Order].
+	// order is the write's order from the hybrid logical clock, or zero
+	// in a store built without [Options.Order].
 	order uint64
 }
 
@@ -511,7 +511,13 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, orde
 	defer sh.mu.Unlock()
 
 	existing, ok := sh.entries[key]
-	if ok && existing.version >= version {
+	// By order when both carry one, for the reason replicas do: a version
+	// restarts when a key changes hands, an order does not.
+	if ok && order != 0 && existing.order != 0 {
+		if existing.order >= order {
+			return false
+		}
+	} else if ok && existing.version >= version {
 		return false
 	}
 	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
