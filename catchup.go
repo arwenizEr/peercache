@@ -164,6 +164,19 @@ func (cu *catchUp) run(ctx context.Context) error {
 
 // fromPeer pages one namespace's replicas out of one owner.
 func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) error {
+	if err := cu.pages(ctx, ns, peer, false); err != nil {
+		return err
+	}
+	// And the copies the peer holds, as a replica, of what this node owns.
+	// After a restart faster than failure detection nobody was promoted in
+	// this node's place, so those copies are the newest there are; without
+	// this pass a restarted owner recovered every key it replicates and none
+	// of the keys it owns. Found by M16's kill -9 on kind.
+	return cu.pages(ctx, ns, peer, true)
+}
+
+// pages pulls one kind of catch-up page from one peer until it is exhausted.
+func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, replicas bool) error {
 	c := cu.cache
 	after := ""
 
@@ -182,12 +195,19 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 			ReplicationFactor: ns.opts.ReplicationFactor,
 			After:             after,
 			Limit:             catchUpPageSize,
+			Replicas:          replicas,
 		}, &resp)
 		if err != nil {
 			return err
 		}
 
 		for _, e := range resp.Entries {
+			// The writer, when the peer relayed a copy it holds; the
+			// peer itself, when it sent what it owns.
+			from := e.From
+			if from == "" {
+				from = peer.ID
+			}
 			// Through the replica store's ordinary Put, so the stamp
 			// check applies: a page that arrives after a live write
 			// must not undo it. Catch-up is not privileged just
@@ -201,7 +221,7 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 				ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),
 				ReceivedAt: now,
 				Order:      e.Order,
-				From:       peer.ID,
+				From:       from,
 			})
 			if accepted {
 				cu.pulled.Add(1)

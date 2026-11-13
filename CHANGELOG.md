@@ -78,6 +78,13 @@ change the public API.
 
 ### Fixed
 
+- A node restarted faster than failure detection — a SIGKILLed pod its kubelet
+  restarts in a second or two — lost every key it owned, even at a synchronous
+  replication factor of 3. Its peers never declared it dead, so nobody was
+  promoted in its place, and `CatchUp` pulled only the keys its peers *own*.
+  It now also pulls its peers' replica copies of the keys it owns. Found by
+  M16's kill -9 on kind (open question 49).
+
 - Replica copies are ordered by the hybrid logical clock, in every namespace,
   instead of by a stamp whose epoch dominated. Epochs are per view, so after a
   rolling restart a key's returning owner held a smaller epoch than the interim

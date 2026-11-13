@@ -530,6 +530,64 @@ func (s *Store) Keys(namespace string) []string {
 	return out
 }
 
+// KeyedEntry is one key's worth of a [Store.Snapshot].
+type KeyedEntry struct {
+	Key string
+	Entry
+}
+
+// Snapshot returns up to limit live replicas in namespace whose keys sort
+// after after and satisfy want, in key order, and whether more remain.
+//
+// It is catch-up's view of the replica store, paged and sorted for the same
+// reasons as the owned store's Snapshot: a stable cursor, and no message
+// proportional to the namespace. It exists because a node restarted faster than
+// failure detection still owns its keys, and their newest copies are held here,
+// as replicas, by its peers; nobody was ever promoted to hold them as owner.
+func (s *Store) Snapshot(namespace, after string, limit int, now int64, want func(key string) bool) ([]KeyedEntry, bool) {
+	if limit <= 0 {
+		return nil, false
+	}
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	nr.mu.RLock()
+	var candidates []string
+	for key, e := range nr.entries {
+		if key <= after || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
+			continue
+		}
+		if want != nil && !want(key) {
+			continue
+		}
+		candidates = append(candidates, key)
+	}
+	nr.mu.RUnlock()
+
+	sort.Strings(candidates)
+	more := len(candidates) > limit
+	if more {
+		candidates = candidates[:limit]
+	}
+
+	page := make([]KeyedEntry, 0, len(candidates))
+	nr.mu.RLock()
+	defer nr.mu.RUnlock()
+	for _, key := range candidates {
+		e, ok := nr.entries[key]
+		if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
+			continue // removed between the passes; the cursor still advances
+		}
+		e.Value = append([]byte(nil), e.Value...)
+		page = append(page, KeyedEntry{Key: key, Entry: e})
+	}
+	return page, more
+}
+
 // String implements [fmt.Stringer] for debugging.
 func (s *Store) String() string {
 	return fmt.Sprintf("replication.Store(%d keys across %d namespaces)", s.Len(), len(s.Namespaces()))

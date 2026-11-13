@@ -2373,6 +2373,34 @@ mutate "a forwarding node drops the owner report" \
   'if true {' \
   'TestAForwardedHeldWriteKeepsItsResult$' ./tests
 
+# --- open question 49 (found by M16) ---
+
+mutate "catch-up skips the replica pass" \
+  catchup.go \
+  'return cu.pages(ctx, ns, peer, true)' \
+  'return nil' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+mutate "the replica pass ignores the request" \
+  handler.go \
+  '	if in.Replicas {
+		return h.catchUpReplicas(ctx, ns, in, limit)
+	}
+' \
+  '' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+mutate "the replica pass sends what the asker does not own" \
+  handler.go \
+  'return err == nil && owner.ID == in.Requester' \
+  'return err == nil && owner.ID != ""' \
+  'TestTheReplicaPassSendsOnlyWhatTheAskerOwns$' ./tests
+
+mutate "a relayed catch-up copy is filed under its relay" \
+  handler.go \
+  '			From:     e.From,
+' \
+  '' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+
 # --- open question 50 (found by M16) ---
 
 mutate "replica copies order by the epoch stamp" \
