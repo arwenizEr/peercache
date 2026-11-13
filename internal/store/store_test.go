@@ -580,7 +580,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 func TestRestoreContinuesTheVersionSequence(t *testing.T) {
 	s, _ := newStore(t)
 
-	if !s.Restore("k", []byte("promoted"), 0, 900) {
+	if !s.Restore("k", []byte("promoted"), 0, 900, 0) {
 		t.Fatal("Restore refused to install into an empty store")
 	}
 	got, version, ok := s.Get("k")
@@ -607,17 +607,17 @@ func TestRestoreRefusesAnOlderVersion(t *testing.T) {
 	}
 	_, version, _ := s.Get("k")
 
-	if s.Restore("k", []byte("stale replica copy"), 0, version) {
+	if s.Restore("k", []byte("stale replica copy"), 0, version, 0) {
 		t.Fatal("Restore installed a copy at the resident version; a drain arriving after " +
 			"a write must not undo it")
 	}
-	if s.Restore("k", []byte("older still"), 0, version-1) {
+	if s.Restore("k", []byte("older still"), 0, version-1, 0) {
 		t.Fatal("Restore installed an older copy over a newer one")
 	}
 	if got, _, _ := s.Get("k"); string(got) == "stale replica copy" {
 		t.Fatal("the stale copy is resident")
 	}
-	if !s.Restore("k", []byte("genuinely newer"), 0, version+1) {
+	if !s.Restore("k", []byte("genuinely newer"), 0, version+1, 0) {
 		t.Fatal("Restore refused a genuinely newer copy")
 	}
 }

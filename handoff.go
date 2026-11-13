@@ -216,6 +216,7 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 		TTLNanos:  left,
 		Stamp:     w.entry.Stamp,
 		From:      from,
+		Order:     w.entry.Order,
 	}
 
 	placed := false

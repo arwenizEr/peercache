@@ -1934,6 +1934,30 @@ mutate "the memory blob store keeps the caller's slice" \
   '	stored := data' \
   'TestMemoryMeetsTheContract$' ./persist/
 
+# --- persistence: orders in the store (decision 0029) ---
+
+mutate "a store write reports an order it did not store" \
+  internal/store/store.go \
+  '	return Write{Version: version, Order: order}' \
+  '	return Write{Version: version, Order: s.nextOrder()}' \
+  'TestAKeysOrdersRiseWithItsVersions$' ./internal/store/
+
+mutate "a promoted value is given a new order" \
+  internal/store/store.go \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	delta := size(key, stored)
+	if ok {' \
+  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()}
+	delta := size(key, stored)
+	if ok {' \
+  'TestRestoreInstallsTheGivenOrder$' ./internal/store/
+
+mutate "an atomic update stores no order" \
+  internal/store/update.go \
+  '	order := s.nextOrder()' \
+  '	order := uint64(0)' \
+  'TestEveryWritePathTakesAnOrder$' ./internal/store/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

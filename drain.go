@@ -158,6 +158,7 @@ func (c *cache) handOff(ctx context.Context) error {
 					value:     ns.encode(value),
 					ttl:       durationFromNanos(ttl),
 					stamp:     ns.stamp(e.Version),
+					order:     e.Order,
 					targets:   targets,
 				})
 				if err != nil {

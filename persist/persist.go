@@ -15,22 +15,20 @@ import (
 // Every method must be safe for concurrent use and must honour ctx. Names are
 // slash-separated paths of printable ASCII, at most 1024 bytes; a backend may
 // map them onto its own layout but must return them unchanged from List.
-type BlobStore interface {
-	// Put stores data under name, replacing any object already there. It
-	// must be atomic: a concurrent or later Get sees the whole of data or
-	// the previous object, never a prefix or a mixture. Put returns only
-	// once the object is as durable as the backend can make it.
-	Put(ctx context.Context, name string, data []byte) error
-	// Get returns the object stored under name. An absent object is an
-	// error wrapping ErrNotFound.
-	Get(ctx context.Context, name string) ([]byte, error)
-	// List returns the names that start with prefix, sorted. It may miss
-	// objects whose Put has not returned, and may still report objects
-	// whose Delete has not; it never reports an object that was never Put.
-	List(ctx context.Context, prefix string) ([]string, error)
-	// Delete removes name. Deleting an absent object is not an error.
-	Delete(ctx context.Context, name string) error
-}
+//
+//   - Put stores data under name, replacing any object already there. It must
+//     be atomic: a concurrent or later Get sees the whole of data or the
+//     previous object, never a prefix or a mixture. Put returns only once the
+//     object is as durable as the backend can make it.
+//   - Get returns the object stored under name. An absent object is an error
+//     wrapping ErrNotFound.
+//   - List returns the names that start with prefix, sorted. It may miss
+//     objects whose Put has not returned, and may still report objects whose
+//     Delete has not; it never reports an object that was never Put.
+//   - Delete removes name. Deleting an absent object is not an error.
+//
+// package persisttest checks all of it.
+type BlobStore = core.BlobStore
 
 // ErrNotFound is returned, wrapped, by Get for an absent object. It is the same
 // error as peercache.ErrNotFound.

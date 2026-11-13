@@ -193,12 +193,14 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 			// must not undo it. Catch-up is not privileged just
 			// because it is bulk.
 			now := c.opts.Clock.Now().UnixNano()
+			c.observeOrder(e.Order)
 			accepted, conflict := c.replicas.Put(ns.name, e.Key, replication.Entry{
 				Value: e.Value,
 				Stamp: e.Stamp,
 				// The page carries the time left; held as a deadline.
 				ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),
 				ReceivedAt: now,
+				Order:      e.Order,
 				From:       peer.ID,
 			})
 			if accepted {

@@ -14,6 +14,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/codec"
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -219,6 +220,7 @@ func New(opts ...Option) (Cache, error) {
 	}
 
 	c := &cache{
+		orders:     hlc.New(resolved.Clock),
 		opts:       resolved,
 		groups:     groups,
 		guard:      guard,
@@ -398,6 +400,11 @@ type cache struct {
 	replicaReferred atomic.Int64
 	replicaFloored  atomic.Int64
 
+	// orders is the hybrid logical clock that orders writes to persistent
+	// namespaces. One per cache, because every order this node issues or
+	// observes must advance the same clock. See internal/hlc.
+	orders *hlc.Clock
+
 	// degradedWrites counts synchronous writes acknowledged with fewer copies
 	// than the namespace's replication factor asked for. See
 	// docs/decisions/open.md question 37.
@@ -520,11 +527,16 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		ns.framer = framer
 	}
 
+	var order func() uint64
+	if opts.Persistence != nil {
+		order = func() uint64 { return uint64(c.orders.Next()) }
+	}
 	st, err := store.New(store.Options{
 		Shards: opts.Shards,
 		Clock:  c.opts.Clock,
 		// Sweeping is driven by the cache's single sweeper.
 		SweepInterval: 0,
+		Order:         order,
 	})
 	if err != nil {
 		ns.err = err
@@ -797,3 +809,12 @@ func (c *cache) Close(ctx context.Context) error {
 func (c *cache) isClosed() bool { return c.closed.Load() }
 
 var _ Cache = (*cache)(nil)
+
+// observeOrder advances this node's clock past an order learned from a peer, so
+// that its next write to a persistent namespace outranks it. Zero is a write
+// from a namespace without persistence and carries nothing to learn.
+func (c *cache) observeOrder(order uint64) {
+	if order != 0 {
+		c.orders.Observe(hlc.Order(order))
+	}
+}

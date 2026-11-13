@@ -218,7 +218,7 @@ func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
 			// would bring back a key every other holder has already let go of.
 			continue
 		}
-		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {
+		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {
 			p.promoted.Add(1)
 		}
 		// A refused Restore means a newer value was written here while the

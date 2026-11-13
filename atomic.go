@@ -186,7 +186,7 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 	}
 	stamp := n.stamp(res.Version)
 	// Invalidated whether or not the fan-out succeeded; see localSet.
-	err = n.fanOut(ctx, key, encoded, ttl, stamp, false)
+	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		return true, err

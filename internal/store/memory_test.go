@@ -42,13 +42,13 @@ func TestBytesTracksEveryWritePath(t *testing.T) {
 		t.Fatalf("after overwrite: Bytes = %d, want %d", got, want)
 	}
 
-	s.Restore("b", make([]byte, 50), 0, 7)
+	s.Restore("b", make([]byte, 50), 0, 7, 0)
 	want += entrySize("b", make([]byte, 50))
 	if got := s.Bytes(); got != want {
 		t.Fatalf("after Restore: Bytes = %d, want %d", got, want)
 	}
 	// A refused Restore changes nothing.
-	s.Restore("b", make([]byte, 5000), 0, 3)
+	s.Restore("b", make([]byte, 5000), 0, 3, 0)
 	if got := s.Bytes(); got != want {
 		t.Fatalf("after a refused Restore: Bytes = %d, want %d", got, want)
 	}

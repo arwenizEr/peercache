@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -182,6 +183,26 @@ type NamespaceOptions struct {
 	// of the key's replicas. Requires ReplicationFactor of at least 2 and an
 	// enabled L1 tier. See docs/decisions/0028-hot-key-reads.md.
 	ReplicaReads bool
+
+	// Persistence, if set, makes the namespace persistent: every write is
+	// ordered by the cache's hybrid logical clock and written behind to this
+	// store. See docs/decisions/0029-persistence-as-a-segment-log.md.
+	Persistence BlobStore
+}
+
+// BlobStore is where a persistent namespace keeps its segments and snapshots.
+// It is declared here, and aliased as persist.BlobStore, because the namespace
+// options hold one and package persist depends on this package rather than the
+// other way round. See package persist for the full contract.
+type BlobStore interface {
+	// Put stores data under name atomically, replacing any object there.
+	Put(ctx context.Context, name string, data []byte) error
+	// Get returns the object under name, or an error wrapping ErrNotFound.
+	Get(ctx context.Context, name string) ([]byte, error)
+	// List returns the names starting with prefix, sorted.
+	List(ctx context.Context, prefix string) ([]string, error)
+	// Delete removes name; an absent name is not an error.
+	Delete(ctx context.Context, name string) error
 }
 
 // NamespaceOption mutates [NamespaceOptions].

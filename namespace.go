@@ -550,8 +550,8 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 // comes next, because it is the part a synchronous caller is waiting for. The
 // invalidation hint goes last and is never waited on.
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
-	version := n.store.Set(key, n.encode(val), ttl)
-	stamp := n.stamp(version)
+	written := n.store.Put(key, n.encode(val), ttl)
+	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
 
 	// The invalidation goes out whether or not the fan-out succeeded. A
@@ -559,7 +559,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	// here -- there is no rollback -- so every other pod's copy is stale
 	// either way, and skipping the hint made a degraded write staler than
 	// an asynchronous one. Open question 45.
-	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
+	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		// Only synchronous replication can fail here: asynchronous
@@ -574,7 +574,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 }
 
 // fanOut sends a write or a deletion to this key's replicas.
-func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, deleted bool) error {
+func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, order uint64, deleted bool) error {
 	// The replication factor is checked once, inside replicaTargets, which
 	// is the only place that can act on it. Checking here as well would be
 	// two conditions that must agree forever, and breaking either on purpose
@@ -600,6 +600,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		value:     encoded,
 		ttl:       ttl,
 		stamp:     stamp,
+		order:     order,
 		deleted:   deleted,
 		targets:   targets,
 	}); err != nil {
@@ -731,7 +732,7 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // how the first version ended up replicating only the writes that happened to
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
-	n.store.Delete(key)
+	_, order := n.store.Remove(key)
 	// A deletion invalidates every cached copy. The stamp carries this
 	// node's epoch with a version above anything the deleted entry could
 	// have held, so a peer holding an older copy drops it; a peer that has
@@ -741,7 +742,7 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 	// the key the moment it was promoted, which is worse than never having
 	// replicated it at all.
 	// Invalidated whether or not the fan-out succeeded; see localSet.
-	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
+	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
 	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	if err != nil {
 		return err

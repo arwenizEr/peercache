@@ -481,7 +481,8 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// in.Value is the sender's stored form, framed already, as every
 		// replicated copy is; framing it again stored a frame inside a
 		// frame and handed the header back to the next reader.
-		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version) {
+		h.cache.observeOrder(in.Order)
+		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {
 			h.cache.keysAdopted.Add(1)
 		}
 		h.cache.pressure.noteWrite(len(in.Value))
@@ -489,11 +490,13 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	}
 
 	now := h.cache.opts.Clock.Now().UnixNano()
+	h.cache.observeOrder(in.Order)
 	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
 		Value:      in.Value,
 		Stamp:      in.Stamp,
 		ExpiresAt:  replication.DeadlineFrom(now, in.TTLNanos),
 		ReceivedAt: now,
+		Order:      in.Order,
 		From:       in.From,
 	})
 	h.cache.pressure.noteWrite(len(in.Value))
@@ -596,6 +599,7 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 			Value:    ns.encode(value),
 			Stamp:    h.stamp(e.Version),
 			TTLNanos: ttl,
+			Order:    e.Order,
 		})
 	}
 	return wire.Encode(&out)

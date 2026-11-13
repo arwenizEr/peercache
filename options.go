@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/persist"
 )
 
 // Option configures a [Cache] at construction. Options apply in order, so a
@@ -317,6 +318,17 @@ func WithReplicationFactor(rf int) NamespaceOption {
 // docs/decisions/0028-hot-key-reads.md.
 func WithReplicaReads() NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.ReplicaReads = true }
+}
+
+// WithPersistence makes the namespace persistent: its owners write every change
+// behind to store, so that keys survive the loss of every node holding them.
+//
+// It is being built in parts (docs/decisions/0029-persistence-as-a-segment-log.md).
+// In this build it orders the namespace's writes for persistence and carries
+// that order through replication, catch-up and promotion; nothing is flushed
+// to store yet.
+func WithPersistence(store persist.BlobStore) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.Persistence = store }
 }
 
 // WithCodec names the registered codec used for typed values.

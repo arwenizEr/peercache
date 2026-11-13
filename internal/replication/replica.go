@@ -103,6 +103,9 @@ type Entry struct {
 	// network. Replica reads serve a copy only while it is younger than the
 	// namespace's L1 TTL; see docs/decisions/0028-hot-key-reads.md.
 	ReceivedAt int64
+	// Order is the write's persistence order, zero in a namespace without
+	// persistence. Promotion installs it unchanged.
+	Order uint64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
 	// epoch means two of them believe they own it.
