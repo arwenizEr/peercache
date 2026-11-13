@@ -1875,6 +1875,14 @@ mutate "a failed synchronous atomic write skips its invalidation" \
 	}' \
   'TestAFailedSyncWriteStillInvalidates/Increment$' ./tests
 
+# --- open question 46 ---
+
+mutate "the write path ranks one replica too few" \
+  replicate.go \
+  '	ranked, count, epoch := c.guard.Table().Holders(groupKey, rf)' \
+  '	ranked, count, epoch := c.guard.Table().Holders(groupKey, rf-1)' \
+  'TestReplicasAreTheRunnersUpInTheRanking$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

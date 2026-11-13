@@ -203,3 +203,37 @@ func BenchmarkColdRemoteGet(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkReplicatedSet is a write on its owner in a replicated namespace:
+// store, rank the replicas, queue the fan-out. Asynchronous, so the fan-out's
+// network cost is not on the measured path, and the ranking is. Open question
+// 46 is the reason it exists.
+func BenchmarkReplicatedSet(b *testing.B) {
+	for _, nodes := range []int{7, 32} {
+		b.Run(fmt.Sprintf("nodes=%d", nodes), func(b *testing.B) {
+			f := newBenchFabric(b, nodes)
+			ctx := context.Background()
+			for _, id := range f.ids {
+				f.caches[id].Namespace("repl", peercache.WithReplicationFactor(3))
+			}
+			// Keys owned by n0, so every Set is a local write.
+			owner := f.ids[0]
+			keys := make([]string, 0, 1024)
+			for i := 0; len(keys) < cap(keys); i++ {
+				if k := fmt.Sprintf("w/%d", i); f.owner(k) == owner {
+					keys = append(keys, k)
+				}
+			}
+			ns := f.caches[owner].Namespace("repl")
+			val := make([]byte, 64)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := ns.Set(ctx, keys[i%len(keys)], val, 0); err != nil {
+					b.Fatalf("Set: %v", err)
+				}
+			}
+		})
+	}
+}

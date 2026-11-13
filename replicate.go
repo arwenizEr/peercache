@@ -103,17 +103,22 @@ func (c *cache) replicaTargets(groupKey string, rf int) ([]core.Node, core.Epoch
 	if c.guard == nil || rf < 2 {
 		return nil, 0, nil
 	}
-	ranked, epoch, err := c.guard.Table().Replicas(groupKey, rf)
-	if err != nil {
-		return nil, epoch, err
+	// Holders, not Replicas: this runs on every replicated write, and
+	// Replicas copies, sorts and clones the whole membership to return at
+	// most three nodes (open question 46). The ranking is the same, which
+	// internal/ownership tests. Only the targets kept are cloned, because
+	// they outlive this call on the fan-out queue.
+	ranked, count, epoch := c.guard.Table().Holders(groupKey, rf)
+	if count == 0 {
+		return nil, epoch, fmt.Errorf("peercache: no members to replicate %q to: %w", groupKey, core.ErrNotFound)
 	}
 	self := c.self().ID
-	out := make([]core.Node, 0, len(ranked))
-	for _, n := range ranked {
+	out := make([]core.Node, 0, count)
+	for _, n := range ranked[:count] {
 		if n.ID == self {
 			continue
 		}
-		out = append(out, n)
+		out = append(out, n.Clone())
 	}
 	return out, epoch, nil
 }

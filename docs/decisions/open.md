@@ -1479,7 +1479,7 @@ fix and has its own mutation entry.
 
 ---
 
-## 46. The write path ranks replicas with an allocating sort — found in M13, open
+## 46. The write path ranked replicas with an allocating sort — found in M13, resolved
 
 `replicaTargets` calls `Table.Replicas` on every replicated write: a copy of the
 membership, a reflective `sort.Slice` and a clone per member, measured at 394 ns
@@ -1488,6 +1488,21 @@ and 5 allocations at 7 nodes and 13 µs at 64 (docs/benchmarks.md, M13).
 140 ns and 525 ns with no allocation, and is tested to agree. Moving the write
 path to it is a contained change with a measurable benefit at large
 memberships; it was left out of M13 to keep that milestone to reads.
+
+**Resolved:** `replicaTargets` uses `Holders` and clones only the targets it
+keeps. `BenchmarkReplicatedSet` (tests/, asynchronous RF 3, medians of five):
+
+| | before | after |
+|---|---:|---:|
+| 7 nodes | 1,608 ns, 3,655 B, 32 allocs | 748 ns, 2,224 B, 19 allocs |
+| 32 nodes | 3,737 ns, 7,278 B, 60 allocs | 898 ns, 2,378 B, 21 allocs |
+
+More than the ranking alone accounts for, and the reason is visible in the
+allocation count: `Replicas` cloned every member, so the old path's cost grew
+with the cluster; the new one is nearly flat. Catch-up, promotion and the
+rebalance planner still call `Replicas`. They run per membership change rather
+than per write, and catch-up takes its replication factor from the wire, which
+`Holders` would clamp.
 
 ---
 

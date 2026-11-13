@@ -964,8 +964,19 @@ selection is 5% of `fetchHolder`. What remains is scheduling in the in-process
 network, which a real round trip — hundreds of microseconds — makes noise. It is
 recorded rather than explained away; a real-network measurement would settle it.
 
-The write path still ranks replicas with `Table.Replicas` on every write; moving
-it to `Holders` is open question 46.
+The write path ranked replicas with `Table.Replicas` on every write too. Moving
+it to `Holders` (open question 46), `BenchmarkReplicatedSet` — an asynchronous
+RF 3 write on its owner, medians of five:
+
+| | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| 7 nodes, before | 1,608 | 3,655 | 32 |
+| 7 nodes, after | 748 | 2,224 | 19 |
+| 32 nodes, before | 3,737 | 7,278 | 60 |
+| 32 nodes, after | 898 | 2,378 | 21 |
+
+`Replicas` cloned every member, so the old write cost grew with the cluster;
+the new one barely does.
 
 ## What the test suite itself costs
 
