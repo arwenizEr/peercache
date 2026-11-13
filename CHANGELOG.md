@@ -36,6 +36,8 @@ change the public API.
 - A key a persistent namespace restores from storage is sent to its replicas
   again, instead of sitting at a replication factor of one until its next
   write.
+- `Close` cancels and waits for restores still in flight; one reading a store
+  that no longer answered could outlive the cache and hold up its final flush.
 
 ### Changed
 

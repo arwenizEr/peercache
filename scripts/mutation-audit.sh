@@ -2254,6 +2254,15 @@ mutate "a restored key is not replicated again" \
   '		_ = version' \
   'TestARestoredKeyIsReplicatedAgain$' ./tests
 
+# --- persistence: Close and restores in flight ---
+
+mutate "Close does not cancel restores in flight" \
+  persistence.go \
+  '	p.rcancel()
+	p.rwg.Wait()' \
+  '	p.rwg.Wait()' \
+  'TestCloseEndsARestoreInFlight$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
