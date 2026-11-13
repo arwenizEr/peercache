@@ -1327,7 +1327,7 @@ mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err :
 
 mutate "promotion restarts a key's lifetime"   promote.go   'if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version) {'   'if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version) {'   'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
 
-mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano(), e.TTLNanos),'   'ExpiresAt: replication.DeadlineFrom(c.opts.Clock.Now().UnixNano()+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' ./tests
+mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),'   'ExpiresAt:  replication.DeadlineFrom(now+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' ./tests
 
 mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' ./tests
 
