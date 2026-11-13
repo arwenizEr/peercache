@@ -1611,3 +1611,34 @@ Options:
 
 Leaning towards 1, measured before deciding: M16's next kill -9 run says how
 often the window is hit under load.
+
+## 50. Replica copies were ordered by a per-view epoch — found in M16, resolved
+
+**Found** by M16 on kind. After one rolling restart the five pods held epochs 5,
+7, 9, 11 and 13 — each counts the membership changes it has seen, and the pods
+restarted first saw the most — and `peercache_version_conflicts_total` grew with
+the epoch, to 1.1 million on the highest. `core.Stamp` compares the epoch first.
+That is sound within one owner's lineage and wrong across them: a key's owner
+returns from a restart with a smaller epoch than the interim owner it catches up
+from, writes, and its replicas refuse the write as older. Nothing reports it —
+the write is acknowledged, the owner holds it — until the owner and the interim
+owner have both gone and the remaining replica answers with the older value.
+ADR 0026 named the hazard for persistence and gave persistence its own order for
+it; the replica store kept the stamp, on the assumption that in-cluster copies
+only ever compare within one lineage. A rolling restart is the counterexample.
+
+**Resolved:** every namespace's writes take an order from the hybrid logical
+clock persistence already used. It is observed on every copy a node receives —
+replication, catch-up, hand-off, promotion — so an owner's next order is above
+everything it has caught up on, whatever its epoch. `replication.Newer` orders
+by it when both copies carry one, and so do tombstones and promotion
+(`store.Restore`); the stamp remains the fallback for a copy from an earlier
+release, which sends no order for a namespace without persistence.
+`TestAWriteByAnOwnerWithALowerEpochSurvivesFailover`.
+
+**Still open:** split-brain detection compares epochs too — "two writers in the
+same epoch" — and epochs on different nodes coincide by accident as easily as
+they differ. Its count after a rolling restart on kind (tens of thousands) is
+therefore not evidence of two owners. It needs a definition that does not rely
+on epochs being comparable; until then the counter is noise after churn, and
+docs that call it "deserves investigation whenever it is non-zero" overstate it.

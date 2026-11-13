@@ -103,8 +103,10 @@ type Entry struct {
 	// network. Replica reads serve a copy only while it is younger than the
 	// namespace's L1 TTL; see docs/decisions/0028-hot-key-reads.md.
 	ReceivedAt int64
-	// Order is the write's persistence order, zero in a namespace without
-	// persistence. Promotion installs it unchanged.
+	// Order is the write's order from its owner's hybrid logical clock. It
+	// is what orders copies (see [Newer]); zero only from a peer on a release
+	// that ordered persistent namespaces alone. Promotion installs it
+	// unchanged.
 	Order uint64
 	// From is the node that sent this copy. It is what makes split-brain
 	// detectable: two different nodes writing the same key under the same
@@ -161,11 +163,11 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 			existing.From != e.From {
 			conflict = true
 		}
-		if !e.Stamp.NewerThan(existing.Stamp) {
-			// Equal stamps from the same writer are a retransmission,
+		if !Newer(e, existing) {
+			// Equal copies from the same writer are a retransmission,
 			// which is normal and not worth counting. A strictly older
-			// stamp is a genuine out-of-order delivery, and is.
-			if existing.Stamp.NewerThan(e.Stamp) {
+			// copy is a genuine out-of-order delivery, and is.
+			if Newer(existing, e) {
 				s.versionConflicts.Add(1)
 			}
 			return false, conflict
@@ -178,6 +180,21 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	}
 	s.bytes.Add(delta)
 	return true, conflict
+}
+
+// Newer reports whether a supersedes b.
+//
+// By order when both carry one: an order is issued by a hybrid logical clock
+// every owner advances past whatever it has received, so it agrees with the
+// key's history across ownership changes. The stamp is the fallback for a copy
+// from a peer that issues no order — an earlier release — and is only sound
+// within one owner's lineage, because its epoch is per view: a returning owner
+// holds a smaller epoch than the interim owner whose copy it supersedes.
+func Newer(a, b Entry) bool {
+	if a.Order != 0 && b.Order != 0 {
+		return a.Order > b.Order
+	}
+	return a.Stamp.NewerThan(b.Stamp)
 }
 
 // Get returns a replicated value.
@@ -221,7 +238,7 @@ func (s *Store) Delete(namespace, key string) bool {
 // It is the deletion counterpart of [Store.Put]'s ordering. A tombstone from an
 // owner on an older epoch — arriving after a partition heals, say — must not
 // remove a copy a newer owner wrote, any more than an old write may replace it.
-func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp) bool {
+func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp, order uint64) bool {
 	s.mu.RLock()
 	nr, ok := s.ns[namespace]
 	s.mu.RUnlock()
@@ -232,7 +249,7 @@ func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp) bool 
 	nr.mu.Lock()
 	defer nr.mu.Unlock()
 	e, held := nr.entries[key]
-	if !held || e.Stamp.NewerThan(stamp) {
+	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {
 		return false
 	}
 	delete(nr.entries, key)

@@ -2401,6 +2401,25 @@ mutate "a relayed catch-up copy is filed under its relay" \
   '' \
   'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
 
+# --- open question 50 (found by M16) ---
+
+mutate "replica copies order by the epoch stamp" \
+  internal/replication/replica.go \
+  '	if a.Order != 0 && b.Order != 0 {
+		return a.Order > b.Order
+	}
+' \
+  '' \
+  'TestAWriteByAnOwnerWithALowerEpochSurvivesFailover$' ./tests
+mutate "non-persistent namespaces issue no order" \
+  peercache.go \
+  '	order := func() uint64 { return uint64(c.orders.Next()) }' \
+  '	var order func() uint64
+	if opts.Persistence != nil {
+		order = func() uint64 { return uint64(c.orders.Next()) }
+	}' \
+  'TestAWriteByAnOwnerWithALowerEpochSurvivesFailover$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

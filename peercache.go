@@ -549,10 +549,16 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		ns.framer = framer
 	}
 
-	var order func() uint64
-	if opts.Persistence != nil {
-		order = func() uint64 { return uint64(c.orders.Next()) }
-	}
+	// Every write is ordered by the hybrid logical clock, persistent or not.
+	// It began as persistence's order, because a record outlives the node
+	// that wrote it; replicas need the same property. A key's owner changes
+	// between nodes whose epochs are unrelated — epochs are per view — so a
+	// stamp that lets the epoch dominate refused a returning owner's writes
+	// as older than an interim owner's, and RF 3 lost acknowledged writes to
+	// two failures after a rolling restart (M16; open question 50). Orders
+	// are observed on every copy received, so each owner's next order is
+	// above everything it has caught up on.
+	order := func() uint64 { return uint64(c.orders.Next()) }
 	st, err := store.New(store.Options{
 		Shards: opts.Shards,
 		Clock:  c.opts.Clock,

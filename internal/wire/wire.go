@@ -274,9 +274,10 @@ type ReplicateRequest struct {
 	// Deleted marks a removal. Deletions must replicate: a replica that
 	// missed one would resurrect the key the moment it was promoted.
 	Deleted bool `msgpack:"deleted"`
-	// Order is the write's persistence order, zero in a namespace without
-	// persistence. The replica keeps it so that a promotion continues it,
-	// and advances its own clock past it.
+	// Order is the write's order from its owner's hybrid logical clock, in
+	// every namespace; a release before M16 sent it for persistent ones only,
+	// and zero means that. It orders replica copies, and the replica keeps it
+	// so that a promotion continues it, and advances its own clock past it.
 	Order uint64 `msgpack:"order"`
 }
 
