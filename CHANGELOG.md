@@ -67,6 +67,10 @@ change the public API.
 
 ### Fixed
 
+- `docs/api.md` told a restarted node to call `CatchUp` "after the readiness
+  gate", but `Ready()` stays false until `CatchUp` has run, so an application
+  following it never became ready. The order is join, settle, `CatchUp`, ready.
+  Found by M16's real-world run.
 - Tests that passed only on a warm module cache or a fast machine: the
   external-module build, three idle-deactivation tests, and the remote latency
   gate on shared CI runners (`PEERCACHE_LATENCY_GATE=shared`).
