@@ -12,6 +12,7 @@ import (
 
 	"github.com/arwenizEr/peercache"
 	"github.com/arwenizEr/peercache/internal/clock"
+	"github.com/arwenizEr/peercache/persist"
 )
 
 // Example shows the basic lifecycle: construct, configure a namespace,
@@ -129,6 +130,40 @@ func ExampleWithReplicaReads() {
 	// no L1: true
 	// read: 1.0841
 	// served by a replica: 0 coalesced: 0
+}
+
+// ExampleWithPersistence writes through one cache, closes it — Close flushes —
+// and reads the key back through a new cache over the same store, as a pod
+// replacing one that shut down would.
+func ExampleWithPersistence() {
+	store := persist.Memory() // tests only; use a real backend in production
+	ctx := context.Background()
+
+	first, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	carts := first.Namespace("carts", peercache.WithPersistence(store))
+	_ = carts.Set(ctx, "cart:7", []byte("3 items"), 0)
+	_ = carts.Set(ctx, "cart:8", []byte("abandoned"), 0)
+	_ = carts.Delete(ctx, "cart:8")
+	_ = first.Close(ctx)
+
+	second, err := peercache.New(peercache.WithNodeID("pod-1"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = second.Close(ctx) }()
+	carts = second.Namespace("carts", peercache.WithPersistence(store))
+	v, _ := carts.Get(ctx, "cart:7")
+	_, err = carts.Get(ctx, "cart:8")
+	fmt.Println("restored:", string(v))
+	fmt.Println("deleted stays deleted:", errors.Is(err, peercache.ErrNotFound))
+	// Output:
+	// restored: 3 items
+	// deleted stays deleted: true
 }
 
 // ExampleWithLoader shows why GetOrLoad has no loader argument. The loader is

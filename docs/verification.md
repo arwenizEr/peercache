@@ -2374,9 +2374,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-docs/design.md §4 carries eleven `**Acceptance:**` blocks, M0 through M6, M9, M10, M12 and M13;
+docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to forty-nine. Each one, and the named test that would fail if it regressed:
+testable claims they come to fifty-six. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2429,8 +2429,15 @@ testable claims they come to forty-nine. Each one, and the named test that would
 | M13 | with replication and invalidations lost, every node reads the new value one TTL later, and a replica copy is cached only for what is left of its TTL | `TestADroppedReplicationIsReadAfterOneTTL`, `TestAReplicaCopyIsCachedForWhatIsLeftOfItsTTL` |
 | M13 | replica reads at RF 1 or without an L1 tier are ErrInvalidOption | `TestReplicaReadsNeedReplicasAndAnL1` |
 | M13 | the coalesced and replica-read paths, measured | `BenchmarkRemoteGetOneHotKey`, `BenchmarkColdRemoteGet`, recorded in docs/benchmarks.md |
+| M14 | killing every holder of a key restores it on its new owner | `TestKillingEveryHolderRestoresFromStorage` |
+| M14 | a full restart reads every flushed key, and no deleted or expired one | `TestAWholeClusterRestartRestoresEverything`, `TestAColdStartRestoresWhatWasFlushed` |
+| M14 | a restore merges every snapshot; a failed snapshot deletes nothing | `TestARestoreMergesEverySnapshot`, `TestAFailedSnapshotDeletesNothing` |
+| M14 | a promoted replica's next write outranks its dead owner's records | `TestAPromotedReplicasWriteOutranksItsOldOwner` |
+| M14 | a shed owned key is restored on its next access | `TestAShedKeyIsRestoredNotLost` |
+| M14 | an unavailable store fails no write and loses nothing; a restore that cannot read it degrades to memory | `TestAnUnavailableStoreLosesNothing`, `TestAnUnavailableStoreDegradesToMemory` |
+| M14 | a namespace without persistence within noise of before, measured | `BenchmarkNamespaceSet`, `BenchmarkNamespaceGet`, `BenchmarkPersistentSet`, recorded in docs/benchmarks.md |
 
-All fifty-four names in the table were verified to exist before it was
+All sixty-three names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 
