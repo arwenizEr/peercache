@@ -617,12 +617,19 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		deleted:   deleted,
 		targets:   targets,
 	}); err != nil {
-		return err
+		// Only synchronous replication fails here, and by then the write is
+		// applied on this node: there is no rollback. So it is reported as
+		// what it is — held, by fewer nodes than its factor — and counted
+		// like any other degraded write. It was an opaque failure until
+		// M16's real-world run showed an application unable to tell an
+		// applied Increment from a refused one, and so decrementing stock
+		// twice on a retry (docs/decisions/open.md question 37, option 2).
+		n.countDegraded(0)
+		return fmt.Errorf("%w: %w", ErrUnderReplicated, err)
 	}
 	// The copies that could be placed are placed before refusing, so a
 	// refused write is held as widely as this node's view allowed rather
-	// than only by the owner. An unreachable replica fails the write above
-	// and takes precedence: it is the more specific diagnosis.
+	// than only by the owner.
 	if n.underFactor(len(targets)) {
 		return n.refuseUnderFactor(len(targets))
 	}

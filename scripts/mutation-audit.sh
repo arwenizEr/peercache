@@ -2353,6 +2353,15 @@ mutate "a persistent namespace is described without its persistence" \
 		pc := ns.persister.counters()' \
   'TestDescribeReportsTheNodeAndItsNamespaces$' ./tests
 
+# --- open question 37, option 2 (found by M16) ---
+
+mutate "a failed sync replication is an opaque error" \
+  namespace.go \
+  '		n.countDegraded(0)
+		return fmt.Errorf("%w: %w", ErrUnderReplicated, err)' \
+  '		return err' \
+  'TestAFailedSyncReplicationReportsTheWriteAsHeld$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

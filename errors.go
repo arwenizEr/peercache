@@ -92,22 +92,28 @@ var (
 	// The underlying cause is wrapped.
 	ErrNodeUnreachable = core.ErrNodeUnreachable
 
-	// ErrUnderReplicated means a synchronous write reached fewer nodes than
-	// its namespace's replication factor, in a namespace opened with
-	// [WithRequireReplicationFactor]. Without that option the same write is
-	// acknowledged and counted in Stats().DegradedWrites instead.
+	// ErrUnderReplicated means a synchronous write was applied on its owner
+	// but is held by fewer nodes than its namespace's replication factor.
+	// It is the write happening, not the write failing.
 	//
-	// The value is held by the owner, and by whichever replicas this node
-	// could place it on. Like every synchronous failure it is reported, not
-	// rolled back: a Get on the owner may return it. Retrying is safe for
-	// Set and Delete, which are idempotent, and will keep failing until this
-	// node's membership view is large enough for the factor again.
+	// Two things cause it:
 	//
-	// It is distinct from [ErrNodeUnreachable]. That means a replica this
-	// node believes in did not answer; this means this node does not believe
-	// in enough replicas — usually because it has been cut off from the
-	// cluster, or because the cluster is smaller than the factor. See
-	// docs/decisions/open.md question 37.
+	//   - A replica the owner ranks did not take the copy — it was
+	//     unreachable, refused, or ran out of the caller's deadline. The
+	//     error also wraps the replica's own failure, so errors.Is can see
+	//     [ErrNodeUnreachable] on the owner; across a hop only this sentinel
+	//     survives, because it is what the caller needs.
+	//   - The owner's membership view has too few nodes for the factor, in a
+	//     namespace opened with [WithRequireReplicationFactor]. Without that
+	//     option the same write is acknowledged instead.
+	//
+	// Either way it is counted in Stats().DegradedWrites, and it is reported,
+	// not rolled back: the value is held by the owner and by whichever
+	// replicas took it, and a Get returns it. So a caller must treat it as
+	// done. Retrying is harmless for Set and Delete, which are idempotent;
+	// for Increment, CompareAndSwap and SetIfAbsent the operation has already
+	// happened, and retrying it applies it again. See docs/decisions/open.md
+	// question 37.
 	ErrUnderReplicated = core.ErrUnderReplicated
 
 	// ErrNotAnInteger means [Namespace.Increment] found a value under the key
