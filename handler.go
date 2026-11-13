@@ -554,6 +554,10 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 
+	if in.Replicas {
+		return h.catchUpReplicas(ctx, ns, in, limit)
+	}
+
 	entries, more := ns.store.Snapshot(in.After, limit, func(key string) bool {
 		if h.cache.guard == nil {
 			return false
@@ -610,6 +614,46 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 			Stamp:    h.stamp(e.Version),
 			TTLNanos: ttl,
 			Order:    e.Order,
+		})
+	}
+	return wire.Encode(&out)
+}
+
+// catchUpReplicas answers a catch-up for this node's replica copies of keys
+// the asker owns. See [wire.CatchUpRequest.Replicas].
+//
+// Only keys the asker owns, by this node's ranking: a replica asking for other
+// replicas' copies would be asking for something its owner already sends. The
+// copies go out as held — the stored form, and the stamp their owner issued —
+// so the asker's stamp and version checks see exactly what this node saw.
+func (h *peerHandler) catchUpReplicas(ctx context.Context, ns *namespace, in wire.CatchUpRequest, limit int) ([]byte, error) {
+	if h.cache.guard == nil {
+		return wire.Encode(&wire.CatchUpResponse{})
+	}
+	now := h.cache.opts.Clock.Now().UnixNano()
+	entries, more := h.cache.replicas.Snapshot(ns.name, in.After, limit, now, func(key string) bool {
+		owner, _, err := h.cache.guard.Table().Owner(ns.groupKeyFor(key))
+		return err == nil && owner.ID == in.Requester
+	})
+	out := wire.CatchUpResponse{More: more, Entries: make([]wire.CatchUpEntry, 0, len(entries))}
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var ttl int64
+		if e.ExpiresAt != 0 {
+			ttl = e.ExpiresAt - now
+			if ttl <= 0 {
+				continue
+			}
+		}
+		out.Entries = append(out.Entries, wire.CatchUpEntry{
+			Key:      e.Key,
+			Value:    e.Value,
+			Stamp:    e.Stamp,
+			TTLNanos: ttl,
+			Order:    e.Order,
+			From:     e.From,
 		})
 	}
 	return wire.Encode(&out)
