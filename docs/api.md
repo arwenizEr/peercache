@@ -785,11 +785,24 @@ without being asked.
 ### `CatchUp` — required after a restart
 
 ```go
-// After the readiness gate, before serving traffic.
+// Once the view has settled. Ready() stays false until this has run, so this
+// is what opens the readiness gate — do not wait for the gate first.
+for !cache.Ready().Settled {
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case <-time.After(250 * time.Millisecond):
+    }
+}
 if err := cache.CatchUp(ctx); err != nil {
     log.Warn("catch-up incomplete", "error", err)
 }
 ```
+
+The order is join, settle, `CatchUp`, ready. Waiting for `Ready()` before calling
+`CatchUp` waits forever: its `Reason` stays "replicas not yet pulled; call
+CatchUp". Calling it before the view settles is safe but may pull from a view
+that is about to change; call it again after a membership change (see below).
 
 **A restarted node that skips this will report keys as missing when they are
 not.** Replication carries writes, not state, so a returning node receives only
