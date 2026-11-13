@@ -1,7 +1,9 @@
 # 0026 — External persistence: a design, not an implementation
 
-**Status:** proposed, and **not buildable as written** — an independent review
-found ten defects in it, listed at the end. Nothing here is built.
+**Status:** superseded by `0029-persistence-as-a-segment-log.md`, which keeps
+this note's goals and replaces its per-key conditional write with a segment log
+over a blob store; each of the ten review findings below is answered there. Kept
+for the reasoning, not as a design.
 **Milestone:** none yet; a candidate for the first one after v1.
 **Bound by:** design principle 4 (docs/design.md) — "Durability: none… Persistence hooks may be
 designed for, but nothing is written to disk in v1" — and docs/design.md §5, which

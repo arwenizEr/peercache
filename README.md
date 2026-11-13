@@ -219,7 +219,9 @@ everything else that follows.
 - **State is not durable.** Ungraceful pod termination loses that pod's owned
   data and any replicas not yet caught up. Graceful shutdown transfers ownership
   and streams state. Every namespace must therefore either be reconstructible
-  from a loader or tolerate loss.
+  from a loader or tolerate loss. Opt-in persistence to disk or object storage
+  is designed (`docs/decisions/0029-persistence-as-a-segment-log.md`) and being
+  built as M14; until it ships, this holds for every namespace.
 - **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
   1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
   acknowledged inside it exists on one node only. `WithSyncReplication()` closes

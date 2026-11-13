@@ -1438,7 +1438,9 @@ design principle 4 (docs/design.md) rules out writing to disk in v1 and allows p
 hooks to be designed for; docs/design.md section 5 defers WAL, snapshots and backup.
 
 **Picked:** a design, `docs/decisions/0026-external-persistence-design.md`, and
-no code. It proposes a per-namespace `Persister` interface with write-behind as
+no code. **Superseded on 2026-11-13:** the project owner made persistence opt-in
+with pluggable backends; `0029-persistence-as-a-segment-log.md` is the design
+being built. It proposes a per-namespace `Persister` interface with write-behind as
 the default and a key-coalescing queue, drivers in separate modules, and a
 per-key order that survives ownership changes — because the in-memory `Stamp`
 compares per-node epochs and cannot order writes across owners in a store that

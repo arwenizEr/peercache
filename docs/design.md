@@ -18,7 +18,9 @@ document, the code and the decision records assume them. Records in
 
 ### What this is not
 
-- Not a database. State is **lossy by design** (principle 4).
+- Not a database. State is **lossy by default** (principle 4), and persistence,
+  where a namespace opts in, has a measured loss window and no cross-key
+  atomicity.
 - Not a general distributed transaction system. There are no cross-group
   transactions.
 - Not a Redis replacement for pub/sub, streams, or Lua scripting.
@@ -39,10 +41,15 @@ document, the code and the decision records assume them. Records in
    network. Functions and loaders are registered by name at startup; RPCs carry
    `(name, []byte args)`. All pods run the same binary — this is assumed.
 
-4. **Durability: none.** The owned store is memory-only. Graceful shutdown
-   transfers ownership and streams state; ungraceful termination loses it. Every
-   namespace must therefore be reconstructible from a loader or tolerate loss.
-   Persistence hooks may be designed for, but nothing is written to disk.
+4. **Durability: none by default; opt-in persistence per namespace.** The owned
+   store is memory-only unless a namespace is opened with `WithPersistence`.
+   Without it, graceful shutdown transfers ownership and streams state and
+   ungraceful termination loses it, so such a namespace must be reconstructible
+   from a loader or tolerate loss. With it, owners flush coalesced records as
+   immutable segments to a pluggable blob store — memory, local disk, or a cloud
+   object store through a separate module — and the loss window is the flush
+   interval, measured. Changed by the project owner on 2026-11-13; see
+   `decisions/0029-persistence-as-a-segment-log.md`.
 
 5. **Consistency ceiling is per-group serializability**, provided by the single
    activation. Membership is gossip-based and therefore AP: a network partition
@@ -429,7 +436,7 @@ the cluster's unless the library contains it.
 - **Memory budget.** A per-cache byte budget covering the owned stores, the
   replica store and the L1 tier. Over budget, entries are shed in that order of
   preference: L1 first, then replicas, then owned data — sampled, not LRU, so
-  the read path pays nothing. State is lossy by design (principle 4), so
+  the read path pays nothing. State is lossy by default (principle 4), so
   shedding is legitimate; it is never silent, and every tier has a counter.
 - **No stale resurrection.** Shedding an owned key in a replicated namespace
   sheds its replicas too, as a replicated deletion. Dropping only the owner's
@@ -544,13 +551,33 @@ once one TTL has passed, and a replica copy is cached only for what is left of
 its TTL; replica reads at RF 1 or without an L1 tier are ErrInvalidOption; the
 coalesced and replica-read paths are benchmarked.
 
+### M14 — Opt-in persistence
+
+A namespace may be opened with `WithPersistence(store)`. Owners flush coalesced
+records, ordered by a hybrid logical clock, as immutable segments to a
+`BlobStore`; a node that acquires a group it does not hold restores that group's
+partition by a last-writer-wins merge; a per-partition compactor folds segments
+into snapshots. See `decisions/0029-persistence-as-a-segment-log.md`, which
+supersedes `0026`.
+
+Built in parts: **M14a** the design and this section; **M14b** the blob store
+interface, `persist.Memory`, the order carried through every write path, flush,
+restore and compaction; **M14c** `persist.Dir` and the measured loss window;
+**M14d** `persist/s3` as a separate module.
+
+Its acceptance criteria are listed in decision 0029. They move into this
+section, as an acceptance block, when M14b is built, so that the acceptance map
+counts only what has a test.
+
 ---
 
 ## 5. Deliberately deferred
 
 Record these in `docs/decisions/open.md` and do not build them in v1:
 
-- Persistence (WAL, snapshots, object-storage backup)
+- Per-write synchronous persistence (a WAL fsynced on every `Set`); M14's is a
+  write-behind segment log with a measured window
+- Persisting group state
 - Cross-group transactions
 - Multi-region / multi-cluster
 - Raft-backed membership
@@ -570,8 +597,11 @@ It is the most useful documentation in the project.
 - Membership is eventually consistent. A network partition can briefly produce
   two activations of the same group; conflicting writes are detected but not
   automatically merged.
-- State is not durable. Ungraceful pod termination loses that pod's owned data
-  and any replicas not yet caught up.
+- State is not durable by default. Ungraceful pod termination loses that pod's
+  owned data and any replicas not yet caught up. A namespace with persistence
+  loses only what was written in the last flush interval, which is measured, and
+  resolves conflicting writes from a partition by last writer wins rather than
+  detecting them.
 - Async replication has a data-loss window averaging approximately 0.1 ms under
   normal conditions, with a p99 under 1.5 ms (measured at M5; see
   docs/benchmarks.md). A write acknowledged in that window exists on one node
