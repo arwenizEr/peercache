@@ -137,8 +137,9 @@ then
 fi
 
 # Refuse to run on a dirty tree. Reverting is done with `git checkout --`, which
-# would silently discard uncommitted work in the files being mutated.
-if [ -n "$(git status --porcelain)" ]; then
+# would silently discard uncommitted work in the files being mutated. Untracked
+# files are not at risk -- checkout never touches them -- so they do not count.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "refusing to run: the working tree has uncommitted changes." >&2
   echo "this script reverts mutations with 'git checkout --', which would discard them." >&2
   git status --short >&2
@@ -2372,6 +2373,53 @@ mutate "a forwarding node drops the owner report" \
   'if true {' \
   'TestAForwardedHeldWriteKeepsItsResult$' ./tests
 
+# --- open question 49 (found by M16) ---
+
+mutate "catch-up skips the replica pass" \
+  catchup.go \
+  'return cu.pages(ctx, ns, peer, true)' \
+  'return nil' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+mutate "the replica pass ignores the request" \
+  handler.go \
+  '	if in.Replicas {
+		return h.catchUpReplicas(ctx, ns, in, limit)
+	}
+' \
+  '' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+mutate "the replica pass sends what the asker does not own" \
+  handler.go \
+  'return err == nil && owner.ID == in.Requester' \
+  'return err == nil && owner.ID != ""' \
+  'TestTheReplicaPassSendsOnlyWhatTheAskerOwns$' ./tests
+
+mutate "a relayed catch-up copy is filed under its relay" \
+  handler.go \
+  '			From:     e.From,
+' \
+  '' \
+  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+
+# --- open question 50 (found by M16) ---
+
+mutate "replica copies order by the epoch stamp" \
+  internal/replication/replica.go \
+  '	if a.Order != 0 && b.Order != 0 {
+		return a.Order > b.Order
+	}
+' \
+  '' \
+  'TestAWriteByAnOwnerWithALowerEpochSurvivesFailover$' ./tests
+mutate "non-persistent namespaces issue no order" \
+  peercache.go \
+  '	order := func() uint64 { return uint64(c.orders.Next()) }' \
+  '	var order func() uint64
+	if opts.Persistence != nil {
+		order = func() uint64 { return uint64(c.orders.Next()) }
+	}' \
+  'TestAWriteByAnOwnerWithALowerEpochSurvivesFailover$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
@@ -2379,7 +2427,7 @@ if [ "$filtered" -ne 0 ]; then
   echo "this run makes no claim about them."
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "ERROR: mutations were left behind:" >&2
   git status --short >&2
   exit 1

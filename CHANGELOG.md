@@ -78,6 +78,23 @@ change the public API.
 
 ### Fixed
 
+- A node restarted faster than failure detection — a SIGKILLed pod its kubelet
+  restarts in a second or two — lost every key it owned, even at a synchronous
+  replication factor of 3. Its peers never declared it dead, so nobody was
+  promoted in its place, and `CatchUp` pulled only the keys its peers *own*.
+  It now also pulls its peers' replica copies of the keys it owns. Found by
+  M16's kill -9 on kind (open question 49).
+
+- Replica copies are ordered by the hybrid logical clock, in every namespace,
+  instead of by a stamp whose epoch dominated. Epochs are per view, so after a
+  rolling restart a key's returning owner held a smaller epoch than the interim
+  owner it had caught up from, its replicas refused its writes as older, and a
+  synchronous write at RF 3 was lost once the owner and the interim owner
+  failed. On kind, version conflicts after one rolling restart grew with each
+  pod's epoch, to 1.1 million. Found by M16 (open question 50). A peer on an
+  earlier release sends no order for a non-persistent namespace; its copies
+  fall back to the stamp.
+
 - An idle node spent about a quarter of a core reconciling its replicas: every
   second it ranked each one with an allocating call, and the garbage that made
   was most of the rest. On M16's kind cluster, at 160,000 replicas a node, that
