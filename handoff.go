@@ -107,6 +107,13 @@ func newHandoff(c *cache) *handoff {
 	return h
 }
 
+// room reports how many more hand-offs the queue can take now. Reconciliation
+// drains no more orphans than this, so that the queue's bound paces the work
+// rather than turning it into a drain-and-return loop.
+func (h *handoff) room() int {
+	return cap(h.queue) - len(h.queue)
+}
+
 // enqueue schedules a hand-off, restoring the copy if it cannot be scheduled.
 func (h *handoff) enqueue(w handoffWork) {
 	select {

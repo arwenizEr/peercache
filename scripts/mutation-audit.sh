@@ -2428,6 +2428,14 @@ mutate "the catch-up gate lets a forwarded write through" \
   'false {' \
   'TestTheCatchUpGateHoldsForwardedWritesUntilCaughtUp$' ./tests
 
+# --- M16: hand-off backlog ---
+
+mutate "reconciliation drains more orphans than the queue holds" \
+  promote.go \
+  'c.replicas.DrainUpTo(name, c.handoff.room(), func' \
+  'c.replicas.DrainUpTo(name, -1, func' \
+  'TestAHandOffBacklogLargerThanItsQueueIsNotChurned$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
