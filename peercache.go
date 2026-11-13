@@ -199,7 +199,7 @@ func New(opts ...Option) (Cache, error) {
 	// this is a single node that owns everything, and a guard that always
 	// says yes is the correct answer rather than a special case.
 	var guard *ownership.Guard
-	var canActivate func(string) error
+	var canActivate, stillOwns func(string) error
 	if resolved.Membership != nil {
 		g, err := ownership.NewGuard(ownership.GuardOptions{
 			Self:            resolved.Membership.Self(),
@@ -216,6 +216,7 @@ func New(opts ...Option) (Cache, error) {
 		guard = g
 		guard.Watch(resolved.Membership)
 		canActivate = guard.CanActivate
+		stillOwns = guard.Owns
 	}
 
 	groups, err := actor.New(actor.Options{
@@ -225,6 +226,7 @@ func New(opts ...Option) (Cache, error) {
 		IdleTimeout: resolved.GroupIdleTimeout,
 		MaxActive:   resolved.MaxActiveGroups,
 		CanActivate: canActivate,
+		StillOwns:   stillOwns,
 		OnEvent:     resolved.OnEvent,
 	})
 	if err != nil {
