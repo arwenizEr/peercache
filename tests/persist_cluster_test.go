@@ -80,12 +80,14 @@ func TestKillingEveryHolderRestoresFromStorage(t *testing.T) {
 	}
 	killAndSettle(t, f, victim)
 
+	durable := func(id string) peercache.Namespace { return f.caches[id].Namespace("durable") }
 	for _, id := range f.live() {
-		ns := f.caches[id].Namespace("durable")
 		for i := 0; i < keys; i++ {
 			k := fmt.Sprintf("k%d", i)
-			v, err := ns.Get(ctx, k)
-			if err != nil || string(v) != "v-"+k {
+			// Retry-aware: just after a failover "ask again" is an
+			// answer, not a loss.
+			v, err := readWithRetryFrom(t, f, durable, id, k)
+			if err != nil || v != "v-"+k {
 				t.Fatalf("Get(%s) from %s after its only holder died = %q, %v; it must be restored",
 					k, id, v, err)
 			}
