@@ -1884,36 +1884,11 @@ mutate "an atomic update stores no order" \
 
 # --- persistence: write-behind flush (decision 0029) ---
 
-mutate "a failed flush drops its records" \
-  persistence.go \
-  '			p.restorePending(records)
-' \
-  '' \
-  'TestAnUnavailableStoreLosesNothing$' ./tests
-
-mutate "a failed flush's records replace newer writes" \
-  persistence.go \
-  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(cur) {
-			continue
-		} else if ok {' \
-  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(cur) {
-			continue
-		} else if ok {' \
-  'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
-
 mutate "a pending record shares the caller's buffer" \
   persistence.go \
   '		r.Value = append([]byte(nil), value...)' \
   '		r.Value = value' \
   'TestThePendingRecordIsACopy$' ./tests
-
-mutate "a pending record is never replaced by a newer write" \
-  persistence.go \
-  '		if !r.Newer(cur) {
-			// An older write recorded late' \
-  '		if true {
-			// An older write recorded late' \
-  'TestAHotKeyCoalescesToOneRecord$' ./tests
 
 mutate "a persistent delete writes no tombstone" \
   namespace.go \
@@ -2262,6 +2237,33 @@ mutate "Close does not cancel restores in flight" \
 	p.rwg.Wait()' \
   '	p.rwg.Wait()' \
   'TestCloseEndsARestoreInFlight$' ./tests
+
+# --- repointed after the dirty map was recycled ---
+
+mutate "a failed flush drops its records" \
+  persistence.go \
+  '		p.restorePending(records)
+' \
+  '' \
+  'TestAnUnavailableStoreLosesNothing$' ./tests
+
+mutate "a failed flush's records replace newer writes" \
+  persistence.go \
+  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
+			continue
+		} else if ok {' \
+  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(&cur) {
+			continue
+		} else if ok {' \
+  'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
+
+mutate "a pending record is never replaced by a newer write" \
+  persistence.go \
+  '		if !r.Newer(&cur) {
+			// An older write recorded late' \
+  '		if true {
+			// An older write recorded late' \
+  'TestAHotKeyCoalescesToOneRecord$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

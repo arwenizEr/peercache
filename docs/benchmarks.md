@@ -999,8 +999,24 @@ path is a nil check.
 
 A persistent write is about twice a plain one. The time is the clock read and
 the record; the bytes are mostly the dirty map, which is replaced by a fresh one
-at every flush and regrown, amortised over the writes between. Reusing it is
-the obvious next step and is not done yet.
+at every flush and regrown, amortised over the writes between.
+
+**Then the dirty map was recycled.** Profiled after decision 0030 (705 B and 4
+allocations a write by then), a third of the bytes were a heap record per write
+and most of the rest the map regrowing at every flush. Records are now held by
+value, and a flush clears and keeps the map and its record slice for the next
+one — unless its batch is under a quarter of the map's high-water mark, so a
+burst's capacity is released instead of held. Same benchmark, medians of five:
+
+| `BenchmarkPersistentSet` | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| M14b | 851 | 906 | 4 |
+| after 0030 | 672 | 705 | 4 |
+| recycled | 594 | 437 | 3 |
+
+Holding records by value alone made it worse — 849 B — because a map of
+96-byte entries copies more each time it grows; the gain is entirely in not
+growing it again.
 
 ### M14c — the loss window on `persist.Dir`
 
