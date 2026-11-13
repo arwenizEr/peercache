@@ -145,8 +145,9 @@ to the L1 TTL".
   replica read and allocated 58 times per cold read against the owner path's
   41; with `Holders` it is 40.
 - A synchronous write that cannot reach a replica returns before it enqueues
-  its invalidation. That predates this decision and is recorded as open
-  question 45; the floor test uses asynchronous replication for that reason.
+  its invalidation. That predated this decision and was recorded as open
+  question 45, since resolved; the floor test was written with asynchronous
+  replication because of it.
 
 ## Alternatives rejected
 

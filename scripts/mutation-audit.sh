@@ -1843,6 +1843,38 @@ mutate "replica reads are accepted with the L1 tier disabled" \
   '	if false {' \
   'TestReplicaReadsNeedReplicasAndAnL1$' ./tests
 
+# --- open question 45 ---
+
+mutate "a failed synchronous Set skips its invalidation" \
+  namespace.go \
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Set$' ./tests
+
+mutate "a failed synchronous Delete skips its invalidation" \
+  namespace.go \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
+	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)' \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Delete$' ./tests
+
+mutate "a failed synchronous atomic write skips its invalidation" \
+  atomic.go \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, false)
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, false)
+	if err == nil {
+		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	}' \
+  'TestAFailedSyncWriteStillInvalidates/Increment$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

@@ -554,7 +554,14 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	stamp := n.stamp(version)
 	n.cache.pressure.noteWrite(len(val))
 
-	if err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false); err != nil {
+	// The invalidation goes out whether or not the fan-out succeeded. A
+	// synchronous write that cannot reach a replica has still been applied
+	// here -- there is no rollback -- so every other pod's copy is stale
+	// either way, and skipping the hint made a degraded write staler than
+	// an asynchronous one. Open question 45.
+	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, false)
+	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	if err != nil {
 		// Only synchronous replication can fail here: asynchronous
 		// fan-out is queued and returns nil. A synchronous caller asked
 		// to know, so it is told — and the value is already stored
@@ -563,7 +570,6 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 		// single key would be a transaction by another name.
 		return err
 	}
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	return nil
 }
 
@@ -734,10 +740,12 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 	// Deletions replicate too. A replica that missed one would resurrect
 	// the key the moment it was promoted, which is worse than never having
 	// replicated it at all.
-	if err := n.fanOut(ctx, key, nil, 0, tombstone, true); err != nil {
+	// Invalidated whether or not the fan-out succeeded; see localSet.
+	err := n.fanOut(ctx, key, nil, 0, tombstone, true)
+	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
+	if err != nil {
 		return err
 	}
-	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	if n.l1 != nil {
 		n.l1.Invalidate(key)
 	}

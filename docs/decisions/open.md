@@ -1451,7 +1451,7 @@ is costing more than a database write per key.
 
 ---
 
-## 45. A failed synchronous write skips its invalidation — found in M13, open
+## 45. A failed synchronous write skipped its invalidation — found in M13, resolved
 
 `namespace.localSet` stores the value, fans out, and enqueues the invalidation
 only if the fan-out succeeded. A synchronous write that cannot reach a replica
@@ -1469,6 +1469,13 @@ the atomic operations and `Delete` alike, with a test that a failed synchronous
 write still invalidates. Found while writing
 `TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded`, which waited for an
 invalidation that never came.
+
+**Resolved:** all three now enqueue the invalidation before returning the
+fan-out error. `TestAFailedSyncWriteStillInvalidates` covers `Set`, `Delete`
+and `Increment` — the last standing for every atomic operation, which share one
+write-out path — with an L1 TTL the test never reaches, so only the
+invalidation can show the reader the new value. Each subtest failed before the
+fix and has its own mutation entry.
 
 ---
 

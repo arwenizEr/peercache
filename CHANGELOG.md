@@ -40,6 +40,11 @@ change the public API.
 - Tests that passed only on a warm module cache or a fast machine: the
   external-module build, three idle-deactivation tests, and the remote latency
   gate on shared CI runners (`PEERCACHE_LATENCY_GATE=shared`).
+- A synchronous write that could not reach a replica returned before sending
+  its invalidation, leaving other pods on the old value until their L1 TTL.
+  `Set`, `Delete` and the atomic operations now invalidate either way.
+- `Group.Call` could return an internal "record removed" error when concurrent
+  callers on a node that does not own the group were refused at once.
 
 ## [0.1.0] - 2026-11-12
 
