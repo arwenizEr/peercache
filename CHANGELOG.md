@@ -78,6 +78,11 @@ change the public API.
 
 ### Fixed
 
+- An idle node spent about a quarter of a core reconciling its replicas: every
+  second it ranked each one with an allocating call, and the garbage that made
+  was most of the rest. On M16's kind cluster, at 160,000 replicas a node, that
+  was 28% of a core with no traffic at all. Reconciliation and the catch-up
+  sender now rank without allocating.
 - `docs/api.md` told a restarted node to call `CatchUp` "after the readiness
   gate", but `Ready()` stays false until `CatchUp` has run, so an application
   following it never became ready. The order is join, settle, `CatchUp`, ready.
