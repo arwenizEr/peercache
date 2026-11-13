@@ -25,14 +25,29 @@ func openDurable(f *fabric, store persist.BlobStore, opts ...peercache.Namespace
 	}
 }
 
-// flushAll advances past a flush interval and waits until no live node has
-// anything pending.
+// flushAll advances past a flush interval and waits until every live node
+// that had something pending has finished a flush of it.
+//
+// Pending reaching zero is not enough: a flush empties the pending map before
+// its writes reach the store, so a test that changed the store's behaviour on
+// that signal changed it under a flush still in flight. The flush counter only
+// moves once the writes are done.
 func flushAll(t *testing.T, f *fabric) {
 	t.Helper()
+	before := map[string]int64{}
+	for _, id := range f.live() {
+		if s := f.caches[id].Stats(); s.PersistPending > 0 {
+			before[id] = s.PersistFlushes
+		}
+	}
 	f.clk.Advance(flushInterval)
 	waitFor(t, "every node to flush", func() bool {
 		for _, id := range f.live() {
-			if f.caches[id].Stats().PersistPending != 0 {
+			s := f.caches[id].Stats()
+			if s.PersistPending != 0 {
+				return false
+			}
+			if n, had := before[id]; had && s.PersistFlushes <= n {
 				return false
 			}
 		}
