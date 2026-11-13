@@ -340,3 +340,44 @@ func TestUpdateIgnoresZeroNodes(t *testing.T) {
 		t.Fatalf("Members = %v, want the two named nodes", got)
 	}
 }
+
+// TestHoldersRankExactlyAsReplicas: Holders is the read path's allocation-free
+// copy of Replicas, and two answers to "who holds this key" that disagree would
+// send reads to a node that refuses them. Checked at every replication factor
+// up to the maximum, on memberships smaller than, equal to and larger than it.
+func TestHoldersRankExactlyAsReplicas(t *testing.T) {
+	for _, size := range []int{1, 2, 3, 7, 64} {
+		tbl := newTable(t, nodes(size), 1)
+		for _, k := range keys(2000) {
+			for rf := 1; rf <= core.MaxReplicationFactor; rf++ {
+				want, _, err := tbl.Replicas(k, rf)
+				if err != nil {
+					t.Fatalf("Replicas: %v", err)
+				}
+				got, n, _ := tbl.Holders(k, rf)
+				if n != len(want) {
+					t.Fatalf("size %d rf %d key %q: Holders gave %d nodes, Replicas %d", size, rf, k, n, len(want))
+				}
+				for i := range want {
+					if got[i].ID != want[i].ID {
+						t.Fatalf("size %d rf %d key %q: rank %d is %s by Holders, %s by Replicas",
+							size, rf, k, i, got[i].ID, want[i].ID)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestHoldersAllocatesNothing(t *testing.T) {
+	tbl := newTable(t, nodes(7), 1)
+	if allocs := testing.AllocsPerRun(1000, func() { tbl.Holders("k", 3) }); allocs != 0 {
+		t.Fatalf("Holders allocated %.1f times per call, want 0", allocs)
+	}
+}
+
+func TestHoldersOfAnEmptyMembershipIsEmpty(t *testing.T) {
+	if _, n, _ := ownership.NewTable().Holders("k", 3); n != 0 {
+		t.Fatalf("Holders on an empty table returned %d nodes", n)
+	}
+}

@@ -28,6 +28,7 @@ and output-checked by `go test`:
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
+| `ExampleWithReplicaReads` | the configurations replica reads refuse, and their counters |
 | `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
 
 End-to-end programs, each run with `go run ./examples/<name>`: `lifecycle`
@@ -65,7 +66,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-46 series in the Prometheus text exposition format, and PeerCache imports no
+50 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -222,6 +223,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
 | `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
+| `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
@@ -290,6 +292,44 @@ Not a tuning knob. Invalidation broadcasts are a latency optimisation and may be
 lost; this TTL is the only thing that turns an unbounded stale read into a
 bounded one. Longer means faster and staler, and the staleness is what a caller
 has to reason about.
+
+### Hot keys — coalesced misses and `WithReplicaReads`
+
+Two things keep one popular key from flattening its owner
+(`docs/decisions/0028-hot-key-reads.md`).
+
+**Concurrent misses share one fetch, always.** When a key's L1 copy expires or
+is invalidated, every goroutine on a pod that reads it in that instant used to
+send its own request: a thousand callers were a thousand RPCs, measured. Now
+they share one, and `Stats().CoalescedReads` counts the ones that joined. The
+shared fetch runs under the deadline of the caller that started it, so a waiter
+with time left does not inherit that caller's failure: it fetches again under
+its own.
+
+**`WithReplicaReads()` spreads refills across the key's holders, on request.**
+Each pod always asks the same holder for a given key — the owner or one of its
+replicas, picked by rendezvous hash — so a key's readers divide among all `RF`
+of them. A pod that is itself a replica reads its own copy with no round trip.
+At RF 3, 200 remote reads sent 67 to owners instead of 200.
+
+What a reader may see is stated, not hoped for:
+
+- A replica answers only with a copy it received **less than one L1 TTL ago**,
+  and the reader caches it only for what is left of that TTL. A value read this
+  way is stale by at most **the L1 TTL plus the replication delay** — and that
+  delay is measured (`docs/benchmarks.md`), not bounded.
+- A replica that lacks the key, holds an older copy, or no longer ranks as a
+  replica **declines**, and the read goes to the owner within the same
+  deadline. A replica never reports a key absent; only the owner knows that.
+- An invalidation leaves a *floor* in the reader's L1, so a replica that has
+  not yet received the write cannot put the old value back. A lost invalidation
+  leaves no floor and the TTL bounds the copy, as it always does.
+- A key quiet for longer than the TTL is always read from its owner: replicas do
+  not revalidate. `ReplicaReadsReferred` rising while `ReplicaReadsServed` holds
+  steady is what that looks like.
+
+It applies to `Get` only. `GetOrLoad`, `BatchGet`, `Exists` and writes go to the
+owner, and a hot *group* is still bounded by its single activation.
 
 ---
 
@@ -1027,13 +1067,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 46 series come out of it.
+format with the content type a scraper expects, and 50 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 46 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 50 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

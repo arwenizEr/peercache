@@ -136,6 +136,59 @@ func (t *Table) Replicas(groupKey string, rf int) ([]core.Node, core.Epoch, erro
 	return out, snap.epoch, nil
 }
 
+// Holders returns the rf highest-scoring nodes for groupKey, owner first, as
+// [Table.Replicas] ranks them, without allocating. rf is clamped to
+// [core.MaxReplicationFactor] and to the membership; n reports how many entries
+// of the array are filled, and is zero when there are no members.
+//
+// It exists for the read path. Replica reads ask "who holds this key" on every
+// L1 miss, on the reader and again on the replica, and Replicas pays a copy, a
+// reflective sort and a clone per member for an answer that is at most three
+// nodes long. Like [Table.Owner], the nodes are not cloned: a caller must not
+// modify their metadata.
+func (t *Table) Holders(groupKey string, rf int) (holders [core.MaxReplicationFactor]core.Node, n int, epoch core.Epoch) {
+	snap := t.current.Load()
+	if rf > core.MaxReplicationFactor {
+		rf = core.MaxReplicationFactor
+	}
+	if rf > len(snap.nodes) {
+		rf = len(snap.nodes)
+	}
+	if rf < 1 {
+		return holders, 0, snap.epoch
+	}
+
+	keyHash := xxhash.Sum64String(groupKey)
+	var (
+		idx    [core.MaxReplicationFactor]int
+		scores [core.MaxReplicationFactor]uint64
+	)
+	for i := range snap.nodes {
+		score := mix(keyHash, snap.nodes[i].seed)
+		// Insertion into a sorted top-rf. Members are sorted by ID, so a
+		// later member with an equal score ranks below an earlier one --
+		// the same tie-break Replicas applies, which is what keeps the two
+		// answers identical.
+		pos := n
+		for pos > 0 && score > scores[pos-1] {
+			pos--
+		}
+		if pos >= rf {
+			continue
+		}
+		if n < rf {
+			n++
+		}
+		copy(idx[pos+1:n], idx[pos:n-1])
+		copy(scores[pos+1:n], scores[pos:n-1])
+		idx[pos], scores[pos] = i, score
+	}
+	for i := 0; i < n; i++ {
+		holders[i] = snap.nodes[idx[i]].node
+	}
+	return holders, n, snap.epoch
+}
+
 // owner returns the highest-scoring node in snap for groupKey.
 //
 // This is the hot path: one hash of the key, then a multiply-and-mix per

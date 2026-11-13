@@ -170,3 +170,23 @@ func BenchmarkCanActivate(b *testing.B) {
 		_ = g.CanActivate(keys[i%len(keys)])
 	}
 }
+
+// BenchmarkHolders is the read path's answer to the question BenchmarkReplicas
+// times: the same ranking, without the copy, sort and clones.
+func BenchmarkHolders(b *testing.B) {
+	for _, size := range []int{7, 64} {
+		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
+			t := NewTable()
+			t.Update(benchNodes(size), 1)
+			keys := benchKeys(1024)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, n, _ := t.Holders(keys[i%len(keys)], 3); n == 0 {
+					b.Fatal("no holders")
+				}
+			}
+		})
+	}
+}

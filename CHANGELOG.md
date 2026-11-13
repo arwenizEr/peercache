@@ -13,10 +13,18 @@ change the public API.
   `Namespace.SetIfAbsent`, `CompareAndSwap`, `Increment` and `Touch`, and
   `SetIfAbsent` and `Touch` on `TypedNamespace[T]`. Decision 0027.
 - `ErrNotAnInteger`, from `Increment`.
+- `WithReplicaReads`: a namespace's replicas may answer reads of its keys,
+  bounded by the L1 TTL plus the replication delay. New `ReplicaGet` RPC; a peer
+  on an older build answers `ErrNotImplemented` and the read goes to the owner.
+  Decision 0028.
+- `Stats.CoalescedReads`, `ReplicaReadsServed`, `ReplicaReadsReferred` and
+  `ReplicaReadsFloored`, and their four metric series.
 
 ### Changed
 
 - Tests live in `tests/` and `tests/repo/` instead of the root directory.
+- Concurrent `Get` misses of one key owned elsewhere share one request to its
+  owner instead of sending one each.
 
 ### Removed
 

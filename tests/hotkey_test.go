@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/transport"
 )
 
@@ -201,10 +202,10 @@ func TestALeadersDeadlineIsNotEveryones(t *testing.T) {
 	const key = "hot/deadline"
 	h := newHotKeyFixture(t, key)
 
-	// A real deadline: the fake network honours the caller's context, and
-	// this one only has to expire while the request is held on the fake
-	// clock. Nothing sleeps; the test yields until it has passed.
-	leaderCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	// The request is held for ten milliseconds of fake time and the
+	// leader has one, so its deadline passes while the fetch is in flight.
+	h.f.net.SetDelay(h.reader, h.owner, 10*time.Millisecond)
+	leaderCtx, cancel := clock.WithTimeout(context.Background(), h.f.clk, time.Millisecond)
 	defer cancel()
 	leader := make(chan error, 1)
 	go func() {
@@ -222,6 +223,7 @@ func TestALeadersDeadlineIsNotEveryones(t *testing.T) {
 	}()
 	waitFor(t, "the waiter to join", func() bool { return h.coalesced() == 1 })
 
+	h.f.clk.Advance(time.Millisecond)
 	if err := <-leader; !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("leader returned %v, want its own deadline", err)
 	}

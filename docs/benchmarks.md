@@ -905,6 +905,68 @@ lower because a counter's value is a few digits rather than 64 bytes.
 of the path: the benchmark swaps one key back and forth, so its shard and map
 slot stay hot, where `Set` walks 65,536 keys.
 
+## M13 — hot-key reads
+
+Machine A, `-benchmem -count 5`, medians. The remote benchmarks run on the
+in-process fake network in `tests/`, so a round trip is a few microseconds of
+scheduling rather than a network; their point is the request counts, which do
+not depend on the transport.
+
+### One hot key, every goroutine on one node, L1 disabled
+
+`go test ./tests/ -run '^$' -bench BenchmarkRemoteGetOneHotKey -benchmem -count 5`.
+"Before" is `854a771`, the commit before coalescing, with the same benchmark file
+copied into a worktree.
+
+| | ns/op | rpcs/op | B/op | allocs/op |
+|---|---:|---:|---:|---:|
+| before | 2,495 | **1.000** | 2,904 | 34 |
+| after | 1,683 | **0.181** | 958 | 9 |
+
+`rpcs/op` is requests the owner received per read. Before, every read was one;
+after, concurrent misses share a fetch and it ranged from 0.077 to 0.196 across
+the five runs, depending on how many goroutines overlapped. The acceptance test
+pins the deterministic case: a thousand concurrent misses, one request.
+
+### Cold remote reads, five nodes, RF 3
+
+`go test ./tests/ -run '^$' -bench BenchmarkColdRemoteGet -benchmem -count 5`.
+Every read is of a distinct key owned elsewhere, so every read is an L1 miss.
+Invalidations from the setup writes are drained and the heap collected before
+the timer starts; left in flight they were a tenth of the timed loop's CPU.
+
+| Mode | ns/op | owner RPCs/op | replica RPCs/op | B/op | allocs/op |
+|---|---:|---:|---:|---:|---:|
+| owner only | 10,401 | 1.000 | 0 | 3,540 | 41 |
+| `WithReplicaReads` | 12,789 | **0.333** | 0.501 | 3,889 | 40 |
+
+Two thirds of the reads left the owners: half to another replica, a sixth served
+by the reader's own replica copy with no request at all. Total requests per read
+fell from 1.0 to 0.83.
+
+The first version allocated 58 times per read here, not 40. Profiling put it in
+two calls to `Table.Replicas` per read — one on the reader to pick a holder, one
+on the replica to check it still ranks — each paying a copy of the membership, a
+reflective sort and a clone per member, plus a string concatenation per holder
+in the pick. `Table.Holders` replaced both:
+
+| `internal/ownership` | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `BenchmarkReplicas/nodes=7` | 394 | 600 | 5 |
+| `BenchmarkHolders/nodes=7` | 137 | 0 | 0 |
+| `BenchmarkReplicas/nodes=64` | 13,032 | 3,448 | 5 |
+| `BenchmarkHolders/nodes=64` | 524 | 0 | 0 |
+
+The replica-read path is still about 1.2x the owner path in wall-clock time on
+this transport. It is not CPU in the read path: profiled, the replica leg costs
+about 0.7 µs of CPU per call against the owner leg's 2 µs, and the reader's
+selection is 5% of `fetchHolder`. What remains is scheduling in the in-process
+network, which a real round trip — hundreds of microseconds — makes noise. It is
+recorded rather than explained away; a real-network measurement would settle it.
+
+The write path still ranks replicas with `Table.Replicas` on every write; moving
+it to `Holders` is open question 46.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

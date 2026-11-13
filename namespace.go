@@ -317,7 +317,7 @@ func (n *namespace) sharedFetch(ctx context.Context, p placement, key string) ([
 		res := n.readFlight.Do(ctx, key, func(fetchCtx context.Context) ([]byte, time.Duration, error) {
 			if deadline, ok := ctx.Deadline(); ok {
 				var cancel context.CancelFunc
-				fetchCtx, cancel = context.WithDeadline(fetchCtx, deadline)
+				fetchCtx, cancel = clock.WithDeadline(fetchCtx, n.cache.opts.Clock, deadline)
 				defer cancel()
 			}
 			if n.opts.ReplicaReads {
@@ -403,22 +403,32 @@ func (n *namespace) holderFor(key string) (core.Node, bool) {
 	if n.cache.guard == nil {
 		return core.Node{}, false
 	}
-	holders, _, err := n.cache.guard.Table().Replicas(n.groupKeyFor(key), n.opts.ReplicationFactor)
-	if err != nil || len(holders) == 0 {
+	holders, count, _ := n.cache.guard.Table().Holders(n.groupKeyFor(key), n.opts.ReplicationFactor)
+	if count == 0 {
 		return core.Node{}, false
 	}
-	self := n.cache.self().ID
-	var (
-		best      core.Node
-		bestScore uint64
-	)
-	for i, h := range holders {
-		score := xxhash.Sum64String(self + "\x00" + key + "\x00" + h.ID)
-		if i == 0 || score > bestScore {
-			best, bestScore = h, score
+	// One hash of the key and one of this node, then a mix per holder:
+	// hashing a concatenated string per holder allocated on every miss.
+	base := xxhash.Sum64String(key) ^ (xxhash.Sum64String(n.cache.self().ID) * 0x9E3779B97F4A7C15)
+	best, bestScore := 0, uint64(0)
+	for i := 0; i < count; i++ {
+		if score := fmix64(base ^ xxhash.Sum64String(holders[i].ID)); i == 0 || score > bestScore {
+			best, bestScore = i, score
 		}
 	}
-	return best, true
+	return holders[best], true
+}
+
+// fmix64 is the murmur3 64-bit finalizer: it spreads every input bit over the
+// whole output, so the holder picked for a key does not follow from which IDs
+// happen to hash high.
+func fmix64(x uint64) uint64 {
+	x ^= x >> 33
+	x *= 0xff51afd7ed558ccd
+	x ^= x >> 33
+	x *= 0xc4ceb9fe1a85ec53
+	x ^= x >> 33
+	return x
 }
 
 // replicaCopy returns this node's replica copy of key, decoded, with its age --
@@ -436,14 +446,11 @@ func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age t
 	if n.cache.guard == nil {
 		return nil, core.Stamp{}, 0, false
 	}
-	holders, _, err := n.cache.guard.Table().Replicas(n.groupKeyFor(key), n.opts.ReplicationFactor)
-	if err != nil || len(holders) < 2 {
-		return nil, core.Stamp{}, 0, false
-	}
+	holders, count, _ := n.cache.guard.Table().Holders(n.groupKeyFor(key), n.opts.ReplicationFactor)
 	self := n.cache.self().ID
 	ranked := false
-	for _, h := range holders[1:] {
-		if h.ID == self {
+	for i := 1; i < count; i++ {
+		if holders[i].ID == self {
 			ranked = true
 			break
 		}
@@ -464,7 +471,7 @@ func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age t
 	if age < 0 || age >= n.opts.L1TTL {
 		return nil, core.Stamp{}, 0, false
 	}
-	val, err = n.decode(e.Value)
+	val, err := n.decode(e.Value)
 	if err != nil {
 		return nil, core.Stamp{}, 0, false
 	}

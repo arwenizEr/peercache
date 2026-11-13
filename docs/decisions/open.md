@@ -1449,3 +1449,35 @@ truth and cannot tolerate the loss window M5 measured — or a deployment where
 M9's shedding of owned data, which persistence would turn into a reloadable miss,
 is costing more than a database write per key.
 
+---
+
+## 45. A failed synchronous write skips its invalidation — found in M13, open
+
+`namespace.localSet` stores the value, fans out, and enqueues the invalidation
+only if the fan-out succeeded. A synchronous write that cannot reach a replica
+returns the error with the value already stored on the owner — by design, there
+is no rollback — and no invalidation is sent, so other pods keep their L1 copy
+of the old value until its TTL.
+
+**Why it is survivable:** the TTL bounds it, as it bounds every lost
+invalidation; correctness never depended on one arriving.
+
+**Why it is still wrong:** the write happened. Skipping the hint makes a
+degraded write staler than an asynchronous one, which is backwards. The fix is
+to enqueue the invalidation before returning the fan-out error, in `localSet`,
+the atomic operations and `Delete` alike, with a test that a failed synchronous
+write still invalidates. Found while writing
+`TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded`, which waited for an
+invalidation that never came.
+
+---
+
+## 46. The write path ranks replicas with an allocating sort — found in M13, open
+
+`replicaTargets` calls `Table.Replicas` on every replicated write: a copy of the
+membership, a reflective `sort.Slice` and a clone per member, measured at 394 ns
+and 5 allocations at 7 nodes and 13 µs at 64 (docs/benchmarks.md, M13).
+`Table.Holders`, added for replica reads, gives the same ranking for RF ≤ 3 in
+140 ns and 525 ns with no allocation, and is tested to agree. Moving the write
+path to it is a contained change with a measurable benefit at large
+memberships; it was left out of M13 to keep that milestone to reads.

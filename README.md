@@ -285,7 +285,9 @@ everything else that follows.
   cache's tick.
 - **Reads of non-owned keys may be stale** by up to the configured L1 TTL.
   Invalidation broadcasts are a latency optimisation and may be lost;
-  correctness never depends on one arriving.
+  correctness never depends on one arriving. A namespace opened with
+  `WithReplicaReads` lets replicas answer too, and its reads may be stale by up
+  to the L1 TTL plus the replication delay — measured, not bounded.
 - **Replication survives the loss of RF−1 nodes, and no more.** At RF=3, a
   chaos run of 30 kills and 30 restarts over 60 simulated seconds lost no
   synchronously written key. At RF=2, killing both holders of a key loses it —

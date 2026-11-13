@@ -2359,9 +2359,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-docs/design.md §4 carries ten `**Acceptance:**` blocks, M0 through M6, M9, M10 and M12;
+docs/design.md §4 carries eleven `**Acceptance:**` blocks, M0 through M6, M9, M10, M12 and M13;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to thirty-seven. Each one, and the named test that would fail if it regressed:
+testable claims they come to forty-nine. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2402,8 +2402,20 @@ testable claims they come to thirty-seven. Each one, and the named test that wou
 | M12 | a touched key outlives its original deadline, on its owner and after failover | `TestTouchOutlivesTheOriginalDeadlineAcrossFailover` |
 | M12 | an increment applied before its reply was lost is not applied again | `TestAnIncrementWhoseOwnerFailedAfterApplyingIsNotRetried` |
 | M12 | a local Increment within twice a local Set, measured | `BenchmarkNamespaceIncrement`, recorded in docs/benchmarks.md |
+| M13 | a thousand concurrent reads of one key owned elsewhere cost its owner one RPC | `TestConcurrentRemoteMissesShareOneFetch` |
+| M13 | a caller that quits a shared fetch, or whose deadline ends it, does not fail the others | `TestACancelledWaiterLeavesTheSharedFetch`, `TestALeadersDeadlineIsNotEveryones` |
+| M13 | at RF 3 replica reads spread across every holder and fewer than half reach an owner | `TestReplicaReadsSpreadAcrossHolders` |
+| M13 | a replica copy one TTL old is declined and the owner answers | `TestAReplicaCopyOlderThanTheTTLGoesToTheOwner` |
+| M13 | a node that no longer ranks as a replica refers the read | `TestANodeThatNoLongerRanksRefersTheRead` |
+| M13 | a replica without the key does not produce ErrNotFound | `TestAReplicaWithoutTheKeyIsNotAMiss` |
+| M13 | a peer without ReplicaGet sends the read to the owner | `TestAPeerWithoutReplicaGetFallsBackToTheOwner` |
+| M13 | a replica answer below an invalidation floor is discarded | `TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded` |
+| M13 | a self-replica answers without an RPC | `TestASelfReplicaServesWithoutAnRPC` |
+| M13 | with replication and invalidations lost, every node reads the new value one TTL later, and a replica copy is cached only for what is left of its TTL | `TestADroppedReplicationIsReadAfterOneTTL`, `TestAReplicaCopyIsCachedForWhatIsLeftOfItsTTL` |
+| M13 | replica reads at RF 1 or without an L1 tier are ErrInvalidOption | `TestReplicaReadsNeedReplicasAndAnL1` |
+| M13 | the coalesced and replica-read paths, measured | `BenchmarkRemoteGetOneHotKey`, `BenchmarkColdRemoteGet`, recorded in docs/benchmarks.md |
 
-All forty-one names in the table were verified to exist before it was
+All fifty-four names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

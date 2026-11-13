@@ -93,6 +93,44 @@ func ExampleNamespace_Increment() {
 	// stale swap: false
 }
 
+// ExampleWithReplicaReads shows the two configurations replica reads refuse,
+// and the counters that report them. A replica serves a copy only within the
+// L1 TTL of receiving it, so it needs an L1 tier to bound it and a replica to
+// read from. On one node every key is local and nothing is served by a
+// replica; in a cluster the counters show the owners' share of reads falling.
+func ExampleWithReplicaReads() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	ctx := context.Background()
+
+	alone := cache.Namespace("alone", peercache.WithReplicaReads())
+	_, err = alone.Get(ctx, "k")
+	fmt.Println("RF 1:", errors.Is(err, peercache.ErrInvalidOption))
+
+	noL1 := cache.Namespace("no-l1", peercache.WithReplicaReads(),
+		peercache.WithReplicationFactor(2), peercache.WithL1TTL(-1))
+	_, err = noL1.Get(ctx, "k")
+	fmt.Println("no L1:", errors.Is(err, peercache.ErrInvalidOption))
+
+	hot := cache.Namespace("hot", peercache.WithReplicaReads(),
+		peercache.WithReplicationFactor(3), peercache.WithL1TTL(2*time.Second))
+	_ = hot.Set(ctx, "price:eurusd", []byte("1.0841"), 0)
+	v, _ := hot.Get(ctx, "price:eurusd")
+	fmt.Println("read:", string(v))
+
+	s := cache.Stats()
+	fmt.Println("served by a replica:", s.ReplicaReadsServed, "coalesced:", s.CoalescedReads)
+	// Output:
+	// RF 1: true
+	// no L1: true
+	// read: 1.0841
+	// served by a replica: 0 coalesced: 0
+}
+
 // ExampleWithLoader shows why GetOrLoad has no loader argument. The loader is
 // registered on the namespace, so it exists by name on every pod and the key's
 // owner can run it locally instead of shipping the miss back to the caller.

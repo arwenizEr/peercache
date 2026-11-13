@@ -1,6 +1,6 @@
 # 0028 — Hot-key reads: coalesced misses and opt-in replica reads
 
-**Status:** accepted, not yet built.
+**Status:** accepted, built.
 **Milestone:** M13.
 **Bound by:** design principle 6 (docs/design.md) — a non-owned copy is
 TTL-bounded and version-stamped, and correctness never depends on an
@@ -77,8 +77,12 @@ holders, it reads its own replica store under the rule below, with no RPC.
 A new RPC, `replicaGet`, carrying the reader's epoch. The replica answers with
 the value and stamp only if all of these hold:
 
-- it ranks as a replica for the key under its current table, at an epoch not
-  older than the reader's;
+- it ranks as a replica for the key under its own current table. Not "at an
+  epoch not older than the reader's", as this said when proposed: epochs are
+  per-view and comparing them across nodes was already found to refuse
+  requests between nodes that agree (handler.go, `noteEpoch`). The local
+  ranking is the question that can be answered, as `assertOwned` answers it
+  for owners;
 - it holds a live, unexpired entry for the key;
 - the entry was received less than the namespace's L1 TTL ago, by the
   replica's own clock.
@@ -132,6 +136,17 @@ Docs and README say, for a namespace with replica reads:
 
 That replaces nothing for namespaces without the option. They keep "stale by up
 to the L1 TTL".
+
+### As built
+
+- Holders are found with `Table.Holders`, an allocation-free copy of
+  `Table.Replicas`' ranking added for this path and tested to agree with it at
+  every replication factor. The first version called `Replicas` twice per
+  replica read and allocated 58 times per cold read against the owner path's
+  41; with `Holders` it is 40.
+- A synchronous write that cannot reach a replica returns before it enqueues
+  its invalidation. That predates this decision and is recorded as open
+  question 45; the floor test uses asynchronous replication for that reason.
 
 ## Alternatives rejected
 

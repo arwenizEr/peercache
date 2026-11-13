@@ -516,6 +516,34 @@ promoted after the owner dies; an increment the owner applied before its reply
 was lost is not applied again; a local Increment costs no more than twice a
 local Set, measured.
 
+### M13 — Hot-key reads
+
+Concurrent remote misses of one key on one node share one fetch, always; a
+namespace may opt in to having its keys' replicas answer reads, bounded by the
+L1 TTL. See `decisions/0028-hot-key-reads.md`.
+
+- Remote `Get` misses coalesce under their own single-flight, run under the
+  starting caller's deadline; a waiter whose own context is alive never inherits
+  another's deadline.
+- `WithReplicaReads()` picks one holder per (node, key) by rendezvous hash. A
+  replica serves only a copy younger than the L1 TTL, only while it ranks as a
+  replica under its own view, and never reports a key absent; the reader caches
+  the copy for what is left of the TTL.
+- In those namespaces an invalidation leaves an L1 floor rather than deleting,
+  so a replica behind the write cannot refill the old value.
+
+**Acceptance:** a thousand concurrent reads of one key owned elsewhere cost its
+owner one RPC; a caller that quits a shared fetch, or whose deadline ends it,
+does not fail the others; with replica reads at RF 3 reads spread across every
+holder and fewer than half reach an owner; a replica copy one TTL old, a replica
+that no longer ranks, a replica without the key and a peer without the method
+all send the read to the owner, and none produces ErrNotFound; a replica answer
+below an invalidation floor is discarded; a self-replica answers without an RPC;
+a write whose replication and invalidations are all lost is read everywhere
+once one TTL has passed, and a replica copy is cached only for what is left of
+its TTL; replica reads at RF 1 or without an L1 tier are ErrInvalidOption; the
+coalesced and replica-read paths are benchmarked.
+
 ---
 
 ## 5. Deliberately deferred
@@ -549,5 +577,7 @@ It is the most useful documentation in the project.
   docs/benchmarks.md). A write acknowledged in that window exists on one node
   only. Synchronous replication closes it entirely, at the cost of bounding a
   group's write rate by its slowest replica.
-- Reads of non-owned keys may be stale by up to the configured L1 TTL.
+- Reads of non-owned keys may be stale by up to the configured L1 TTL. In a
+  namespace with replica reads, by up to the L1 TTL plus the replication delay,
+  which is measured, not bounded.
 - Throughput degrades to single-pod capacity for a single hot group.
