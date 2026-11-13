@@ -273,8 +273,8 @@ mutate "TTL deadline overflow reintroduced" \
 # would otherwise retire coverage while the total kept looking healthy.
 mutate "L1 accepts an older version" \
   internal/l1/l1.go \
-  'if live && !stamp.NewerThan(existing.stamp) {' \
-  'if false {' \
+  '		stale := !stamp.NewerThan(existing.stamp)' \
+  '		stale := false' \
   'TestOlderVersionIsRejected' ./internal/l1/
 
 mutate "L1 stops clamping TTL to MaxTTL" \
@@ -607,8 +607,8 @@ mutate "a length prefix buys an allocation" \
 
 mutate "the L1 tier compares versions, ignoring the epoch" \
   internal/l1/l1.go \
-  'if live && !stamp.NewerThan(existing.stamp) {' \
-  'if live && stamp.Version <= existing.stamp.Version {' \
+  '		stale := !stamp.NewerThan(existing.stamp)' \
+  '		stale := stamp.Version <= existing.stamp.Version' \
   'TestANewOwnerSupersedesAHigherVersion' ./internal/l1/
 
 mutate "invalidation compares versions, ignoring the epoch" \
@@ -1462,8 +1462,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '46 series come out of it' \
-  '45 series come out of it' \
+  '50 series come out of it' \
+  '49 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
