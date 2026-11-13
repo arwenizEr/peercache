@@ -297,21 +297,34 @@ func TestReschedulingATimerReplacesIt(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	pending := 0
+	// Replacing a timer stops the old one. The in-turn identity check would
+	// also stop a stale one from running, so the fire count below cannot
+	// tell the two apart; the clock can. A replaced timer left armed is a
+	// timer per reschedule held until it comes due: five schedules, four
+	// more timers.
+	//
+	// One reading is not exact. After a turn the run loop rearms its idle
+	// timer — Stop, then Reset — and the caller's reply is sent before that,
+	// so a reading can land between the two and count one timer fewer. The
+	// previous version compared single readings and failed on exactly that,
+	// about once per full race gate. The spread across all five readings
+	// tells the cases apart: at most one for that race, four for a leak.
+	low, high := -1, -1
 	for i := 0; i < 5; i++ {
 		if _, err := rt.Call(context.Background(), "g", "schedule", nil); err != nil {
 			t.Fatalf("Call: %v", err)
 		}
-		// Replacing a timer stops the old one. The in-turn identity check
-		// would also stop a stale one from running, so the fire count below
-		// cannot tell the two apart; the clock can. A replaced timer left
-		// armed is a timer per reschedule held until it comes due.
-		if i == 0 {
-			pending = fc.Pending()
-		} else if got := fc.Pending(); got != pending {
-			t.Fatalf("after %d schedules of one name the clock holds %d timers, "+
-				"after one it held %d; a replaced timer was left armed", i+1, got, pending)
+		got := fc.Pending()
+		if low < 0 || got < low {
+			low = got
 		}
+		if got > high {
+			high = got
+		}
+	}
+	if high-low > 1 {
+		t.Fatalf("over 5 schedules of one name the clock held between %d and %d timers; "+
+			"a replaced timer was left armed", low, high)
 	}
 
 	fc.Advance(2 * time.Minute)
