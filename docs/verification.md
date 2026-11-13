@@ -2401,7 +2401,7 @@ level up.
 
 docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to fifty-nine. Each one, and the named test that would fail if it regressed:
+testable claims they come to sixty-two. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2464,8 +2464,11 @@ testable claims they come to fifty-nine. Each one, and the named test that would
 | M14 | `persist.Dir` meets the blob-store contract and writes data, renames, then syncs the directory | `TestDirMeetsTheContract`, `TestPutIsWriteSyncRenameSyncDir` |
 | M14 | a Dir Put interrupted at any step leaves a whole object; a crash's leftovers are invisible and cleaned up | `TestAnInterruptedPutLeavesTheOldObjectOrTheNew`, `TestACrashsLeftoversAreInvisibleAndCleanedUp` |
 | M14 | the loss window on `persist.Dir`, measured | `BenchmarkPersistLossWindow`, `BenchmarkPersistFlushSpread`, `BenchmarkDirPut`, recorded in docs/benchmarks.md |
+| M14 | one flush is one object; a split moves every log into partition segments and deletes the logs | `TestAFlushWritesOneObject`, `TestASplitMovesLogsIntoPartitions` |
+| M14 | a split that fails part-way loses nothing and the next one completes it | `TestAFailedSplitLosesNothing` |
+| M14 | the flush interval is a namespace option; a non-positive one is refused | `TestWithFlushIntervalSetsTheCadence`, `TestANonPositiveFlushIntervalIsRefused` |
 
-All sixty-seven names in the table were verified to exist before it was
+All seventy-two names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

@@ -1031,6 +1031,14 @@ at a time it took 40–600 ms; with the partition count cut to 64, about **5 ms*
 as much). Both changes are in M14c, and open question 48 records what the same
 arithmetic costs on an object store.
 
+**Then decision 0030 made a flush one object.** The same benchmarks after it:
+`BenchmarkPersistFlushSpread` is one tick plus one durable write — about
+100 ms of waiting for the tick and ~3 ms of writing, whatever the partitions —
+and the loss window is p50 93 ms, p99 104–107 ms, max 107 ms (50 iterations, three
+runs). Objects per flush are counted rather than benchmarked:
+`TestAFlushWritesOneObject` makes one request for 1,000 keys over every
+partition, where before 0030 the same flush made 64.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

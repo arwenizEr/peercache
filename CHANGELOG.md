@@ -28,6 +28,9 @@ change the public API.
 - `persist.Dir`, a durable file-system backend: temporary file, fsync, rename,
   directory fsync; crash leftovers cleaned on open; names encoded so any
   namespace is a legal file name on every platform.
+- `persist.WithFlushInterval`, and one object per flush: a flush writes a single
+  log object, which a per-namespace splitter moves into partition segments
+  (decision 0030). `PersistSplits` and `PersistSplitFailures`.
 
 ### Changed
 

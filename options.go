@@ -323,9 +323,11 @@ func WithReplicaReads() NamespaceOption {
 // WithPersistence makes the namespace persistent: its owners write every change
 // behind to store, so that keys survive the loss of every node holding them.
 //
-// Writes are recorded in memory and flushed every 100 ms as immutable segment
-// objects, one per partition touched; a write is acknowledged before its flush,
-// so a crash loses at most the last flush interval. A node that comes to own
+// Writes are recorded in memory and flushed every 100 ms — or as set by
+// persist.WithFlushInterval — as one immutable log object per flush, which a
+// background splitter later moves into per-partition segments (decision 0030).
+// A write is acknowledged before its flush, so a crash loses at most the last
+// flush interval. A node that comes to own
 // keys it does not hold — at start, or because every holder of them died —
 // restores them from store on first access, keeping whichever of memory and
 // storage is newer. Each partition's compactor folds its segments into
@@ -341,8 +343,15 @@ func WithReplicaReads() NamespaceOption {
 // store must be the same on every node. persist.Memory is for tests; real
 // backends live in package persist and in separate modules. See
 // docs/decisions/0029-persistence-as-a-segment-log.md.
-func WithPersistence(store persist.BlobStore) NamespaceOption {
-	return func(o *core.NamespaceOptions) { o.Persistence = store }
+func WithPersistence(store persist.BlobStore, opts ...persist.Option) NamespaceOption {
+	var cfg persist.Config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return func(o *core.NamespaceOptions) {
+		o.Persistence = store
+		o.PersistFlushInterval = cfg.FlushInterval
+	}
 }
 
 // WithCodec names the registered codec used for typed values.

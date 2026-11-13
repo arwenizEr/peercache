@@ -188,6 +188,9 @@ type NamespaceOptions struct {
 	// ordered by the cache's hybrid logical clock and written behind to this
 	// store. See docs/decisions/0029-persistence-as-a-segment-log.md.
 	Persistence BlobStore
+	// PersistFlushInterval is how often a persistent namespace flushes.
+	// Zero means the default; negative is refused.
+	PersistFlushInterval time.Duration
 }
 
 // BlobStore is where a persistent namespace keeps its segments and snapshots.
@@ -269,6 +272,9 @@ func (o *NamespaceOptions) Validate() error {
 	if o.ReplicaReads && o.L1TTL < 0 {
 		return fmt.Errorf("peercache: replica reads are bounded by the L1 TTL, and this namespace "+
 			"disables the L1 tier: %w", ErrInvalidOption)
+	}
+	if o.PersistFlushInterval < 0 {
+		return fmt.Errorf("peercache: a persistence flush interval must be positive: %w", ErrInvalidOption)
 	}
 	if o.Shards < 0 {
 		return fmt.Errorf("peercache: shard count %d must not be negative: %w", o.Shards, ErrInvalidOption)
