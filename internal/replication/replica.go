@@ -287,6 +287,21 @@ func (s *Store) Namespaces() []string {
 // a copy in behind the drain and leave it stranded in the replica store after
 // this node has taken ownership.
 func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]Entry {
+	return s.DrainUpTo(namespace, -1, keep)
+}
+
+// DrainUpTo is [Store.Drain] that stops after max entries; a negative max is
+// no limit, and zero takes nothing.
+//
+// It exists for a consumer with bounded room. Hand-off can queue only so many
+// orphans; draining the rest only to put them back, as reconciliation once
+// did, cycled every orphan beyond the queue through the store once a second —
+// 10.5 million returns on one kind pod to rehome 97,000. What is not taken
+// stays where it is, untouched, for the next round.
+func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool) map[string]Entry {
+	if max == 0 {
+		return nil
+	}
 	s.mu.RLock()
 	nr, ok := s.ns[namespace]
 	s.mu.RUnlock()
@@ -299,6 +314,9 @@ func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]E
 
 	var taken map[string]Entry
 	for key, e := range nr.entries {
+		if max > 0 && len(taken) >= max {
+			break
+		}
 		if !keep(key) {
 			continue
 		}

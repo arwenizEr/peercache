@@ -198,7 +198,11 @@ func (p *promoter) reconcile() {
 			continue
 		}
 
-		orphans := c.replicas.Drain(name, func(key string) bool {
+		// No more than the hand-off queue can take. The rest wait here, as
+		// replicas this node no longer ranks for, until a later round has
+		// room; a full queue is no reason to drain them only to put them
+		// back. The queue's bound is what paces a large rebalance.
+		orphans := c.replicas.DrainUpTo(name, c.handoff.room(), func(key string) bool {
 			return !c.stillReplicaFor(ns.groupKeyFor(key), rf, self)
 		})
 		for key, e := range orphans {

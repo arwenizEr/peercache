@@ -78,6 +78,12 @@ change the public API.
 
 ### Fixed
 
+- A rebalance with more displaced replicas than the hand-off queue holds no
+  longer cycles the excess through the replica store every second. Each round
+  drained every orphan, queued 4,096 and put the rest back; after one rolling
+  restart on kind, one pod put 10.5 million copies back to rehome 97,000, at a
+  core and a quarter. A round now takes only what the queue has room for. Found
+  by M16.
 - `docs/api.md` told a restarted node to call `CatchUp` "after the readiness
   gate", but `Ready()` stays false until `CatchUp` has run, so an application
   following it never became ready. The order is join, settle, `CatchUp`, ready.
