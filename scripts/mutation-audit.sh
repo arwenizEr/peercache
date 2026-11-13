@@ -2272,6 +2272,32 @@ mutate "a pending record is never replaced by a newer write" \
 			// An older write recorded late' \
   'TestAHotKeyCoalescesToOneRecord$' ./tests
 
+# --- OpenTelemetry bridge, a nested module (decision 0032, M15b) ---
+
+mutate "otel registers counters as gauges" \
+  otel/otel.go \
+  '		case peercache.CounterMetric:
+			c, err := meter.Float64ObservableCounter(' \
+  '		case -1:
+			c, err := meter.Float64ObservableCounter(' \
+  'TestEverySeriesIsBridged$' otel::./
+
+mutate "otel keeps a counter's _total" \
+  otel/otel.go \
+  '		return strings.TrimSuffix(m.Name, "_total")' \
+  '		return m.Name' \
+  'TestCounterNamesDropTheirTotal$' otel::./
+
+mutate "otel observes without the node attribute" \
+  otel/otel.go \
+  '				o.ObserveFloat64(c, m.Value, node)
+			} else if g, ok := gauges[m.Name]; ok {
+				o.ObserveFloat64(g, m.Value, node)' \
+  '				o.ObserveFloat64(c, m.Value)
+			} else if g, ok := gauges[m.Name]; ok {
+				o.ObserveFloat64(g, m.Value)' \
+  'TestEverySeriesIsBridged$' otel::./
+
 # --- persist/s3, a nested module (decision 0029, M14d) ---
 
 mutate "persist/s3 reads every API error as not found" \
