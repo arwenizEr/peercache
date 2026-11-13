@@ -1571,3 +1571,43 @@ option. Measured: a thousand keys over every partition flush as one request
 (`TestAFlushWritesOneObject`); a split writes at most one segment per partition
 (`TestASplitMovesLogsIntoPartitions`).
 
+## 49. A node restarted faster than failure detection — found in M16
+
+**Found** by M16's kill -9 on kind. A SIGKILLed pod was back in two seconds,
+same name, same address; the failure detector never fired, so no peer's epoch
+moved and nothing was promoted. The restarted owner came back empty to keys it
+still owned, and `CatchUp` asked each peer only for the keys *that peer* owns.
+The copies of the restarted node's own keys sat in its peers' replica stores,
+unasked for. 60 acknowledged orders were missing or older after the run, at
+synchronous RF 3 with persistence — and without persistence it would have been
+every key the node owned.
+
+**Resolved, part one:** catch-up now makes a second pass per peer for its
+replica copies of keys the asker owns (`CatchUpRequest.Replicas`). They arrive
+through the replica store's stamp check and are promoted by the ordinary
+reconciliation, which refuses anything older than what the node already holds
+— so a value restored from persistence, or written since the restart, is not
+overwritten by an older copy. `TestANodeRestartedFasterThanDetectionRecoversWhatItOwns`.
+
+**Open, part two: the window before catch-up.** Between the restart and the end
+of its first catch-up, the node owns its keys and its peers route to it — the
+readiness gate keeps *clients* away, not peers forwarding writes. A write in
+that window lands on an empty or persisted-but-stale base: an `Increment` counts
+from the wrong value, a `SetIfAbsent` of an existing key succeeds again. And a
+version restarted from the store's floor can be older than the replica copy
+catch-up then brings, so promotion discards the acknowledged write instead.
+
+Options:
+
+1. **Refuse owner operations until the first catch-up completes**, with
+   `ErrActivationPending`, which every caller already retries. Correct, and the
+   readiness gate already waits for the same event; but a node whose
+   application never calls `CatchUp` would refuse its keys forever.
+2. **Make the restart visible**: a per-process boot ID in gossip metadata, so a
+   peer that sees the same name with a new boot ID treats it as a departure and
+   an arrival — epochs move, the activation delay applies, promotion runs.
+3. **Seed versions from the replicas** on first touch. Fixes ordering, not the
+   stale base.
+
+Leaning towards 1, measured before deciding: M16's next kill -9 run says how
+often the window is hit under load.

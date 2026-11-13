@@ -323,6 +323,8 @@ message CatchUpRequest {
   // an unbounded message.
   string after = 4;
   int32 limit = 5;
+  // Ask for the sender's replica copies of keys the requester owns.
+  bool replicas = 6;
 }
 
 message CatchUpResponse {

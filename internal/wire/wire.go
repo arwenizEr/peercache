@@ -303,6 +303,13 @@ type CatchUpRequest struct {
 	// which is the shape of every out-of-memory bug in this file's history.
 	After string `msgpack:"after"`
 	Limit int    `msgpack:"limit"`
+	// Replicas asks for the sender's *replica* copies of keys the asker
+	// owns, instead of the keys the sender owns. A node restarted faster
+	// than failure detection was never declared dead, so nobody was promoted
+	// in its place, and the newest copies of what it owns are replicas on its
+	// peers. A sender on an earlier release ignores the field and answers
+	// with its owned keys again, which the stamp check makes harmless.
+	Replicas bool `msgpack:"replicas"`
 }
 
 // CatchUpResponse carries one page of keys.

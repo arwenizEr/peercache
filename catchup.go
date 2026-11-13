@@ -164,6 +164,19 @@ func (cu *catchUp) run(ctx context.Context) error {
 
 // fromPeer pages one namespace's replicas out of one owner.
 func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) error {
+	if err := cu.pages(ctx, ns, peer, false); err != nil {
+		return err
+	}
+	// And the copies the peer holds, as a replica, of what this node owns.
+	// After a restart faster than failure detection nobody was promoted in
+	// this node's place, so those copies are the newest there are; without
+	// this pass a restarted owner recovered every key it replicates and none
+	// of the keys it owns. Found by M16's kill -9 on kind.
+	return cu.pages(ctx, ns, peer, true)
+}
+
+// pages pulls one kind of catch-up page from one peer until it is exhausted.
+func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, replicas bool) error {
 	c := cu.cache
 	after := ""
 
@@ -182,6 +195,7 @@ func (cu *catchUp) fromPeer(ctx context.Context, ns *namespace, peer core.Node) 
 			ReplicationFactor: ns.opts.ReplicationFactor,
 			After:             after,
 			Limit:             catchUpPageSize,
+			Replicas:          replicas,
 		}, &resp)
 		if err != nil {
 			return err
