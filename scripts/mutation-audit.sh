@@ -1462,8 +1462,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '56 series come out of it' \
-  '55 series come out of it' \
+  '58 series come out of it' \
+  '57 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -2104,6 +2104,36 @@ mutate "a shed persistent key is not marked for restore" \
 				}' \
   '				_ = key' \
   'TestAShedKeyIsRestoredNotLost$' ./tests
+
+# --- persistence: compaction (decision 0029) ---
+
+mutate "a restore reads only one snapshot" \
+  persistence.go \
+  '		if !strings.HasPrefix(name[len(prefix):], "snap-") {
+			continue
+		}' \
+  '		if !strings.HasPrefix(name[len(prefix):], "snap-") || len(sc.merged) > 0 {
+			continue
+		}' \
+  'TestARestoreMergesEverySnapshot$' ./tests
+
+mutate "compaction deletes segments its snapshot failed to cover" \
+  persistence.go \
+  '	if err := p.store.Put(ctx, name, snap); err != nil {' \
+  '	if err := p.store.Put(ctx, name, snap); false && err != nil {' \
+  'TestAFailedSnapshotDeletesNothing$' ./tests
+
+mutate "compaction drops tombstones inside their grace" \
+  persistence.go \
+  '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
+  '		if r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt) {' \
+  'TestATombstoneIsKeptForItsGrace$' ./tests
+
+mutate "compaction keeps tombstones forever" \
+  persistence.go \
+  '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
+  '		if false {' \
+  'TestATombstoneIsKeptForItsGrace$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

@@ -662,13 +662,15 @@ func (c *cache) Stats() Stats {
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
 		if ns.persister != nil {
-			pending, flushes, written, failures, restored, restoreFailures := ns.persister.counters()
-			stats.PersistPending += int64(pending)
-			stats.PersistFlushes += flushes
-			stats.PersistRecordsWritten += written
-			stats.PersistFailures += failures
-			stats.PersistRestored += restored
-			stats.PersistRestoreFailures += restoreFailures
+			pc := ns.persister.counters()
+			stats.PersistPending += int64(pc.pending)
+			stats.PersistFlushes += pc.flushes
+			stats.PersistRecordsWritten += pc.written
+			stats.PersistFailures += pc.failures
+			stats.PersistRestored += pc.restored
+			stats.PersistRestoreFailures += pc.restoreFailures
+			stats.PersistCompactions += pc.compactions
+			stats.PersistCompactFailures += pc.compactFailures
 		}
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())

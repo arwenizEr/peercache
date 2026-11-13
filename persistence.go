@@ -16,6 +16,7 @@ import (
 
 	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/segment"
 )
 
@@ -31,6 +32,18 @@ const (
 	// persistFlushBytes flushes early when this much is pending, so one
 	// burst cannot build an unbounded segment.
 	persistFlushBytes = 1 << 20
+	// persistCompactInterval is how often a node looks at the partitions
+	// it compacts.
+	persistCompactInterval = time.Minute
+	// persistCompactAfter is how many uncovered segments a partition
+	// collects before it is compacted: few enough that a restore reads a
+	// handful of objects, many enough that compaction is not a rewrite of
+	// the partition per flush.
+	persistCompactAfter = 8
+	// persistTombstoneGrace is how long a deletion is kept after it was
+	// written. A segment from a slow writer can arrive late with an older
+	// write of the key; while the tombstone is kept it still wins.
+	persistTombstoneGrace = time.Hour
 	// persistFlushTimeout bounds one flush. A store that does not answer
 	// must not hold the flusher, and the records stay pending for the next.
 	persistFlushTimeout = 10 * time.Second
@@ -79,6 +92,9 @@ type persister struct {
 	written  atomic.Int64
 	failures atomic.Int64
 
+	compactions     atomic.Int64
+	compactFailures atomic.Int64
+
 	// rmu guards parts, the per-partition restore state.
 	rmu             sync.Mutex
 	parts           [persistPartitions]partitionState
@@ -101,8 +117,9 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 	// scheduled, and the first flush then comes an interval late — on the
 	// fake clock, never.
 	ticker := p.clk.NewTicker(persistFlushInterval)
+	compact := p.clk.NewTicker(persistCompactInterval)
 	p.wg.Add(1)
-	go p.run(ticker)
+	go p.run(ticker, compact)
 	return p
 }
 
@@ -173,15 +190,21 @@ func recordSize(r *segment.Record) int {
 	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + 32
 }
 
-func (p *persister) run(ticker clock.Ticker) {
+func (p *persister) run(ticker, compact clock.Ticker) {
 	defer p.wg.Done()
 	defer ticker.Stop()
+	defer compact.Stop()
 	for {
 		select {
 		case <-p.done:
 			return
 		case <-ticker.C():
 		case <-p.kick:
+		case <-compact.C():
+			ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+			p.compactOwned(ctx)
+			cancel()
+			continue
 		}
 		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
 		_ = p.flush(ctx)
@@ -257,14 +280,23 @@ func (p *persister) Close(ctx context.Context) error {
 	return p.flush(ctx)
 }
 
-// counters reports pending keys, flushes, records written, failed segments,
-// keys restored and failed restores.
-func (p *persister) counters() (pending int, flushes, written, failures, restored, restoreFailures int64) {
+// persistCounters is what a persister reports for Stats.
+type persistCounters struct {
+	pending                      int
+	flushes, written, failures   int64
+	restored, restoreFailures    int64
+	compactions, compactFailures int64
+}
+
+func (p *persister) counters() persistCounters {
 	p.mu.Lock()
-	pending = len(p.pending)
+	pending := len(p.pending)
 	p.mu.Unlock()
-	return pending, p.flushes.Load(), p.written.Load(), p.failures.Load(),
-		p.restored.Load(), p.restoreFailures.Load()
+	return persistCounters{
+		pending: pending, flushes: p.flushes.Load(), written: p.written.Load(), failures: p.failures.Load(),
+		restored: p.restored.Load(), restoreFailures: p.restoreFailures.Load(),
+		compactions: p.compactions.Load(), compactFailures: p.compactFailures.Load(),
+	}
 }
 
 // persistPartition is the partition a group key's records live in.
@@ -416,31 +448,54 @@ func (p *persister) restore(ctx context.Context, part int) error {
 
 // read collects the newest record per key under prefix.
 func (p *persister) read(ctx context.Context, prefix string) (map[string]*segment.Record, error) {
+	sc, err := p.scan(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	return sc.newest, nil
+}
+
+// scanned is one partition as a reader found it.
+type scanned struct {
+	newest map[string]*segment.Record
+	// merged names every object whose records are in newest, snapshots and
+	// segments alike: what a snapshot made from newest covers.
+	merged []string
+	// segments counts the segments not covered by any snapshot.
+	segments int
+}
+
+// scan reads every snapshot under prefix and every segment none of them
+// names, keeping the newest record per key.
+//
+// Every snapshot, not only the newest. Two compactors at once — a partition,
+// decision 5 — each write one and each delete only the segments their own
+// covers, so a record can survive in an older snapshot alone. The union is
+// always right: records merge as a last-writer-wins map, and a segment is
+// deleted only after a snapshot covering it is durable.
+func (p *persister) scan(ctx context.Context, prefix string) (*scanned, error) {
 	names, err := p.store.List(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
 	}
-	var snapshot string
-	for _, name := range names {
-		if strings.HasPrefix(name[len(prefix):], "snap-") {
-			snapshot = name // names sort by their order, so the last is newest
-		}
-	}
-	newest := map[string]*segment.Record{}
+	sc := &scanned{newest: map[string]*segment.Record{}}
 	merge := func(f *segment.File) {
 		for i := range f.Records {
 			r := &f.Records[i]
 			if r.Namespace != p.ns.name {
 				continue
 			}
-			if cur, ok := newest[r.Key]; !ok || r.Newer(cur) {
-				newest[r.Key] = r
+			if cur, ok := sc.newest[r.Key]; !ok || r.Newer(cur) {
+				sc.newest[r.Key] = r
 			}
 		}
 	}
 	covered := map[string]bool{}
-	if snapshot != "" {
-		f, err := p.load(ctx, snapshot)
+	for _, name := range names {
+		if !strings.HasPrefix(name[len(prefix):], "snap-") {
+			continue
+		}
+		f, err := p.load(ctx, name)
 		if err != nil {
 			return nil, err
 		}
@@ -448,9 +503,10 @@ func (p *persister) read(ctx context.Context, prefix string) (map[string]*segmen
 			covered[c] = true
 		}
 		merge(f)
+		sc.merged = append(sc.merged, name)
 	}
 	for _, name := range names {
-		if name == snapshot || covered[name] || !strings.HasPrefix(name[len(prefix):], "seg-") {
+		if covered[name] || !strings.HasPrefix(name[len(prefix):], "seg-") {
 			continue
 		}
 		f, err := p.load(ctx, name)
@@ -458,8 +514,10 @@ func (p *persister) read(ctx context.Context, prefix string) (map[string]*segmen
 			return nil, err
 		}
 		merge(f)
+		sc.merged = append(sc.merged, name)
+		sc.segments++
 	}
-	return newest, nil
+	return sc, nil
 }
 
 func (p *persister) load(ctx context.Context, name string) (*segment.File, error) {
@@ -550,5 +608,89 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	if r != nil {
 		p.apply(map[string]*segment.Record{key: r})
 	}
+	return nil
+}
+
+// compactOwned compacts every partition this node is the compactor for that
+// has collected enough segments.
+func (p *persister) compactOwned(ctx context.Context) {
+	for part := 0; part < persistPartitions; part++ {
+		if ctx.Err() != nil {
+			return
+		}
+		if !p.compactsPartition(part) {
+			continue
+		}
+		if err := p.compact(ctx, part, persistCompactAfter); err != nil {
+			p.compactFailures.Add(1)
+		}
+	}
+}
+
+// compactsPartition reports whether this node is part's compactor: the
+// rendezvous owner of a synthetic group key, so every node agrees without
+// asking and the work spreads across the cluster.
+func (p *persister) compactsPartition(part int) bool {
+	c := p.ns.cache
+	if c.guard == nil {
+		return true
+	}
+	key := fmt.Sprintf("persist/%s/%d", p.ns.name, part)
+	owner, _, err := c.guard.Table().Owner(key)
+	return err == nil && owner.ID == c.self().ID
+}
+
+// compact folds part's snapshots and segments into one snapshot when at
+// least threshold segments are uncovered, then deletes what it folded.
+func (p *persister) compact(ctx context.Context, part, threshold int) error {
+	prefix := partitionPrefix(p.ns.name, part)
+	sc, err := p.scan(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	if sc.segments < threshold {
+		return nil
+	}
+
+	cutoff := uint64(hlc.FromMillis(p.clk.Now().Add(-persistTombstoneGrace).UnixMilli()))
+	now := p.clk.Now().UnixNano()
+	keys := make([]string, 0, len(sc.newest))
+	for key := range sc.newest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	records := make([]segment.Record, 0, len(keys))
+	var maxOrder uint64
+	for _, key := range keys {
+		r := sc.newest[key]
+		if r.Order > maxOrder {
+			maxOrder = r.Order
+		}
+		// Past the grace a deletion has done its work: every segment old
+		// enough to hold an older write of the key has been folded. A value
+		// that expired that long ago is as dead as a tombstone.
+		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {
+			continue
+		}
+		records = append(records, *r)
+	}
+
+	name := fmt.Sprintf("%ssnap-%016x-%s.bin", prefix, maxOrder, hex.EncodeToString([]byte(p.ns.cache.self().ID)))
+	snap := segment.Encode(&segment.File{Kind: segment.KindSnapshot, Covered: sc.merged, Records: records})
+	if err := p.store.Put(ctx, name, snap); err != nil {
+		return fmt.Errorf("peercache: writing %s: %w", name, err)
+	}
+	// Only now, with the snapshot durable, is anything it covers deleted.
+	for _, covered := range sc.merged {
+		if covered == name {
+			continue
+		}
+		if err := p.store.Delete(ctx, covered); err != nil {
+			// Left behind, it is merged again and harmlessly; the next
+			// compaction covers it.
+			return fmt.Errorf("peercache: deleting %s: %w", covered, err)
+		}
+	}
+	p.compactions.Add(1)
 	return nil
 }

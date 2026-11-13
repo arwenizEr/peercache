@@ -78,6 +78,11 @@ type Stats struct {
 	// served from memory alone until a retry succeeds.
 	PersistRestored        int64
 	PersistRestoreFailures int64
+	// PersistCompactions counts partitions folded into a snapshot by this
+	// node as their compactor, and PersistCompactFailures compactions that
+	// could not finish; their objects are folded by the next one.
+	PersistCompactions     int64
+	PersistCompactFailures int64
 
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the
