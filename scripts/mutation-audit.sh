@@ -1462,8 +1462,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '54 series come out of it' \
-  '53 series come out of it' \
+  '56 series come out of it' \
+  '55 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -2008,6 +2008,68 @@ mutate "Close does not flush persistent namespaces" \
   '				if err := ns.persister.Close(ctx); err != nil {' \
   '				if err := error(nil); err != nil {' \
   'TestCloseFlushesWhatIsPending$' ./tests
+
+# --- persistence: restore (decision 0029) ---
+
+mutate "a restore keeps the first record it reads" \
+  persistence.go \
+  '			if cur, ok := newest[r.Key]; !ok || r.Newer(cur) {' \
+  '			if _, ok := newest[r.Key]; !ok {' \
+  'TestAColdStartRestoresWhatWasFlushed$' ./tests
+
+mutate "a restore brings back expired keys" \
+  persistence.go \
+  '		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {' \
+  '		if false {' \
+  'TestAColdStartRestoresWhatWasFlushed$' ./tests
+
+mutate "a restore does not advance the clock" \
+  persistence.go \
+  '	c.observeOrder(maxOrder)' \
+  '	_ = c' \
+  'TestARestoredKeysNextWriteOutranksItsHistory$' ./tests
+
+mutate "a delete runs ahead of the restore" \
+  namespace.go \
+  'func (n *namespace) localDelete(ctx context.Context, key string) error {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}' \
+  'func (n *namespace) localDelete(ctx context.Context, key string) error {' \
+  'TestAWriteBeforeTheFirstReadStillRestoresFirst$' ./tests
+
+mutate "a restore skips a corrupt segment" \
+  persistence.go \
+  '		f, err := p.load(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		merge(f)' \
+  '		f, err := p.load(ctx, name)
+		if err != nil {
+			continue
+		}
+		merge(f)' \
+  'TestACorruptSegmentFailsTheRestore$' ./tests
+
+mutate "a failed restore is never retried" \
+  persistence.go \
+  '		st.failedAt = 0
+' \
+  '' \
+  'TestAnUnavailableStoreDegradesToMemory$' ./tests
+
+mutate "a restore replaces newer memory" \
+  internal/store/store.go \
+  '	if live && old.order >= order {
+		return false
+	}
+	if tombstone {' \
+  '	if false {
+		return false
+	}
+	if tombstone {' \
+  'TestMergeIfNewerKeepsWhateverIsNewer$' ./internal/store/
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

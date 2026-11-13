@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,6 +72,12 @@ type persister struct {
 	flushes  atomic.Int64
 	written  atomic.Int64
 	failures atomic.Int64
+
+	// rmu guards parts, the per-partition restore state.
+	rmu             sync.Mutex
+	parts           [persistPartitions]partitionState
+	restored        atomic.Int64
+	restoreFailures atomic.Int64
 }
 
 func newPersister(ns *namespace, store core.BlobStore) *persister {
@@ -218,12 +225,14 @@ func (p *persister) Close(ctx context.Context) error {
 	return p.flush(ctx)
 }
 
-// counters reports pending keys, flushes, records written and failed segments.
-func (p *persister) counters() (pending int, flushes, written, failures int64) {
+// counters reports pending keys, flushes, records written, failed segments,
+// keys restored and failed restores.
+func (p *persister) counters() (pending int, flushes, written, failures, restored, restoreFailures int64) {
 	p.mu.Lock()
 	pending = len(p.pending)
 	p.mu.Unlock()
-	return pending, p.flushes.Load(), p.written.Load(), p.failures.Load()
+	return pending, p.flushes.Load(), p.written.Load(), p.failures.Load(),
+		p.restored.Load(), p.restoreFailures.Load()
 }
 
 // persistPartition is the partition a group key's records live in.
@@ -243,4 +252,205 @@ func partitionPrefix(namespace string, part int) string {
 // writer never share a largest order, because a writer's orders never repeat.
 func segmentName(namespace string, part int, maxOrder uint64, writer string) string {
 	return fmt.Sprintf("%sseg-%016x-%s.bin", partitionPrefix(namespace, part), maxOrder, hex.EncodeToString([]byte(writer)))
+}
+
+// restoreRetry is how long after a failed restore a partition is tried again.
+// Until then its keys are served from memory alone, degraded rather than
+// unavailable: decision 0029 keeps a store outage from taking the namespace
+// down with it.
+const restoreRetry = time.Second
+
+// partitionState tracks one partition's restore on this node.
+type partitionState struct {
+	// restored is the restore generation, plus one, this partition was last
+	// restored at; zero means never.
+	restored uint64
+	// running is closed when the restore in flight finishes.
+	running chan struct{}
+	// failedAt is when the last restore failed, in Unix nanoseconds.
+	failedAt int64
+}
+
+// await blocks until the partition holding key has been restored since the
+// last membership change, or ctx ends.
+//
+// # Why every local access waits, writes included
+//
+// A restore merges storage into memory, newest wins. A read that ran ahead of
+// it would report a key missing that the restore was about to bring back, and a
+// delete that ran ahead of it would be undone by the older stored value. So
+// reads and writes of a key wait for its partition, and the first one starts
+// the restore. A namespace that is never touched after a membership change is
+// never re-read.
+func (p *persister) await(ctx context.Context, key string) error {
+	part := persistPartition(p.ns.groupKeyFor(key))
+	for {
+		want := p.ns.cache.restoreGen.Load() + 1
+		p.rmu.Lock()
+		st := &p.parts[part]
+		if st.restored >= want {
+			p.rmu.Unlock()
+			return nil
+		}
+		if st.running == nil {
+			if st.failedAt != 0 && p.clk.Now().UnixNano()-st.failedAt < int64(restoreRetry) {
+				// Failed recently: serve from memory, retry later.
+				p.rmu.Unlock()
+				return nil
+			}
+			st.running = make(chan struct{})
+			go p.restorePartition(part, want, st.running)
+		}
+		running := st.running
+		p.rmu.Unlock()
+
+		select {
+		case <-running:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// restorePartition runs one restore of part and publishes its outcome.
+func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
+	ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+	err := p.restore(ctx, part)
+	cancel()
+
+	p.rmu.Lock()
+	st := &p.parts[part]
+	if err == nil {
+		if gen > st.restored {
+			st.restored = gen
+		}
+		st.failedAt = 0
+	} else {
+		st.failedAt = p.clk.Now().UnixNano()
+		p.restoreFailures.Add(1)
+	}
+	st.running = nil
+	p.rmu.Unlock()
+	close(done)
+}
+
+// restore merges one partition's stored records into the owned store: the
+// newest snapshot, every segment it does not name, newest record per key, kept
+// only for keys this node owns and not expired.
+func (p *persister) restore(ctx context.Context, part int) error {
+	prefix := partitionPrefix(p.ns.name, part)
+	// A compactor can delete a segment between our List and our Get. The
+	// snapshot that covers it is then newer than the one we chose, so
+	// listing again finds it; three tries covers a compaction per try.
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var newest map[string]*segment.Record
+		newest, err = p.read(ctx, prefix)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		p.apply(newest)
+		return nil
+	}
+	return err
+}
+
+// read collects the newest record per key under prefix.
+func (p *persister) read(ctx context.Context, prefix string) (map[string]*segment.Record, error) {
+	names, err := p.store.List(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
+	}
+	var snapshot string
+	for _, name := range names {
+		if strings.HasPrefix(name[len(prefix):], "snap-") {
+			snapshot = name // names sort by their order, so the last is newest
+		}
+	}
+	newest := map[string]*segment.Record{}
+	merge := func(f *segment.File) {
+		for i := range f.Records {
+			r := &f.Records[i]
+			if r.Namespace != p.ns.name {
+				continue
+			}
+			if cur, ok := newest[r.Key]; !ok || r.Newer(cur) {
+				newest[r.Key] = r
+			}
+		}
+	}
+	covered := map[string]bool{}
+	if snapshot != "" {
+		f, err := p.load(ctx, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range f.Covered {
+			covered[c] = true
+		}
+		merge(f)
+	}
+	for _, name := range names {
+		if name == snapshot || covered[name] || !strings.HasPrefix(name[len(prefix):], "seg-") {
+			continue
+		}
+		f, err := p.load(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		merge(f)
+	}
+	return newest, nil
+}
+
+func (p *persister) load(ctx context.Context, name string) (*segment.File, error) {
+	data, err := p.store.Get(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("peercache: reading %s: %w", name, err)
+	}
+	f, err := segment.Decode(data)
+	if err != nil {
+		// A corrupt object is not skipped: restoring around it could bring
+		// back an older value it superseded. The restore fails, is counted,
+		// and the partition is served from memory until it is repaired.
+		return nil, fmt.Errorf("peercache: %s: %w", name, err)
+	}
+	return f, nil
+}
+
+// apply merges records into the owned store.
+func (p *persister) apply(newest map[string]*segment.Record) {
+	now := p.clk.Now().UnixNano()
+	c := p.ns.cache
+	var maxOrder uint64
+	for key, r := range newest {
+		if r.Order > maxOrder {
+			maxOrder = r.Order
+		}
+		if !p.owns(key) {
+			continue
+		}
+		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
+			continue
+		}
+		if p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone) {
+			p.restored.Add(1)
+		}
+	}
+	// This node's next write to any of these keys must outrank what it
+	// just read, whatever its own clock says.
+	c.observeOrder(maxOrder)
+}
+
+// owns reports whether this node owns key under its current view.
+func (p *persister) owns(key string) bool {
+	c := p.ns.cache
+	if c.guard == nil {
+		return true
+	}
+	owner, _, err := c.guard.Table().Owner(p.ns.groupKeyFor(key))
+	return err == nil && owner.ID == c.self().ID
 }

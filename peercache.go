@@ -404,6 +404,10 @@ type cache struct {
 	// namespaces. One per cache, because every order this node issues or
 	// observes must advance the same clock. See internal/hlc.
 	orders *hlc.Clock
+	// restoreGen counts membership changes. A persistent namespace restores
+	// a partition again on its first access after one, because the change
+	// may have made this node the owner of keys whose every holder died.
+	restoreGen atomic.Uint64
 
 	// degradedWrites counts synchronous writes acknowledged with fewer copies
 	// than the namespace's replication factor asked for. See
@@ -658,11 +662,13 @@ func (c *cache) Stats() Stats {
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
 		if ns.persister != nil {
-			pending, flushes, written, failures := ns.persister.counters()
+			pending, flushes, written, failures, restored, restoreFailures := ns.persister.counters()
 			stats.PersistPending += int64(pending)
 			stats.PersistFlushes += flushes
 			stats.PersistRecordsWritten += written
 			stats.PersistFailures += failures
+			stats.PersistRestored += restored
+			stats.PersistRestoreFailures += restoreFailures
 		}
 		if ns.l1 != nil {
 			stats.L1Entries += int64(ns.l1.Len())

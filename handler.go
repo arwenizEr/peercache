@@ -147,6 +147,9 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 
+	if err := ns.awaitRestore(ctx, in.Key); err != nil {
+		return nil, err
+	}
 	stored, version, found := ns.store.Get(in.Key)
 	if !found {
 		return wire.Encode(&wire.GetResponse{})
@@ -357,6 +360,9 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			// Omitting it looks like a miss, which is the outcome
 			// the caller must already handle.
 			continue
+		}
+		if err := ns.awaitRestore(ctx, key); err != nil {
+			return nil, err
 		}
 		stored, version, found := ns.store.Get(key)
 		if !found {

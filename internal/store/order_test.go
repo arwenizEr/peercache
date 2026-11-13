@@ -135,3 +135,69 @@ func TestAnExpiredEntryHasNoOrder(t *testing.T) {
 		t.Fatal("an expired entry reported an order; a restore would compare against a dead value")
 	}
 }
+
+func TestMergeIfNewerKeepsWhateverIsNewer(t *testing.T) {
+	opt, n := withCounter()
+	s, _ := newStore(t, opt)
+
+	if !s.MergeIfNewer("absent", []byte("restored"), 0, 10, false) {
+		t.Fatal("a record for an absent key was not installed")
+	}
+	if v, _, _ := s.Get("absent"); string(v) != "restored" {
+		t.Fatalf("Get = %q", v)
+	}
+	if got, _ := s.Order("absent"); got != 10 {
+		t.Fatalf("installed with order %d, want the record's 10", got)
+	}
+
+	n.Store(100)
+	w := s.Put("live", []byte("memory"), 0) // order 101
+	if s.MergeIfNewer("live", []byte("older"), 0, w.Order-1, false) {
+		t.Fatal("an older record replaced a newer in-memory value")
+	}
+	if s.MergeIfNewer("live", []byte("same"), 0, w.Order, false) {
+		t.Fatal("a record at the in-memory order replaced it")
+	}
+	if !s.MergeIfNewer("live", []byte("newer"), 0, w.Order+5, false) {
+		t.Fatal("a newer record was refused")
+	}
+	if v, _, _ := s.Get("live"); string(v) != "newer" {
+		t.Fatalf("Get = %q, want the newer record", v)
+	}
+}
+
+func TestMergeIfNewerAppliesTombstonesOnlyOverOlderValues(t *testing.T) {
+	opt, n := withCounter()
+	s, _ := newStore(t, opt)
+	n.Store(50)
+	w := s.Put("k", []byte("v"), 0)
+
+	if s.MergeIfNewer("k", nil, 0, w.Order-1, true) {
+		t.Fatal("an older tombstone deleted a newer value")
+	}
+	if !s.MergeIfNewer("k", nil, 0, w.Order+1, true) {
+		t.Fatal("a newer tombstone did not delete")
+	}
+	if _, _, ok := s.Get("k"); ok {
+		t.Fatal("the key survived a newer tombstone")
+	}
+	if s.MergeIfNewer("never", nil, 0, 1, true) {
+		t.Fatal("a tombstone for an absent key reported a change")
+	}
+	// A rewrite after the restored deletion starts above the removed
+	// version, as after any deletion (open question 42).
+	if v := s.Put("k", []byte("again"), 0).Version; v <= w.Version {
+		t.Fatalf("rewrite got version %d, not above the deleted %d", v, w.Version)
+	}
+}
+
+func TestMergeIfNewerReplacesAnExpiredEntry(t *testing.T) {
+	opt, n := withCounter()
+	s, fc := newStore(t, opt)
+	n.Store(500)
+	s.Put("k", []byte("dead"), 1)
+	fc.Advance(2)
+	if !s.MergeIfNewer("k", []byte("restored"), 0, 1, false) {
+		t.Fatal("an expired entry blocked a restore, though no reader can see it")
+	}
+}

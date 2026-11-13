@@ -66,7 +66,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-54 series in the Prometheus text exposition format, and PeerCache imports no
+56 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -1067,13 +1067,13 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 54 series come out of it.
+format with the content type a scraper expects, and 56 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
 ### The metrics that are worth alerting on
 
-Most of the 54 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 56 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

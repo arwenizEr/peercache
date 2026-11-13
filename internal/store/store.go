@@ -776,3 +776,55 @@ func (s *Store) Close() error {
 	<-s.stopped
 	return nil
 }
+
+// MergeIfNewer applies a record read back from persistent storage, reporting
+// whether it changed anything.
+//
+// A record is applied only if this store holds nothing live for key, or holds
+// something with a lower order: memory that is newer than storage always wins,
+// which is what makes a restore safe to run concurrently with writes, more than
+// once, and in any order. A value is installed at a fresh version, as a first
+// write would be, above the shard's floor; a tombstone removes an older live
+// entry and does nothing otherwise. The caller drops expired records first.
+func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint64, tombstone bool) bool {
+	var stored []byte
+	if !tombstone {
+		stored = make([]byte, len(val))
+		copy(stored, val)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	old, had := sh.entries[key]
+	live := had && (old.expiresAt == 0 || s.clk.Now().UnixNano() < old.expiresAt)
+	if live && old.order >= order {
+		return false
+	}
+	if tombstone {
+		if !live {
+			return false
+		}
+		delete(sh.entries, key)
+		sh.bytes.Add(-size(key, old.val))
+		if old.version > sh.floor {
+			sh.floor = old.version
+		}
+		sh.deletes.Add(1)
+		return true
+	}
+
+	version := old.version + 1
+	if !had && version <= sh.floor {
+		version = sh.floor + 1
+	}
+	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	delta := size(key, stored)
+	if had {
+		delta -= size(key, old.val)
+	}
+	sh.bytes.Add(delta)
+	sh.sets.Add(1)
+	return true
+}

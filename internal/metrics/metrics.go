@@ -87,6 +87,8 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_persist_flushes_total", Counter, "Flushes of persistent namespaces to their blob store.", float64(s.PersistFlushes)},
 		{"peercache_persist_records_written_total", Counter, "Records written to blob stores by flushes.", float64(s.PersistRecordsWritten)},
 		{"peercache_persist_failures_total", Counter, "Segments a flush could not write; their records were kept for the next flush.", float64(s.PersistFailures)},
+		{"peercache_persist_restored_total", Counter, "Keys a restore brought back into memory from a blob store.", float64(s.PersistRestored)},
+		{"peercache_persist_restore_failures_total", Counter, "Restores that could not read their partition; it is served from memory until a retry succeeds.", float64(s.PersistRestoreFailures)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 

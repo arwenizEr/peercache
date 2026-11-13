@@ -240,13 +240,16 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	if p.local {
-		return n.localGet(key)
+		return n.localGet(ctx, key)
 	}
 	return n.remoteGet(ctx, p, key, true)
 }
 
 // localGet reads from this node's owned store.
-func (n *namespace) localGet(key string) ([]byte, error) {
+func (n *namespace) localGet(ctx context.Context, key string) ([]byte, error) {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return nil, err
+	}
 	stored, _, ok := n.store.Get(key)
 	if !ok {
 		// The bare sentinel, not a wrapped one. A miss is routine — it is
@@ -286,7 +289,7 @@ func (n *namespace) remoteGet(ctx context.Context, p placement, key string, retr
 				return nil, err
 			}
 			if next.local {
-				return n.localGet(key)
+				return n.localGet(ctx, key)
 			}
 			return n.remoteGet(ctx, next, key, false)
 		}
@@ -554,6 +557,9 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 // comes next, because it is the part a synchronous caller is waiting for. The
 // invalidation hint goes last and is never waited on.
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}
 	written := n.store.Put(key, n.encode(val), ttl)
 	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
@@ -739,6 +745,9 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // how the first version ended up replicating only the writes that happened to
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}
 	_, order := n.store.Remove(key)
 	if n.persister != nil {
 		n.persister.record(key, nil, 0, order, true)
@@ -777,6 +786,9 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	if p.local {
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return false, err
+		}
 		return n.store.Exists(key), nil
 	}
 
@@ -855,6 +867,9 @@ func (n *namespace) localBatchGet(ctx context.Context, keys []string, out map[st
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+		}
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return err
 		}
 		stored, _, ok := n.store.Get(key)
 		if !ok {
@@ -964,6 +979,9 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 
 // localGetOrLoad is the single-node path: resident, or loaded under the flight.
 func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, error) {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return nil, err
+	}
 	if n.opts.Loader == nil {
 		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
 	}
@@ -1046,3 +1064,13 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 }
 
 var _ Namespace = (*namespace)(nil)
+
+// awaitRestore waits, in a persistent namespace, for key's partition to be
+// restored since the last membership change; see persister.await. Elsewhere it
+// is free.
+func (n *namespace) awaitRestore(ctx context.Context, key string) error {
+	if n.persister == nil {
+		return nil
+	}
+	return n.persister.await(ctx, key)
+}

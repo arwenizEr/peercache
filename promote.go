@@ -82,6 +82,7 @@ func (p *promoter) start(guard *ownership.Guard) {
 			return
 		default:
 		}
+		p.cache.restoreGen.Add(1)
 		p.reconcile()
 	})
 	// Reconcile once now, for a node that starts holding replicas — which

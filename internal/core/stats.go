@@ -72,6 +72,12 @@ type Stats struct {
 	PersistFlushes        int64
 	PersistRecordsWritten int64
 	PersistFailures       int64
+	// PersistRestored counts keys a restore brought back into memory, and
+	// PersistRestoreFailures restores that could not read their partition —
+	// a store outage or a corrupt object — after which the partition is
+	// served from memory alone until a retry succeeds.
+	PersistRestored        int64
+	PersistRestoreFailures int64
 
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the

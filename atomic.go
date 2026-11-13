@@ -148,6 +148,9 @@ func (n *namespace) routeWrite(ctx context.Context, key string, local func() err
 // then failed synchronous replication reports true with the error, for the
 // same reason localSet does not roll back.
 func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []byte, ok bool) (store.Mutation, bool, error)) (bool, error) {
+	if err := n.awaitRestore(ctx, key); err != nil {
+		return false, err
+	}
 	var encoded []byte
 	var plainLen int
 	res, err := n.store.Update(key, func(stored []byte, ok bool) (store.Mutation, bool, error) {
