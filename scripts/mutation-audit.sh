@@ -2272,23 +2272,6 @@ mutate "a pending record is never replaced by a newer write" \
 			// An older write recorded late' \
   'TestAHotKeyCoalescesToOneRecord$' ./tests
 
-# --- persist/s3, a nested module (decision 0029, M14d) ---
-
-mutate "persist/s3 reads every API error as not found" \
-  persist/s3/s3.go \
-  '		switch api.ErrorCode() {
-		case "NoSuchKey", "NotFound":
-			return true
-		}' \
-  '		return true' \
-  'TestOtherErrorsAreNotNotFound$' persist/s3::./
-
-mutate "persist/s3 lists only the first page" \
-  persist/s3/s3.go \
-  '	for p.HasMorePages() {' \
-  '	for first := true; first && p.HasMorePages(); first = false {' \
-  'TestTheStoreMeetsTheContract$' persist/s3::./
-
 # --- OpenTelemetry bridge, a nested module (decision 0032, M15b) ---
 
 mutate "otel registers counters as gauges" \
@@ -2314,6 +2297,23 @@ mutate "otel observes without the node attribute" \
 			} else if g, ok := gauges[m.Name]; ok {
 				o.ObserveFloat64(g, m.Value)' \
   'TestEverySeriesIsBridged$' otel::./
+
+# --- persist/s3, a nested module (decision 0029, M14d) ---
+
+mutate "persist/s3 reads every API error as not found" \
+  persist/s3/s3.go \
+  '		switch api.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		}' \
+  '		return true' \
+  'TestOtherErrorsAreNotNotFound$' persist/s3::./
+
+mutate "persist/s3 lists only the first page" \
+  persist/s3/s3.go \
+  '	for p.HasMorePages() {' \
+  '	for first := true; first && p.HasMorePages(); first = false {' \
+  'TestTheStoreMeetsTheContract$' persist/s3::./
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
