@@ -2392,7 +2392,7 @@ mutate "the replica pass sends what the asker does not own" \
   handler.go \
   'return err == nil && owner.ID == in.Requester' \
   'return err == nil && owner.ID != ""' \
-  'TestCatchUpOnlySendsKeysTheAskerRanksFor$' ./tests
+  'TestTheReplicaPassSendsOnlyWhatTheAskerOwns$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
