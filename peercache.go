@@ -123,6 +123,24 @@ type Cache interface {
 
 	Stats() Stats
 
+	// Describe returns what this node currently believes: itself, its view
+	// of the membership, its readiness, and each namespace it has opened,
+	// with options and counts. It never contains a value. See
+	// docs/decisions/0031-introspection.md.
+	Describe() Description
+
+	// DescribeKey returns where key of namespace lives as this node sees
+	// it: its group key, owner and ranked holders, and what this node holds
+	// of it. The namespace must be open on this node; otherwise the error
+	// wraps ErrNotFound.
+	DescribeKey(namespace, key string) (KeyPlacement, error)
+
+	// DebugHandler serves Describe at "/", its namespaces at "/namespaces"
+	// and DescribeKey at "/key?namespace=…&key=…", as JSON. It has no
+	// authentication: mount it on an internal admin port, as one would
+	// net/http/pprof.
+	DebugHandler() http.Handler
+
 	// Close shuts the cache down. With a live context it drains gracefully:
 	// deactivate groups, transfer ownership, then stop. If ctx expires
 	// first, shutdown becomes ungraceful and this node's owned state is

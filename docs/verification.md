@@ -2417,9 +2417,9 @@ written down here because a Definition of Done nobody can audit is a Definition
 of Done in name only — the same failure this whole file exists to prevent, one
 level up.
 
-docs/design.md §4 carries twelve `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13 and M14;
+docs/design.md §4 carries thirteen `**Acceptance:**` blocks, M0 through M6, M9, M10, M12, M13, M14 and M15;
 M7 states its requirements as bullets instead. Broken into individually
-testable claims they come to sixty-four. Each one, and the named test that would fail if it regressed:
+testable claims they come to sixty-eight. Each one, and the named test that would fail if it regressed:
 
 | Milestone | Criterion | Named test |
 |---|---|---|
@@ -2487,8 +2487,12 @@ testable claims they come to sixty-four. Each one, and the named test that would
 | M14 | the flush interval is a namespace option; a non-positive one is refused | `TestWithFlushIntervalSetsTheCadence`, `TestANonPositiveFlushIntervalIsRefused` |
 | M14 | the S3 backend meets the contract over paged listings and tells absent from refused | `TestTheStoreMeetsTheContract`, `TestNotFoundIsRecognisedEitherWay`, `TestOtherErrorsAreNotNotFound` |
 | M14 | a namespace survives a restart over S3, one PUT per flush | `TestACacheRestoresThroughS3` |
+| M15 | Describe reports node, view, readiness and each namespace's options and counts | `TestDescribeReportsTheNodeAndItsNamespaces` |
+| M15 | DescribeKey agrees on owner and holders everywhere and tells each node's role and copies truly | `TestEveryNodeDescribesAKeyTheSameWay`, `TestDescribeKeyOfAnUnopenedNamespaceIsNotFound` |
+| M15 | no description or placement contains a value | `TestADescriptionNeverContainsAValue` |
+| M15 | the debug handler serves JSON, refuses other methods, and answers bad requests with a 4xx | `TestTheDebugHandlerServesJSONAndRefusesTheRest` |
 
-All seventy-six names in the table were verified to exist before it was
+All eighty-one names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

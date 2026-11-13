@@ -28,6 +28,7 @@ and output-checked by `go test`:
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
 | `ExampleNewRouter` | queue-workload routing |
+| `ExampleCache_Describe` | the introspection surface: node, namespaces, one key's placement |
 | `ExampleWithPersistence` | write, close, reopen over the same store: restored, and a delete stays deleted |
 | `ExampleWithReplicaReads` | the configurations replica reads refuse, and their counters |
 | `ExampleCache_WriteMetrics` | the metrics surface; text exposition format, no client library |
@@ -1151,6 +1152,39 @@ That is the whole integration. The handler writes the Prometheus text exposition
 format with the content type a scraper expects, and 60 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
+
+### Introspection — `Describe`, `DescribeKey`, `DebugHandler`
+
+```go
+Describe() Description
+DescribeKey(namespace, key string) (KeyPlacement, error)
+DebugHandler() http.Handler
+```
+
+Metrics are aggregate; these answer the questions an operator asks once
+something is already wrong (`docs/decisions/0031-introspection.md`):
+
+- `Describe` — this node, its view of the members and its epoch, its
+  readiness, and per namespace its options and counts: owned, replica and L1
+  entries, and for a persistent namespace its flush interval, pending records,
+  flushes, failures, restores, compactions and splits.
+- `DescribeKey` — a key's group key, owner and ranked holders as this node
+  sees them, this node's role (`owner`, `replica`, `none`), and whether it holds
+  the key in its owned store, as a replica copy, or in L1.
+- `DebugHandler` — the same as JSON: `GET /`, `GET /namespaces`,
+  `GET /key?namespace=…&key=…`. Other methods are 405; a missing parameter
+  is 400 and an unopened namespace 404, with a JSON error body.
+
+**No value ever appears**, and a key only when the caller names it. **There is
+no authentication**: mount it on an internal admin port, as one would
+`net/http/pprof`.
+
+```go
+admin.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))
+```
+
+A description reads each field on its own, so one taken during a membership
+change can mix two moments; it is a node's belief, not a consensus.
 
 ### The metrics that are worth alerting on
 
