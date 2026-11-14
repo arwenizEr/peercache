@@ -2693,6 +2693,33 @@ mutate "a restarted node loses its own options" \
   '	opts := append(base, c.cfg.all...)' \
   'TestNodeOptionsReachOneNode$' ./peercachetest
 
+# --- a non-owned copy does not outlive its key (F10) ---
+
+mutate "an L1 copy ignores its key's remaining lifetime" \
+  namespace.go \
+  '	if left > 0 && left < bound {' \
+  '	if false {' \
+  'TestANonOwnedCopyDoesNotOutliveItsKey$' ./tests
+mutate "the owner's Get grants no remaining lifetime" \
+  handler.go \
+  '		TTLRemainingNanos: int64(left),
+	})' \
+  '		TTLRemainingNanos: 0,
+	})' \
+  'TestANonOwnedCopyDoesNotOutliveItsKey$' ./tests
+mutate "the owner's load grants no remaining lifetime" \
+  handler.go \
+  '	left, _ := ns.store.Remaining(in.Key)' \
+  '	var left time.Duration' \
+  'TestALoadedCopyDoesNotOutliveItsKey$' ./tests
+mutate "a batch entry grants no remaining lifetime" \
+  handler.go \
+  '			TTLRemainingNanos: int64(left),
+		})' \
+  '			TTLRemainingNanos: 0,
+		})' \
+  'TestABatchReadCopyDoesNotOutliveItsKey$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

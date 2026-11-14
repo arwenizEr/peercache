@@ -53,3 +53,25 @@ func (s *Store) PutIfVersion(key string, val []byte, ttl time.Duration, version 
 	sh.sets.Add(1)
 	return true
 }
+
+// Remaining is how long key has left, zero for a key that does not expire, and
+// whether it is live — [Store.Lookup] without the value and without counting a
+// hit or a miss. An owner answering a peer reads it to tell the peer how long
+// its copy may live.
+func (s *Store) Remaining(key string) (time.Duration, bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, found := sh.entries[key]
+	sh.mu.RUnlock()
+	if !found {
+		return 0, false
+	}
+	if e.expiresAt == 0 {
+		return 0, true
+	}
+	left := time.Duration(e.expiresAt - s.clk.Now().UnixNano())
+	if left <= 0 {
+		return 0, false
+	}
+	return left, true
+}

@@ -649,6 +649,10 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   an L1 copy ignores its key's remaining lifetime                    -- TestANonOwnedCopyDoesNotOutliveItsKey
+caught   the owner's Get grants no remaining lifetime                       -- TestANonOwnedCopyDoesNotOutliveItsKey
+caught   the owner's load grants no remaining lifetime                      -- TestALoadedCopyDoesNotOutliveItsKey
+caught   a batch entry grants no remaining lifetime                         -- TestABatchReadCopyDoesNotOutliveItsKey
 caught   a hit inside the window does not refresh                           -- TestARefreshReloadsAKeyNearItsExpiry
 caught   every hit refreshes, whatever its remaining lifetime               -- TestARefreshReloadsAKeyNearItsExpiry
 caught   each hit in the window starts its own refresh                      -- TestConcurrentHitsStartOneRefresh

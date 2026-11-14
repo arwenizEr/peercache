@@ -117,6 +117,13 @@ change the public API.
 
 ### Fixed
 
+- A non-owner's L1 copy of a key with a TTL could outlive the key by up to
+  the namespace's L1 TTL: the owner never filled the remaining lifetime its
+  responses carry, so a session expired on its owner stayed readable through
+  other nodes for up to five seconds. Owners now report it on Get, load, batch
+  and replica reads, and the reader caches no longer than it. Found writing
+  `peercachetest`.
+
 - `SplitBrainDetections` counted handovers. It tested "two writers in one
   epoch", and epochs are per view, so after one rolling restart on kind it
   reported tens of thousands of splits that never happened. It now counts forks
