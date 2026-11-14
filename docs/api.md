@@ -765,6 +765,29 @@ certificate and both verify one. See
 `docs/decisions/0014-grpc-without-protobuf.md` for why the transport is gRPC
 but the codec is not protobuf.
 
+**mTLS covers the data plane only; gossip is a separate socket.** SWIM messages
+carry every node's ID and data address, and an unauthenticated gossip port lets
+anything that can reach it join the membership, be ranked as an owner, and be
+sent writes — which mTLS then refuses, so the keys it ranks for fail rather than
+leak, but the cluster is still disrupted. Encrypt gossip with memberlist's own
+keyring, through the membership options' `Config`:
+
+```go
+cfg := memberlist.DefaultLANConfig()
+cfg.SecretKey = gossipKey // 16, 24 or 32 bytes: AES-128, -192 or -256, from a Secret
+gossip, err := membership.New(membership.Options{Self: self, Config: cfg})
+```
+
+Every message is then encrypted and verified, and a node without the key cannot
+join (`TestEncryptedGossipAdmitsOnlyTheKeyHolders`). To rotate, install the new
+key on every node's `cfg.Keyring` (`AddKey`) before making it primary
+(`UseKey`), then remove the old one. On the data plane, a node dialling a peer
+verifies the peer's certificate against the CA *and* its name against the
+peer's node ID (or `ServerName`); a node serving a request verifies the
+caller's certificate against the CA only. Any workload holding a certificate
+from the same CA can therefore call a node, so give the cache its own CA, or
+issue its certificates from one no other workload uses.
+
 ### `Router`
 
 ```go
