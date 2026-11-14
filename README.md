@@ -412,6 +412,8 @@ persist/          Blob-store interface for persistent namespaces, the
 persist/s3/       S3 and S3-compatible backend, a nested module (public)
 otel/             OpenTelemetry bridge for the metric series, a nested
                   module (public)
+peercachetest/    An in-process cluster for applications' own failover
+                  tests: simulated network, membership and clock (public)
 
 internal/
   core/           Type definitions shared by the public and internal packages

@@ -9,6 +9,9 @@ change the public API.
 
 ### Added
 
+- `peercachetest`: an in-process cluster for an application's own tests — real
+  caches on a simulated network, membership and fake clock, with `Kill`,
+  `Restart`, `Partition`, `Heal`, `Advance`, `Settle` and `Owner`.
 - `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
   copy charged its key, value and a fixed overhead, the same charge the L1
   bytes gauge and the memory budget use. Decision 0033.

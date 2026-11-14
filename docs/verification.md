@@ -649,6 +649,11 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   Kill does not wait out failure detection                           -- TestAKilledOwnersKeyIsServedByItsReplica
+caught   Restart does not rejoin the membership                             -- TestADrainedNodeRestartsIntoTheCluster
+caught   Heal leaves the partition in place                                 -- TestAPartitionSplitsTheMembershipAndHealsBack
+caught   a partition is not applied to the network                          -- TestAPartitionSplitsTheMembershipAndHealsBack
+caught   a restarted node loses its own options                             -- TestNodeOptionsReachOneNode
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

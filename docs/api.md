@@ -1262,6 +1262,46 @@ about who owns what.
 
 ---
 
+## Testing an application: `peercachetest`
+
+```go
+func TestACartSurvivesItsOwnerCrashing(t *testing.T) {
+    c := peercachetest.New(t, 3, peercachetest.WithCacheOptions(appOptions...))
+    for i := 0; i < c.Size(); i++ {
+        c.Cache(i).Namespace("carts", peercache.WithReplicationFactor(2), peercache.WithSyncReplication())
+    }
+    _ = c.Cache(0).Namespace("carts").Set(ctx, "cart:7", cart, 0)
+
+    c.Kill(c.Owner("carts", "cart:7"))
+
+    got, err := c.Cache(1).Namespace("carts").Get(ctx, "cart:7") // promoted replica answers
+}
+```
+
+An application's own code — group functions, loaders, how it reacts to
+`ErrNotOwner` or a lost key — is worth testing under failover, and a cluster of
+real pods is the wrong tool for a unit test. `peercachetest.New(t, n)` builds
+`n` real caches in the test's process, connected by a simulated network and a
+simulated membership on one fake clock, and closes them when the test ends.
+
+| Method | Does |
+|---|---|
+| `Cache(i)` | node `i`'s `peercache.Cache` |
+| `Owner(ns, key)` | the index of the node owning `key` |
+| `Advance(d)`, `Clock()` | move the clock; nothing else does, so TTLs and timeouts wait for the test |
+| `Kill(i)` | crash node `i` — no hand-off, memory lost — and wait until the survivors have reacted |
+| `Restart(i)` | bring it back empty under the same identity; the test calls `CatchUp` |
+| `Partition(groups...)`, `Heal()` | cut the network between groups of nodes, and restore it |
+| `Settle()` | wait, without moving the clock, until membership and replication have caught up |
+
+`Kill`, `Restart`, `Partition` and `Heal` advance the clock past failure
+detection themselves, so the next line of the test sees the cluster as the
+application would after the event. `WithCacheOptions` and `WithNodeOptions`
+pass the options an application uses in production; the harness supplies node
+IDs, the clock, membership and transport. PeerCache's own failover tests are
+built on the same pieces. The package's tests are its examples
+(`peercachetest/cluster_test.go`).
+
 ## Observability
 
 ```go
