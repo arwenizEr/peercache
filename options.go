@@ -418,6 +418,41 @@ func WithNegativeCaching(ttl time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.NegativeTTL = ttl }
 }
 
+// WithRefreshAhead reloads a key in the background, before it expires, when it
+// is still being read. When GetOrLoad on a key's owner finds it resident with
+// less than window of its lifetime left, it returns the current value at once
+// and starts one reload with the namespace's loader; the next read sees the
+// reloaded value with a fresh lifetime. Popular keys stop costing their
+// callers a synchronous load at every expiry.
+//
+// The reload never stores over a newer write: a Set, Delete or atomic
+// operation that landed while the loader ran wins, and so does an expiry. A
+// failed reload keeps the current value until its own expiry. It runs on the
+// owner only, in the key's single-flight — a miss of an expired key joins it —
+// and Close waits for it. Get never loads, so it never refreshes. Zero turns it
+// off; a negative window, or one on a namespace without a loader, is
+// ErrInvalidOption. See docs/decisions/0036-refresh-ahead.md.
+func WithRefreshAhead(window time.Duration) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.RefreshAhead = window }
+}
+
+// WithTTLJitter shortens every TTL this namespace's owners assign by up to
+// fraction, 0 <= fraction < 1, so that keys written together do not expire
+// together. Keys loaded in one burst — a warm-up, a batch load, a restore, a
+// loader that always answers one TTL — otherwise all expire in the same instant
+// and their reloads reach the database at once.
+//
+// The amount is fixed per key, a function of the key alone: a key rewritten
+// keeps the same lifetime, and replicas and persistence carry the owner's
+// deadline, so no two nodes disagree. TTLs only get shorter, never longer,
+// because a TTL is often a bound on how stale a value may be. A fraction of
+// 0.1 turns a one-hour TTL into one between 54 and 60 minutes. Zero, the
+// default, assigns TTLs exactly; outside [0, 1) is ErrInvalidOption. See
+// docs/decisions/0037-ttl-jitter.md.
+func WithTTLJitter(fraction float64) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.TTLJitter = fraction }
+}
+
 // WithL1TTL bounds how long a copy of a non-owned key may be served from local
 // memory.
 //

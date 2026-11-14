@@ -72,7 +72,7 @@ func (s *Store) Update(key string, fn func(cur []byte, ok bool) (m Mutation, wri
 			expiresAt = old.expiresAt
 		}
 	case m.TTL > 0:
-		expiresAt = deadlineNanos(now, m.TTL)
+		expiresAt = s.deadline(key, now, m.TTL)
 	}
 
 	stored := make([]byte, len(m.Value))
