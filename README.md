@@ -424,6 +424,7 @@ internal/
   hlc/            Hybrid logical clock ordering persistent writes
   digest/         Running per-partition digests of what a store holds
   pager/          Sorted key lists for catch-up and hand-off passes, sorted once per pass
+  debugui/        The live dashboard DebugHandler serves at /ui
   testkit/        In-process cluster harness with fault injection
   store/          Sharded owned store, TTL, versions
   l1/             Non-owned cache, TTL and version discipline

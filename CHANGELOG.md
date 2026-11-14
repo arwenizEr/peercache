@@ -9,6 +9,10 @@ change the public API.
 
 ### Added
 
+- A live dashboard at the debug handler's `/ui`: this node's counters with
+  rates, every member's view and agreement, namespaces, the replica check on
+  demand and a key lookup. One embedded page reading the handler's own JSON;
+  loads nothing from elsewhere. Also `/stats`, `Stats` as JSON.
 - `Cache.DescribeCluster` and the debug handler's `/cluster` route: every
   member's `Describe`, whether their member sets agree, and — with digests —
   the partitions whose replica copies are out of step with their owners. Both

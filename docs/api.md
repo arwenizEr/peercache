@@ -1386,6 +1386,16 @@ built on the same pieces. The package's tests are its examples
 
 ## Observability
 
+### The dashboard
+
+Mount the debug handler (`admin.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))`)
+and open `/debug/peercache/ui`: this node's counters with rates, every member's
+view and whether they agree, the namespaces, the replica check on demand and a
+key lookup, refreshed every two seconds. It is one embedded page reading the
+handler's JSON routes (`/`, `/stats`, `/cluster`, `/key`) and loads nothing from
+anywhere else, so it works on an internal port with no internet access. On
+Kubernetes: `kubectl port-forward pod/<pod> 8080` and open it locally.
+
 ### The whole cluster — `DescribeCluster`
 
 ```go
