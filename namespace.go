@@ -157,6 +157,20 @@ type namespace struct {
 	// into one fetch. It is separate from flight on purpose: a Get must
 	// never join a GetOrLoad's load, nor a GetOrLoad a Get's plain read.
 	readFlight singleflight.Group
+	// refreshing holds the keys with a refresh in flight, so that hits
+	// inside the window start one reload, not one goroutine each.
+	refreshing sync.Map
+	// refreshWG tracks refresh goroutines, so Close neither leaks one nor
+	// closes the store under it.
+	refreshWG sync.WaitGroup
+	// refreshMu orders starting a refresh against Close: a goroutine
+	// added to refreshWG after Close began waiting would be a misuse of
+	// the WaitGroup and a refresh writing into a closed store.
+	refreshMu     sync.Mutex
+	refreshClosed bool
+	// refreshes and refreshFailures count completed and failed reloads.
+	refreshes       atomic.Int64
+	refreshFailures atomic.Int64
 	// negativeHits counts GetOrLoad calls answered from a remembered
 	// absence; see [WithNegativeCaching].
 	negativeHits atomic.Int64
@@ -1006,7 +1020,12 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
 	}
 
-	if stored, _, ok := n.store.Get(key); ok {
+	if n.opts.RefreshAhead > 0 {
+		if stored, version, left, ok := n.store.Lookup(key); ok {
+			n.maybeRefresh(key, version, left)
+			return n.decode(stored)
+		}
+	} else if stored, _, ok := n.store.Get(key); ok {
 		return n.decode(stored)
 	}
 	if n.knownAbsent(key) {

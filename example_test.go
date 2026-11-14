@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/arwenizEr/peercache"
@@ -428,6 +430,83 @@ func ExampleNamespace_BatchGet() {
 	// tenant:acme = 41
 	// tenant:globex = 7
 	// asked for 3, received: 2
+}
+
+// ExampleWithRefreshAhead shows a hot key reloaded in the background before it
+// expires: the read near its end is answered at once with the current value,
+// and the next read has the new one.
+func ExampleWithRefreshAhead() {
+	fc := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fc))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	var version atomic.Int64
+	prices := cache.Namespace("prices",
+		peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+			return []byte(fmt.Sprintf("price v%d", version.Add(1))), time.Minute, nil
+		}),
+		peercache.WithRefreshAhead(10*time.Second),
+	)
+	ctx := context.Background()
+
+	v, _ := prices.GetOrLoad(ctx, "sku:1")
+	fmt.Println(string(v))
+
+	fc.Advance(55 * time.Second) // five seconds left
+	v, _ = prices.GetOrLoad(ctx, "sku:1")
+	fmt.Println("near expiry:", string(v))
+
+	for cache.Stats().Refreshes == 0 {
+		runtime.Gosched() // the reload runs in the background
+	}
+	v, _ = prices.Get(ctx, "sku:1")
+	fmt.Println("after the refresh:", string(v))
+	// Output:
+	// price v1
+	// near expiry: price v1
+	// after the refresh: price v2
+}
+
+// ExampleWithTTLJitter writes a hundred keys at once with one TTL. With jitter
+// 0.2 they expire spread over the last fifth of it instead of all together, and
+// none outlives the TTL it was given.
+func ExampleWithTTLJitter() {
+	fc := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fc))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	sessions := cache.Namespace("sessions", peercache.WithTTLJitter(0.2))
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		_ = sessions.Set(ctx, fmt.Sprintf("s:%d", i), []byte("v"), 10*time.Minute)
+	}
+	alive := func() int {
+		n := 0
+		for i := 0; i < 100; i++ {
+			if ok, _ := sessions.Exists(ctx, fmt.Sprintf("s:%d", i)); ok {
+				n++
+			}
+		}
+		return n
+	}
+	fc.Advance(8*time.Minute - time.Nanosecond)
+	fmt.Println("just before 8 minutes:", alive())
+	fc.Advance(time.Minute)
+	fmt.Println("at 9 minutes, some gone:", alive() > 0 && alive() < 100)
+	fc.Advance(time.Minute)
+	fmt.Println("at 10 minutes:", alive())
+	// Output:
+	// just before 8 minutes: 100
+	// at 9 minutes, some gone: true
+	// at 10 minutes: 0
 }
 
 // ExampleWithBatchLoader shows BatchGetOrLoad: the keys an owner is missing
@@ -922,6 +1001,28 @@ func ExampleWithJoinProbation() {
 	// Output:
 	// members on probation: 0
 	// ready: true
+	// negative rejected: true
+}
+
+// ExampleWithCatchUpRate configures how fast CatchUp may pull from peers. On a
+// cluster of one there is nothing to pull; its pacing on a real cluster is what
+// TestCatchUpPullsAtTheConfiguredRate measures.
+func ExampleWithCatchUpRate() {
+	cache, err := peercache.New(
+		peercache.WithNodeID("pod-0"),
+		peercache.WithCatchUpRate(20_000),
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	fmt.Println("catch-up:", cache.CatchUp(context.Background()))
+
+	_, err = peercache.New(peercache.WithNodeID("pod-1"), peercache.WithCatchUpRate(-1))
+	fmt.Println("negative rejected:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// catch-up: <nil>
 	// negative rejected: true
 }
 

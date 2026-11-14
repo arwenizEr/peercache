@@ -65,6 +65,10 @@ type Options struct {
 	// persistence, whose entries carry order zero. See
 	// docs/decisions/0029-persistence-as-a-segment-log.md.
 	Order func() uint64
+	// TTLJitter, between 0 and 1, shortens every TTL this store assigns
+	// by up to that fraction, by an amount fixed per key. Zero assigns
+	// TTLs exactly. See [Store.deadline] and docs/decisions/0037.
+	TTLJitter float64
 }
 
 // entry is one stored value.
@@ -139,6 +143,8 @@ type Store struct {
 	clk    clock.Clock
 	// order issues persistence orders; see [Options.Order].
 	order func() uint64
+	// jitter is [Options.TTLJitter].
+	jitter float64
 
 	sweepPerTick int
 	// cursor is the next shard the sweeper will visit. It is only touched
@@ -182,6 +188,7 @@ func New(opts Options) (*Store, error) {
 		mask:         uint64(count - 1),
 		clk:          opts.Clock,
 		order:        opts.Order,
+		jitter:       opts.TTLJitter,
 		sweepPerTick: opts.SweepShardsPerTick,
 		done:         make(chan struct{}),
 		stopped:      make(chan struct{}),
@@ -220,6 +227,29 @@ func deadlineNanos(now time.Time, ttl time.Duration) int64 {
 		return 0
 	}
 	return deadline.UnixNano()
+}
+
+// deadline is the deadline a write of key for ttl gets: ttl itself, or with
+// [Options.TTLJitter], ttl shortened by up to that fraction. The amount is a
+// function of the key alone, so keys written together — a warm-up, a batch
+// load, a restore — spread their expiries, while one key rewritten keeps the
+// same lifetime each time and every test sees the same deadlines. Only
+// shorter, never longer: a caller's TTL is often a bound on staleness.
+// Restore and the persistence merge carry a deadline already given and do not
+// come through here.
+func (s *Store) deadline(key string, now time.Time, ttl time.Duration) int64 {
+	if s.jitter > 0 {
+		ttl -= time.Duration(float64(ttl) * s.jitter * jitterFraction(key))
+	}
+	return deadlineNanos(now, ttl)
+}
+
+// jitterFraction maps key to [0, 1). It mixes the hash before taking its top
+// bits, because shard selection takes the low bits of the same hash and a
+// fraction correlated with the shard would bunch each shard's expiries.
+func jitterFraction(key string) float64 {
+	h := xxhash.Sum64String(key) * 0x9E3779B97F4A7C15
+	return float64(h>>11) / (1 << 53)
 }
 
 // roundUpPow2 returns the smallest power of two at least as large as n.
@@ -325,7 +355,7 @@ type Write struct {
 func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 	var expiresAt int64
 	if ttl > 0 {
-		expiresAt = deadlineNanos(s.clk.Now(), ttl)
+		expiresAt = s.deadline(key, s.clk.Now(), ttl)
 	}
 
 	// Copy before taking the lock: the allocation is the expensive part and
@@ -388,7 +418,7 @@ func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, 
 	var expiresAt int64
 	now := s.clk.Now()
 	if ttl > 0 {
-		expiresAt = deadlineNanos(now, ttl)
+		expiresAt = s.deadline(key, now, ttl)
 	}
 	stored := make([]byte, len(val))
 	copy(stored, val)

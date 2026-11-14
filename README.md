@@ -377,6 +377,7 @@ doc.go            Package documentation
 peercache.go      Cache construction, lifecycle
 namespace.go      Namespace handle
 batchload.go      BatchGetOrLoad: one request per owner, one batch load per owner
+refresh.go        WithRefreshAhead: background reloads of keys read near expiry
 group.go          Group handle
 types.go          Shared public types
 errors.go         Sentinel errors

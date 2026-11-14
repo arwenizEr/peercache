@@ -71,6 +71,9 @@ type Options struct {
 	// JoinProbation is how long a node must have been up before its peers
 	// rank it. Zero means no probation.
 	JoinProbation time.Duration
+	// CatchUpRate bounds how many entries per second CatchUp pulls from
+	// its peers. Zero pulls as fast as the peers answer.
+	CatchUpRate int
 	// OnEvent receives lifecycle events. It runs on the emitting group's
 	// goroutine and must not block.
 	OnEvent func(Event)
@@ -112,6 +115,9 @@ func (o *Options) Validate() error {
 	if len(o.Seeds) > 0 && o.Membership == nil {
 		return fmt.Errorf("peercache: seeds %v given with no membership authority to join through: %w",
 			o.Seeds, ErrInvalidOption)
+	}
+	if o.CatchUpRate < 0 {
+		return fmt.Errorf("peercache: catch-up rate %d must not be negative: %w", o.CatchUpRate, ErrInvalidOption)
 	}
 	if o.JoinProbation < 0 {
 		return fmt.Errorf("peercache: join probation %v must not be negative: %w", o.JoinProbation, ErrInvalidOption)
@@ -192,6 +198,15 @@ type NamespaceOptions struct {
 	// without loading. Zero, the default, remembers nothing. See
 	// docs/decisions/0034-negative-caching.md.
 	NegativeTTL time.Duration
+
+	// TTLJitter shortens every TTL the owner assigns by up to this
+	// fraction, fixed per key. See docs/decisions/0037-ttl-jitter.md.
+	TTLJitter float64
+
+	// RefreshAhead is the remaining lifetime under which a GetOrLoad hit on
+	// the owner reloads the key in the background. Zero, the default, never
+	// refreshes. See docs/decisions/0036-refresh-ahead.md.
+	RefreshAhead time.Duration
 
 	// Shards is the number of independently locked partitions in this
 	// namespace's store. Zero takes the store's default.
@@ -280,6 +295,17 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.L1MaxBytes <= 0 {
 		return fmt.Errorf("peercache: L1 max bytes must be positive, got %d: %w", o.L1MaxBytes, ErrInvalidOption)
+	}
+	if o.RefreshAhead < 0 {
+		return fmt.Errorf("peercache: refresh-ahead window must not be negative, got %v: %w",
+			o.RefreshAhead, ErrInvalidOption)
+	}
+	if o.RefreshAhead > 0 && o.Loader == nil && o.TypedLoader == nil {
+		return fmt.Errorf("peercache: refresh-ahead reloads with the namespace's loader, and it has none: %w",
+			ErrInvalidOption)
+	}
+	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {
+		return fmt.Errorf("peercache: TTL jitter must be in [0, 1), got %v: %w", o.TTLJitter, ErrInvalidOption)
 	}
 	if o.NegativeTTL < 0 {
 		return fmt.Errorf("peercache: negative caching TTL must not be negative, got %v: %w",
