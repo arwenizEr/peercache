@@ -18,6 +18,7 @@ and output-checked by `go test`:
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
 | `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
 | `ExampleWithRefreshAhead` | a hot key reloaded before it expires, the caller never waiting |
+| `ExampleWithTTLJitter` | a burst of writes with one TTL expiring spread out, none past the TTL |
 | `ExampleWithBatchLoader` | `BatchGetOrLoad`: one loader call for every missing key, missing rows omitted |
 | `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
@@ -238,6 +239,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
 | `WithNegativeCaching(time.Duration)` | off | The owner remembers a loader's `ErrNotFound` for the TTL and answers `GetOrLoad` without loading. Any write of the key forgets it. Negative is `ErrInvalidOption`. See below. |
 | `WithRefreshAhead(time.Duration)` | off | A `GetOrLoad` hit on the owner with less than this left of its lifetime returns at once and reloads the key in the background. Needs a loader. See below. |
+| `WithTTLJitter(float64)` | 0 | Shortens every TTL the owner assigns by up to this fraction, fixed per key, so keys written together do not expire together. Never lengthens. Outside `[0, 1)` is `ErrInvalidOption`. Decision 0037. |
 | `WithBatchLoader(BatchLoader)` | none | Loads every key a `BatchGetOrLoad` owner is missing in one call. Without it, `BatchGetOrLoad` uses the `WithLoader` loader per key. See below. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 

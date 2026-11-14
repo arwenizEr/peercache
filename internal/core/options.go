@@ -193,6 +193,10 @@ type NamespaceOptions struct {
 	// docs/decisions/0034-negative-caching.md.
 	NegativeTTL time.Duration
 
+	// TTLJitter shortens every TTL the owner assigns by up to this
+	// fraction, fixed per key. See docs/decisions/0037-ttl-jitter.md.
+	TTLJitter float64
+
 	// RefreshAhead is the remaining lifetime under which a GetOrLoad hit on
 	// the owner reloads the key in the background. Zero, the default, never
 	// refreshes. See docs/decisions/0036-refresh-ahead.md.
@@ -293,6 +297,9 @@ func (o *NamespaceOptions) Validate() error {
 	if o.RefreshAhead > 0 && o.Loader == nil && o.TypedLoader == nil {
 		return fmt.Errorf("peercache: refresh-ahead reloads with the namespace's loader, and it has none: %w",
 			ErrInvalidOption)
+	}
+	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {
+		return fmt.Errorf("peercache: TTL jitter must be in [0, 1), got %v: %w", o.TTLJitter, ErrInvalidOption)
 	}
 	if o.NegativeTTL < 0 {
 		return fmt.Errorf("peercache: negative caching TTL must not be negative, got %v: %w",

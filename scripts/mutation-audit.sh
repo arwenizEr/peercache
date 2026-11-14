@@ -2612,6 +2612,44 @@ mutate "refresh-ahead is accepted without a loader" \
   '	if o.RefreshAhead > 0 && o.Loader == nil && o.TypedLoader == nil {' \
   '	if false {' \
   'TestRefreshAheadNeedsALoader$' ./tests
+# --- TTL jitter (decision 0037) ---
+
+mutate "a namespace's jitter never reaches its store" \
+  peercache.go \
+  '		TTLJitter:     opts.TTLJitter,
+' \
+  '' \
+  'TestTTLJitterSpreadsAWarmUp$' ./tests
+mutate "the store ignores its jitter" \
+  internal/store/store.go \
+  '	if s.jitter > 0 {' \
+  '	if false {' \
+  'TestJitterShortensByAnAmountFixedPerKey$' ./internal/store
+mutate "jitter lengthens a TTL" \
+  internal/store/store.go \
+  '		ttl -= time.Duration(float64(ttl) * s.jitter * jitterFraction(key))' \
+  '		ttl += time.Duration(float64(ttl) * s.jitter * jitterFraction(key))' \
+  'TestJitterShortensByAnAmountFixedPerKey$' ./internal/store
+mutate "jitter is drawn afresh on every write" \
+  internal/store/store.go \
+  '	h := xxhash.Sum64String(key) * 0x9E3779B97F4A7C15' \
+  '	h := uint64(time.Now().UnixNano()) * 0x9E3779B97F4A7C15' \
+  'TestJitterShortensByAnAmountFixedPerKey$' ./internal/store
+mutate "an atomic update's TTL is not jittered" \
+  internal/store/update.go \
+  '		expiresAt = s.deadline(key, now, m.TTL)' \
+  '		expiresAt = deadlineNanos(now, m.TTL)' \
+  'TestTTLJitterSpreadsAWarmUp$' ./tests
+mutate "a restored deadline is jittered again" \
+  internal/store/store.go \
+  '		expiresAt = deadlineNanos(s.clk.Now(), ttl)' \
+  '		expiresAt = s.deadline(key, s.clk.Now(), ttl)' \
+  'TestRestoreKeepsTheDeadlineItWasGiven$' ./internal/store
+mutate "a jitter of one is accepted" \
+  internal/core/options.go \
+  '	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {' \
+  '	if o.TTLJitter < 0 || o.TTLJitter != o.TTLJitter {' \
+  'TestTTLJitterMustBeAFraction$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

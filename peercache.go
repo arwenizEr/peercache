@@ -567,6 +567,7 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		// Sweeping is driven by the cache's single sweeper.
 		SweepInterval: 0,
 		Order:         order,
+		TTLJitter:     opts.TTLJitter,
 	})
 	if err != nil {
 		ns.err = err

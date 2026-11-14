@@ -655,6 +655,13 @@ caught   each hit in the window starts its own refresh                      -- T
 caught   a refresh stores over a write that landed during it                -- TestAWriteDuringARefreshWins
 caught   Close does not wait for a refresh in flight                        -- TestCloseWaitsForARefresh
 caught   refresh-ahead is accepted without a loader                         -- TestRefreshAheadNeedsALoader
+caught   a namespace's jitter never reaches its store                       -- TestTTLJitterSpreadsAWarmUp
+caught   the store ignores its jitter                                       -- TestJitterShortensByAnAmountFixedPerKey
+caught   jitter lengthens a TTL                                             -- TestJitterShortensByAnAmountFixedPerKey
+caught   jitter is drawn afresh on every write                              -- TestJitterShortensByAnAmountFixedPerKey
+caught   an atomic update's TTL is not jittered                             -- TestTTLJitterSpreadsAWarmUp
+caught   a restored deadline is jittered again                              -- TestRestoreKeepsTheDeadlineItWasGiven
+caught   a jitter of one is accepted                                        -- TestTTLJitterMustBeAFraction
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion
