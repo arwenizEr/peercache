@@ -157,7 +157,7 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 	if err := ns.awaitRestore(ctx, in.Key); err != nil {
 		return nil, err
 	}
-	stored, version, found := ns.store.Get(in.Key)
+	stored, version, left, found := ns.store.Lookup(in.Key)
 	if !found {
 		return wire.Encode(&wire.GetResponse{})
 	}
@@ -169,11 +169,10 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		Found: true,
 		Value: value,
 		Stamp: h.stamp(version),
-		// The remaining TTL is not currently readable from the store,
-		// so the owner grants nothing and the caller falls back to its
-		// own L1 maximum. That is the safe direction: the caller's
-		// bound always applies, and an owner can only ever shorten it.
-		TTLRemainingNanos: 0,
+		// How long the key has left, so the caller's L1 copy does not
+		// outlive it. The caller still clamps to its own L1 TTL: an
+		// owner can only ever shorten the bound. Zero: no expiry.
+		TTLRemainingNanos: int64(left),
 	})
 }
 
@@ -196,15 +195,16 @@ func (h *peerHandler) replicaGet(ctx context.Context, req []byte) ([]byte, error
 		h.cache.replicaReferred.Add(1)
 		return wire.Encode(&wire.ReplicaGetResponse{})
 	}
-	val, stamp, age, ok := ns.replicaCopy(in.Key)
+	val, stamp, age, left, ok := ns.replicaCopy(in.Key)
 	if !ok {
 		return wire.Encode(&wire.ReplicaGetResponse{})
 	}
 	return wire.Encode(&wire.ReplicaGetResponse{
-		Served:   true,
-		Value:    val,
-		Stamp:    stamp,
-		AgeNanos: int64(age),
+		Served:            true,
+		Value:             val,
+		Stamp:             stamp,
+		AgeNanos:          int64(age),
+		TTLRemainingNanos: int64(left),
 	})
 }
 
@@ -246,10 +246,12 @@ func (h *peerHandler) load(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	_, version, _ := ns.store.Get(in.Key)
+	left, _ := ns.store.Remaining(in.Key)
 	return wire.Encode(&wire.LoadResponse{
-		Found: true,
-		Value: value,
-		Stamp: h.stamp(version),
+		Found:             true,
+		Value:             value,
+		Stamp:             h.stamp(version),
+		TTLRemainingNanos: int64(left),
 	})
 }
 
@@ -377,7 +379,7 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 		if err := ns.awaitRestore(ctx, key); err != nil {
 			return nil, err
 		}
-		stored, version, found := ns.store.Get(key)
+		stored, version, left, found := ns.store.Lookup(key)
 		if !found {
 			if in.Load {
 				missing = append(missing, key)
@@ -389,9 +391,10 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			return nil, err
 		}
 		out.Entries = append(out.Entries, wire.BatchEntry{
-			Key:   key,
-			Value: value,
-			Stamp: h.stamp(version),
+			Key:               key,
+			Value:             value,
+			Stamp:             h.stamp(version),
+			TTLRemainingNanos: int64(left),
 		})
 	}
 
@@ -414,10 +417,12 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			// The stamp the value was stored under, for the caller's
 			// L1. A value that was already gone again carries none.
 			_, version, _ := ns.store.Get(key)
+			left, _ := ns.store.Remaining(key)
 			out.Entries = append(out.Entries, wire.BatchEntry{
-				Key:   key,
-				Value: value,
-				Stamp: h.stamp(version),
+				Key:               key,
+				Value:             value,
+				Stamp:             h.stamp(version),
+				TTLRemainingNanos: int64(left),
 			})
 		}
 	}

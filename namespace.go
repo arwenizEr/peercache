@@ -394,20 +394,20 @@ func (n *namespace) fetchHolder(ctx context.Context, p placement, key string) ([
 	}
 
 	var (
-		val    []byte
-		stamp  core.Stamp
-		age    time.Duration
-		served bool
+		val       []byte
+		stamp     core.Stamp
+		age, left time.Duration
+		served    bool
 	)
 	if holder.ID == n.cache.self().ID {
-		val, stamp, age, served = n.replicaCopy(key)
+		val, stamp, age, left, served = n.replicaCopy(key)
 	} else {
 		resp, err := n.cache.route.replicaGet(ctx, holder, p.epoch, n.name, key)
 		if err != nil && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		if err == nil && resp.Served {
-			val, stamp, age, served = resp.Value, resp.Stamp, time.Duration(resp.AgeNanos), true
+			val, stamp, age, left, served = resp.Value, resp.Stamp, time.Duration(resp.AgeNanos), time.Duration(resp.TTLRemainingNanos), true
 		}
 	}
 	if !served {
@@ -421,7 +421,7 @@ func (n *namespace) fetchHolder(ctx context.Context, p placement, key string) ([
 		// The copy's life in this tier ends one L1 TTL after the replica
 		// received it, not one TTL from now, so the bound holds end to end.
 		if remaining := n.opts.L1TTL - age; remaining > 0 {
-			n.l1.Put(key, val, stamp, remaining)
+			n.l1.Put(key, val, stamp, l1Lifetime(remaining, left))
 		}
 	}
 	return val, nil
@@ -468,7 +468,7 @@ func fmix64(x uint64) uint64 {
 // but only if this node may serve it: it ranks as a replica for key under its
 // own current view, the copy is live, and it was received less than one L1 TTL
 // ago. It counts what it served and what it declined.
-func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age time.Duration, ok bool) {
+func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age, left time.Duration, ok bool) {
 	defer func() {
 		if ok {
 			n.cache.replicaServed.Add(1)
@@ -477,7 +477,7 @@ func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age t
 		}
 	}()
 	if n.cache.guard == nil {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
 	holders, count, _ := n.cache.guard.Table().Holders(n.groupKeyFor(key), n.opts.ReplicationFactor)
 	self := n.cache.self().ID
@@ -489,26 +489,29 @@ func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age t
 		}
 	}
 	if !ranked {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
 
 	e, found := n.cache.replicas.Get(n.name, key)
 	if !found || e.ReceivedAt == 0 {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
 	now := n.cache.opts.Clock.Now().UnixNano()
 	if e.ExpiresAt != 0 && now >= e.ExpiresAt {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
 	age = time.Duration(now - e.ReceivedAt)
 	if age < 0 || age >= n.opts.L1TTL {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
 	val, err := n.decode(e.Value)
 	if err != nil {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}
-	return val, e.Stamp, age, true
+	if e.ExpiresAt != 0 {
+		left = time.Duration(e.ExpiresAt - now)
+	}
+	return val, e.Stamp, age, left, true
 }
 
 // fetchOwner sends one read to the owner and caches the answer in L1.
@@ -522,7 +525,7 @@ func (n *namespace) fetchOwner(ctx context.Context, p placement, key string) ([]
 			return val, nil
 		}
 	}
-	value, stamp, err := n.cache.route.remoteGet(ctx, p, n.name, key)
+	value, stamp, left, err := n.cache.route.remoteGet(ctx, p, n.name, key)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +535,7 @@ func (n *namespace) fetchOwner(ctx context.Context, p placement, key string) ([]
 	// one that holds — which is what makes the TTL a real limit on staleness
 	// rather than a suggestion the owner can override.
 	if n.l1 != nil {
-		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+		n.l1.Put(key, value, stamp, l1Lifetime(n.opts.L1TTL, left))
 	}
 	return value, nil
 }
@@ -946,7 +949,7 @@ func (n *namespace) remoteBatchGet(ctx context.Context, batch *ownerBatch, out m
 	for _, e := range entries {
 		out[e.Key] = e.Value // plain; see remoteGet
 		if n.l1 != nil {
-			n.l1.Put(e.Key, e.Value, e.Stamp, n.opts.L1TTL)
+			n.l1.Put(e.Key, e.Value, e.Stamp, l1Lifetime(n.opts.L1TTL, time.Duration(e.TTLRemainingNanos)))
 		}
 	}
 	return nil
@@ -1110,7 +1113,7 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 		}
 	}
 
-	value, stamp, err := n.cache.route.remoteLoad(ctx, p, n.name, key)
+	value, stamp, left, err := n.cache.route.remoteLoad(ctx, p, n.name, key)
 	if err != nil {
 		if retry && retryable(err) {
 			next, rerr := n.cache.route.locate(n.groupKeyFor(key))
@@ -1125,7 +1128,7 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 		return nil, err
 	}
 	if n.l1 != nil {
-		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+		n.l1.Put(key, value, stamp, l1Lifetime(n.opts.L1TTL, left))
 	}
 	return value, nil
 }
@@ -1140,4 +1143,16 @@ func (n *namespace) awaitRestore(ctx context.Context, key string) error {
 		return nil
 	}
 	return n.persister.await(ctx, key)
+}
+
+// l1Lifetime is how long a copy may live in the non-owned tier: the
+// namespace's bound, cut to the key's own remaining lifetime when the key
+// expires sooner. A copy must not outlive its key — a session that expired on
+// its owner must not stay readable elsewhere for up to an L1 TTL. Zero left
+// means the key does not expire.
+func l1Lifetime(bound, left time.Duration) time.Duration {
+	if left > 0 && left < bound {
+		return left
+	}
+	return bound
 }
