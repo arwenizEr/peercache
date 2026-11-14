@@ -2650,6 +2650,18 @@ mutate "a jitter of one is accepted" \
   '	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {' \
   '	if o.TTLJitter < 0 || o.TTLJitter != o.TTLJitter {' \
   'TestTTLJitterMustBeAFraction$' ./tests
+# --- catch-up rate ---
+
+mutate "catch-up ignores its rate" \
+  catchup.go \
+  '		if rate := c.opts.CatchUpRate; rate > 0 && len(resp.Entries) > 0 {' \
+  '		if rate := c.opts.CatchUpRate; false && rate > 0 {' \
+  'TestCatchUpPullsAtTheConfiguredRate$' ./tests
+mutate "a negative catch-up rate is accepted" \
+  internal/core/options.go \
+  '	if o.CatchUpRate < 0 {' \
+  '	if false {' \
+  'TestCatchUpRateMustNotBeNegative$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

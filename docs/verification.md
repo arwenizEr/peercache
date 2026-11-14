@@ -662,6 +662,8 @@ caught   jitter is drawn afresh on every write                              -- T
 caught   an atomic update's TTL is not jittered                             -- TestTTLJitterSpreadsAWarmUp
 caught   a restored deadline is jittered again                              -- TestRestoreKeepsTheDeadlineItWasGiven
 caught   a jitter of one is accepted                                        -- TestTTLJitterMustBeAFraction
+caught   catch-up ignores its rate                                          -- TestCatchUpPullsAtTheConfiguredRate
+caught   a negative catch-up rate is accepted                               -- TestCatchUpRateMustNotBeNegative
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

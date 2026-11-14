@@ -27,6 +27,7 @@ and output-checked by `go test`:
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
 | `ExampleWithL1MaxBytes` | the non-owned tier bounded in bytes, and zero refused |
+| `ExampleWithCatchUpRate` | the catch-up rate configured, a negative one rejected |
 | `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
 | `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
@@ -1049,6 +1050,26 @@ they are the application's, and `Ready` already says when to make them.
 Turn it on wherever the application calls `CatchUp` before serving, as the
 deployment in `deploy/` does. It is off by default because a node whose
 application never calls `CatchUp` would refuse its peers indefinitely.
+
+#### `WithCatchUpRate` — how fast, not just when
+
+```go
+cache, err := peercache.New(
+    peercache.WithMembership(gossip),
+    peercache.WithTransport(tr),
+    peercache.WithCatchUpRate(20_000), // entries per second, across all peers
+)
+```
+
+The application decides *when* `CatchUp` runs; this bounds *how fast*. Without
+it, a node joining at peak traffic has every peer serve it 512-entry pages as
+fast as they can, competing with their own requests. With it, after each page
+`CatchUp` waits as long as that page's entries take at the rate, so the average
+over the whole catch-up stays at or under it. The node stays unready while it
+catches up, so choose a rate that still finishes within the rollout's patience:
+20,000 a second is a million keys in under a minute. The wait is on the cache's
+clock and ends at the context's deadline. Zero, the default, does not pace; a
+negative rate is `ErrInvalidOption`.
 
 #### `ReplicasCurrent` — beside readiness, not inside it
 
