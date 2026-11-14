@@ -10,9 +10,12 @@ import (
 	"github.com/arwenizEr/peercache/internal/l1"
 )
 
+// benchCache returns a tier sized to hold about capacity of the benchmarks'
+// entries: a key of some twenty bytes and a 64-byte value, plus the overhead.
 func benchCache(b *testing.B, capacity int) *l1.Cache {
 	b.Helper()
-	c, err := l1.New(l1.Options{Clock: clock.Real(), Capacity: capacity, MaxTTL: time.Hour})
+	per := int64(20+64) + l1.EntryOverhead
+	c, err := l1.New(l1.Options{Clock: clock.Real(), MaxBytes: int64(capacity) * per, MaxTTL: time.Hour})
 	if err != nil {
 		b.Fatalf("l1.New: %v", err)
 	}

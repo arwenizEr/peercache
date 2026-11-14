@@ -2453,6 +2453,26 @@ mutate "a rolling upgrade's handovers are counted as forks" \
   'return held.Prev < in.Order' \
   'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
+# --- the L1 tier bounded in bytes ---
+
+mutate "the L1 bound counts entries, not bytes" \
+  internal/l1/l1.go \
+  '		Cost(cost).
+' \
+  '' \
+  'TestMaxBytesIsBounded$' ./internal/l1
+mutate "a namespace's L1 bound never reaches the tier" \
+  peercache.go \
+  '			MaxBytes: opts.L1MaxBytes,
+' \
+  '' \
+  'TestTheL1TierIsBoundedInBytes$' ./tests
+mutate "an L1 bound of zero is accepted" \
+  internal/core/options.go \
+  '	if o.L1MaxBytes <= 0 {' \
+  '	if o.L1MaxBytes < 0 {' \
+  'TestAnL1BoundMustBePositive$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

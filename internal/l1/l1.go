@@ -29,9 +29,11 @@ const writeStripes = 256
 
 // Defaults and limits for [Options].
 const (
-	// DefaultCapacity is the number of non-owned entries kept before
-	// eviction begins.
-	DefaultCapacity = 100_000
+	// DefaultMaxBytes is how much the tier may hold, charged as
+	// [EntryOverhead] plus key and value bytes per entry, before eviction
+	// begins. A bound in bytes, not entries: an entry count lets a namespace
+	// of large values take whatever memory its count allows.
+	DefaultMaxBytes = core.DefaultL1MaxBytes
 	// DefaultMaxTTL is the hard ceiling on how stale a non-owned read may
 	// be. It is short on purpose: this is the only bound that exists on
 	// staleness, since invalidation broadcasts may be lost.
@@ -49,11 +51,22 @@ const EntryOverhead int64 = 128
 // size is what one entry is charged.
 func size(key string, e entry) int64 { return int64(len(key)+len(e.val)) + EntryOverhead }
 
+// cost is size in the library's unit. An entry past 4 GiB saturates, which only
+// matters to a bound above that, and then the entry is still charged at least
+// 4 GiB.
+func cost(key string, e entry) uint32 {
+	if n := size(key, e); n < math.MaxUint32 {
+		return uint32(n)
+	}
+	return math.MaxUint32
+}
+
 // Options configures a [Cache].
 type Options struct {
-	// Capacity is the maximum number of entries. Defaults to
-	// [DefaultCapacity].
-	Capacity int
+	// MaxBytes bounds what the tier holds, each entry charged as in
+	// [Cache.Bytes]. Defaults to [DefaultMaxBytes]. An entry larger than the
+	// whole bound is never admitted.
+	MaxBytes int64
 	// Clock is the time source used for expiry. Required.
 	Clock clock.Clock
 	// MaxTTL is the ceiling applied to every entry, whatever the caller
@@ -117,11 +130,14 @@ func New(opts Options) (*Cache, error) {
 	if opts.Clock == nil {
 		return nil, fmt.Errorf("l1: a clock is required: %w", core.ErrInvalidOption)
 	}
-	if opts.Capacity == 0 {
-		opts.Capacity = DefaultCapacity
+	if opts.MaxBytes == 0 {
+		opts.MaxBytes = DefaultMaxBytes
 	}
-	if opts.Capacity < 1 {
-		return nil, fmt.Errorf("l1: capacity %d must be positive: %w", opts.Capacity, core.ErrInvalidOption)
+	if opts.MaxBytes < 1 {
+		return nil, fmt.Errorf("l1: max bytes %d must be positive: %w", opts.MaxBytes, core.ErrInvalidOption)
+	}
+	if opts.MaxBytes > math.MaxInt {
+		return nil, fmt.Errorf("l1: max bytes %d does not fit this platform: %w", opts.MaxBytes, core.ErrInvalidOption)
 	}
 	if opts.MaxTTL == 0 {
 		opts.MaxTTL = DefaultMaxTTL
@@ -140,7 +156,10 @@ func New(opts Options) (*Cache, error) {
 	}
 
 	bytes := new(atomic.Int64)
-	inner, err := otter.MustBuilder[string, entry](opts.Capacity).
+	inner, err := otter.MustBuilder[string, entry](int(opts.MaxBytes)).
+		// The library's capacity is a total cost; each entry costs what
+		// Bytes charges it, so the bound and the gauge agree.
+		Cost(cost).
 		// Every cause is a removal of the reported value, including
 		// Replaced: the listener is told about the old value, and the
 		// Put that replaced it charged the new one.
@@ -401,8 +420,8 @@ func (c *Cache) Shed() int64 {
 // but have not been read since.
 func (c *Cache) Len() int { return c.inner.Size() }
 
-// Capacity returns the configured maximum number of entries.
-func (c *Cache) Capacity() int { return c.inner.Capacity() }
+// MaxBytes returns the configured bound on [Cache.Bytes].
+func (c *Cache) MaxBytes() int64 { return int64(c.inner.Capacity()) }
 
 // Counters is a snapshot of a cache's activity.
 type Counters struct {

@@ -22,6 +22,7 @@ and output-checked by `go test`:
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
+| `ExampleWithL1MaxBytes` | the non-owned tier bounded in bytes, and zero refused |
 | `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
 | `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
@@ -226,6 +227,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
 | `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
+| `WithL1MaxBytes(int64)` | 64 MiB | Bounds the memory of the namespace's non-owned copies on each node: key, value and a fixed 128-byte overhead per copy. Past it copies are evicted (round trips, never data); a copy larger than the bound is not cached. Zero or negative is `ErrInvalidOption`. Eviction is asynchronous, so a write burst can overshoot briefly; leave headroom. |
 | `WithPersistence(persist.BlobStore)` | off | Writes the namespace behind to a blob store so keys survive losing every holder. See below. |
 | `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |

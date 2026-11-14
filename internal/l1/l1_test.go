@@ -19,7 +19,7 @@ func newCache(t *testing.T, opts ...func(*l1.Options)) (*l1.Cache, *clock.Fake) 
 	fc := clock.NewFake(clock.Epoch)
 	fc.SetMisuseHandler(func(msg string) { t.Errorf("clock misuse: %s", msg) })
 
-	o := l1.Options{Clock: fc, Capacity: 1000}
+	o := l1.Options{Clock: fc, MaxBytes: 1 << 20}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -354,20 +354,46 @@ func TestInvalidateOlderThanKeepsNewerCopies(t *testing.T) {
 	}
 }
 
-func TestCapacityIsBounded(t *testing.T) {
-	const capacity = 500
-	c, _ := newCache(t, func(o *l1.Options) { o.Capacity = capacity })
+// TestMaxBytesIsBounded fills the tier with values of mixed sizes, ten times
+// over, and checks what it holds against the bound in bytes. An entry count
+// would let the large values take whatever memory the count allows.
+func TestMaxBytesIsBounded(t *testing.T) {
+	const maxBytes = 64 << 10
+	c, _ := newCache(t, func(o *l1.Options) { o.MaxBytes = maxBytes })
 
-	for i := 0; i < capacity*10; i++ {
-		c.Put(fmt.Sprintf("k:%d", i), []byte("v"), core.Stamp{Version: 1}, time.Minute)
+	var put int64
+	for i := 0; put < maxBytes*10; i++ {
+		val := make([]byte, []int{8, 300, 2000}[i%3])
+		key := fmt.Sprintf("k:%d", i)
+		c.Put(key, val, core.Stamp{Version: 1}, time.Minute)
+		put += int64(len(key)+len(val)) + l1.EntryOverhead
 	}
 	// Eviction is asynchronous in the underlying library; yield until it has
 	// caught up rather than asserting on a transient overshoot.
-	for i := 0; i < 1_000_000 && c.Len() > capacity; i++ {
+	for i := 0; i < 1_000_000 && c.Bytes() > maxBytes; i++ {
 		runtime.Gosched()
 	}
-	if got := c.Len(); got > capacity {
-		t.Fatalf("Len = %d, exceeds capacity %d", got, capacity)
+	if got := c.Bytes(); got > maxBytes {
+		t.Fatalf("Bytes = %d, exceeds the bound %d", got, maxBytes)
+	}
+	if c.MaxBytes() != maxBytes {
+		t.Fatalf("MaxBytes = %d, want %d", c.MaxBytes(), maxBytes)
+	}
+}
+
+// TestAnEntryLargerThanTheBoundIsNotCached checks the one copy the tier
+// refuses outright: caching it would mean evicting everything else and still
+// holding more than the bound.
+func TestAnEntryLargerThanTheBoundIsNotCached(t *testing.T) {
+	c, _ := newCache(t, func(o *l1.Options) { o.MaxBytes = 4 << 10 })
+	if c.Put("big", make([]byte, 8<<10), core.Stamp{Version: 1}, time.Minute) {
+		t.Fatal("Put reported caching an entry larger than the whole bound")
+	}
+	if _, _, ok := c.Get("big"); ok {
+		t.Fatal("an entry larger than the whole bound was served")
+	}
+	if got := c.Bytes(); got != 0 {
+		t.Fatalf("Bytes = %d after a refused Put, want 0", got)
 	}
 }
 
@@ -406,10 +432,10 @@ func TestStatsCountExpiredReadsAsMisses(t *testing.T) {
 func TestNewRejectsBadOptions(t *testing.T) {
 	fc := clock.NewFake(clock.Epoch)
 	tests := map[string]l1.Options{
-		"no clock":             {Capacity: 10},
-		"negative capacity":    {Clock: fc, Capacity: -1},
-		"negative max TTL":     {Clock: fc, Capacity: 10, MaxTTL: -time.Second},
-		"negative default TTL": {Clock: fc, Capacity: 10, DefaultTTL: -time.Second},
+		"no clock":             {MaxBytes: 10 << 10},
+		"negative max bytes":   {Clock: fc, MaxBytes: -1},
+		"negative max TTL":     {Clock: fc, MaxBytes: 10 << 10, MaxTTL: -time.Second},
+		"negative default TTL": {Clock: fc, MaxBytes: 10 << 10, DefaultTTL: -time.Second},
 	}
 	for name, opts := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -424,7 +450,7 @@ func TestConcurrentAccessIsSafe(t *testing.T) {
 	const goroutines = 16
 	const operations = 2000
 
-	c, _ := newCache(t, func(o *l1.Options) { o.Capacity = 2000 })
+	c, _ := newCache(t, func(o *l1.Options) { o.MaxBytes = 2000 * 256 })
 
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {

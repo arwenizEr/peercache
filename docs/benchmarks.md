@@ -164,6 +164,21 @@ the default of 256:
 
 Candidate library comparison: `docs/decisions/0005-l1-cache-library.md`.
 
+**Bounded in bytes (decision 0033, 2026-11-14).** The tier's bound became a
+total cost, each entry costing its charged bytes. Medians of five runs, Machine
+A, main against the branch in one sitting:
+
+| Benchmark | entry-count bound | byte bound | Note |
+|---|---:|---:|---|
+| `BenchmarkPut` ns/op | 666.9 | 680.8 | +2%: the cost function and otter's cost-tracking node |
+| `BenchmarkPut` B/op | 165 | 181 | +16 B per entry, the node's cost field |
+| `BenchmarkGetHit` ns/op | 143.7 | 151.6 | within noise: both sides spread 84–157 across runs |
+| `BenchmarkGetHitParallel` ns/op | 61.2 | 63.1 | within noise |
+| `BenchmarkGetMiss` ns/op | 34.8 | 34.8 | |
+
+Reads are unchanged; a Put, which follows a network round trip, costs about
+14 ns more.
+
 ### internal/singleflight
 
 | Benchmark | ns/op | B/op | allocs/op |

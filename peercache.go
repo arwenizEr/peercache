@@ -584,8 +584,9 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 	// A negative L1 TTL means the caller wants no non-owned tier at all.
 	if c.guard != nil && opts.L1TTL > 0 {
 		cache, err := l1.New(l1.Options{
-			Clock:  c.opts.Clock,
-			MaxTTL: opts.L1TTL,
+			Clock:    c.opts.Clock,
+			MaxTTL:   opts.L1TTL,
+			MaxBytes: opts.L1MaxBytes,
 		})
 		if err != nil {
 			ns.err = err
