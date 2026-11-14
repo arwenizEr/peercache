@@ -2578,6 +2578,40 @@ mutate "a batch get from the earlier release cannot be read" \
 		if r.Load, err = dec.DecodeBool(); err != nil {' \
   'TestABatchLoadRequestCrossesARollingUpgrade$' ./internal/wire
 
+# --- refresh-ahead (decision 0036) ---
+
+mutate "a hit inside the window does not refresh" \
+  namespace.go \
+  '			n.maybeRefresh(key, version, left)
+' \
+  '' \
+  'TestARefreshReloadsAKeyNearItsExpiry$' ./tests
+mutate "every hit refreshes, whatever its remaining lifetime" \
+  refresh.go \
+  '	if left == 0 || left >= n.opts.RefreshAhead {' \
+  '	if left == 0 {' \
+  'TestARefreshReloadsAKeyNearItsExpiry$' ./tests
+mutate "each hit in the window starts its own refresh" \
+  refresh.go \
+  '	if _, busy := n.refreshing.LoadOrStore(key, struct{}{}); busy {' \
+  '	if _, busy := n.refreshing.LoadOrStore(key, struct{}{}); false && busy {' \
+  'TestConcurrentHitsStartOneRefresh$' ./tests
+mutate "a refresh stores over a write that landed during it" \
+  internal/store/refresh.go \
+  '	if !had || old.version != version || (old.expiresAt != 0 && now.UnixNano() >= old.expiresAt) {' \
+  '	if !had {' \
+  'TestAWriteDuringARefreshWins$' ./tests
+mutate "Close does not wait for a refresh in flight" \
+  refresh.go \
+  '	n.refreshWG.Wait()
+' \
+  '' \
+  'TestCloseWaitsForARefresh$' ./tests
+mutate "refresh-ahead is accepted without a loader" \
+  internal/core/options.go \
+  '	if o.RefreshAhead > 0 && o.Loader == nil && o.TypedLoader == nil {' \
+  '	if false {' \
+  'TestRefreshAheadNeedsALoader$' ./tests
 # --- TTL jitter (decision 0037) ---
 
 mutate "a namespace's jitter never reaches its store" \

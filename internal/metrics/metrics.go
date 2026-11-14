@@ -95,6 +95,8 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_persist_split_failures_total", Counter, "Splits that stopped part-way; the next one completes them.", float64(s.PersistSplitFailures)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
 		{"peercache_negative_hits_total", Counter, "GetOrLoad calls answered not-found from a remembered absence, without calling the loader.", float64(s.NegativeHits)},
+		{"peercache_refreshes_total", Counter, "Background reloads of keys read near their expiry, by WithRefreshAhead.", float64(s.Refreshes)},
+		{"peercache_refresh_failures_total", Counter, "Background reloads whose loader failed; the current value was kept until its own expiry.", float64(s.RefreshFailures)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 
 		// Correctness. These are the ones that matter.

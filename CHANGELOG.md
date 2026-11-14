@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- `WithRefreshAhead(window)`: a `GetOrLoad` hit on a key's owner with less than
+  `window` of its lifetime left returns the current value and reloads the key
+  once in the background, storing only if no write landed meanwhile; a failed
+  reload keeps the value. `Stats().Refreshes`/`RefreshFailures`, two metric
+  series (63). Decision 0036.
 - `WithTTLJitter(fraction)`: the owner shortens every TTL it assigns by up to
   `fraction`, by an amount fixed per key, so keys written together do not
   expire together. Never lengthens; replicas and persistence carry the owner's

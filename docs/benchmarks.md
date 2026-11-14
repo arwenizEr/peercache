@@ -121,6 +121,7 @@ say nothing about the cache.
 | `BenchmarkNamespaceSet` | 238.2 | 67 | 1 | the allocation is the value copy |
 | `BenchmarkNamespaceSetParallel` | 99.9 | 65 | 1 | |
 | `BenchmarkGetOrLoadHit` | 72.7 | 0 | 0 | resident path through singleflight |
+| `BenchmarkGetOrLoadHitWithRefreshAhead` | 99.1 | 0 | 0 | the same hit in a namespace with `WithRefreshAhead`, keys an hour from expiry: the window check and the clock read an expiring key needs. BenchmarkGetOrLoadHit, keys without TTL, ran 37–85 (median 65) in the same sitting. Decision 0036, 2026-11-14 |
 | `BenchmarkGetOrLoadNegativeHit` | 95.3 | 0 | 0 | a missing key answered from its remembered absence (decision 0034); spread 56–121 ns. Measured 2026-11-14 |
 | `BenchmarkGetOrLoadNotFound` | 3,423 | 945 | 18 | the same probe without negative caching, through a loader that does no work; a real one adds a database round trip |
 | `BenchmarkBatchGet` | 18,873 | 5464 | 4 | 100 keys, so ~189 ns/key; the allocations are the result map |

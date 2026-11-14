@@ -104,7 +104,10 @@ func TestADeclaredCountIsNotBelieved(t *testing.T) {
 			t.Fatalf("a record count of 2^40 in a few bytes: %v, want ErrCorrupt", err)
 		}
 	})
-	if allocs > 4 {
+	// The race detector allocates on its own account — 15 of 200 runs
+	// counted a fifth — so the bound is checked only without it. The
+	// refusal above is checked either way.
+	if allocs > 4 && !raceEnabled {
 		t.Fatalf("%.0f allocations decoding a forged count; it must be refused, not sized", allocs)
 	}
 }
