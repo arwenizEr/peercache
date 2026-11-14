@@ -332,6 +332,33 @@ func BenchmarkGetOrLoadHit(b *testing.B) {
 	}
 }
 
+// BenchmarkGetOrLoadHitWithRefreshAhead is BenchmarkGetOrLoadHit in a
+// namespace with WithRefreshAhead and keys an hour from expiry: the cost of
+// checking the window on every hit, which is all a hit outside it pays.
+func BenchmarkGetOrLoadHitWithRefreshAhead(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench", peercache.WithRefreshAhead(time.Second), peercache.WithLoader(
+		func(context.Context, string) ([]byte, time.Duration, error) {
+			b.Fatal("the loader ran on a hit outside the window")
+			return nil, 0, nil
+		}))
+	ctx := context.Background()
+	ks := benchKeys(1024)
+	value := make([]byte, 64)
+	for _, k := range ks {
+		if err := ns.Set(ctx, k, value, time.Hour); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ns.GetOrLoad(ctx, ks[i%len(ks)]); err != nil {
+			b.Fatalf("GetOrLoad: %v", err)
+		}
+	}
+}
+
 // BenchmarkGetOrLoadNegativeHit is a probe for a key that does not exist,
 // answered from the remembered absence (decision 0034). Compare
 // BenchmarkGetOrLoadNotFound: the same probe with nothing remembered, against

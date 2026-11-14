@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/arwenizEr/peercache"
@@ -428,6 +430,45 @@ func ExampleNamespace_BatchGet() {
 	// tenant:acme = 41
 	// tenant:globex = 7
 	// asked for 3, received: 2
+}
+
+// ExampleWithRefreshAhead shows a hot key reloaded in the background before it
+// expires: the read near its end is answered at once with the current value,
+// and the next read has the new one.
+func ExampleWithRefreshAhead() {
+	fc := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fc))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	var version atomic.Int64
+	prices := cache.Namespace("prices",
+		peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+			return []byte(fmt.Sprintf("price v%d", version.Add(1))), time.Minute, nil
+		}),
+		peercache.WithRefreshAhead(10*time.Second),
+	)
+	ctx := context.Background()
+
+	v, _ := prices.GetOrLoad(ctx, "sku:1")
+	fmt.Println(string(v))
+
+	fc.Advance(55 * time.Second) // five seconds left
+	v, _ = prices.GetOrLoad(ctx, "sku:1")
+	fmt.Println("near expiry:", string(v))
+
+	for cache.Stats().Refreshes == 0 {
+		runtime.Gosched() // the reload runs in the background
+	}
+	v, _ = prices.Get(ctx, "sku:1")
+	fmt.Println("after the refresh:", string(v))
+	// Output:
+	// price v1
+	// near expiry: price v1
+	// after the refresh: price v2
 }
 
 // ExampleWithBatchLoader shows BatchGetOrLoad: the keys an owner is missing

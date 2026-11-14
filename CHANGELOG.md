@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- `WithRefreshAhead(window)`: a `GetOrLoad` hit on a key's owner with less than
+  `window` of its lifetime left returns the current value and reloads the key
+  once in the background, storing only if no write landed meanwhile; a failed
+  reload keeps the value. `Stats().Refreshes`/`RefreshFailures`, two metric
+  series (63). Decision 0036.
 - `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
   copy charged its key, value and a fixed overhead, the same charge the L1
   bytes gauge and the memory budget use. Decision 0033.

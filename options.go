@@ -401,6 +401,24 @@ func WithNegativeCaching(ttl time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.NegativeTTL = ttl }
 }
 
+// WithRefreshAhead reloads a key in the background, before it expires, when it
+// is still being read. When GetOrLoad on a key's owner finds it resident with
+// less than window of its lifetime left, it returns the current value at once
+// and starts one reload with the namespace's loader; the next read sees the
+// reloaded value with a fresh lifetime. Popular keys stop costing their
+// callers a synchronous load at every expiry.
+//
+// The reload never stores over a newer write: a Set, Delete or atomic
+// operation that landed while the loader ran wins, and so does an expiry. A
+// failed reload keeps the current value until its own expiry. It runs on the
+// owner only, in the key's single-flight — a miss of an expired key joins it —
+// and Close waits for it. Get never loads, so it never refreshes. Zero turns it
+// off; a negative window, or one on a namespace without a loader, is
+// ErrInvalidOption. See docs/decisions/0036-refresh-ahead.md.
+func WithRefreshAhead(window time.Duration) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.RefreshAhead = window }
+}
+
 // WithL1TTL bounds how long a copy of a non-owned key may be served from local
 // memory.
 //
