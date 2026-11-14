@@ -332,6 +332,42 @@ func BenchmarkGetOrLoadHit(b *testing.B) {
 	}
 }
 
+// BenchmarkGetOrLoadNegativeHit is a probe for a key that does not exist,
+// answered from the remembered absence (decision 0034). Compare
+// BenchmarkGetOrLoadNotFound: the same probe with nothing remembered, against
+// a loader that answers instantly — a real one is a database round trip.
+func BenchmarkGetOrLoadNegativeHit(b *testing.B) {
+	benchNotFound(b, peercache.WithNegativeCaching(time.Hour))
+}
+
+// BenchmarkGetOrLoadNotFound is the probe without negative caching: every call
+// runs the loader, here one that does no work at all.
+func BenchmarkGetOrLoadNotFound(b *testing.B) {
+	benchNotFound(b)
+}
+
+func benchNotFound(b *testing.B, opts ...peercache.NamespaceOption) {
+	c := benchCache(b)
+	opts = append(opts, peercache.WithLoader(
+		func(context.Context, string) ([]byte, time.Duration, error) {
+			return nil, 0, peercache.ErrNotFound
+		}))
+	ns := c.Namespace("bench", opts...)
+	ctx := context.Background()
+	ks := benchKeys(1024)
+	for _, k := range ks {
+		_, _ = ns.GetOrLoad(ctx, k)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ns.GetOrLoad(ctx, ks[i%len(ks)]); err == nil {
+			b.Fatal("GetOrLoad found a key that does not exist")
+		}
+	}
+}
+
 // BenchmarkBatchGetOrLoadCold reads 50 keys none of which is resident, through
 // a batch loader (one call) and through the per-key loader (fifty), both of
 // which do no work: what is measured is the cache's own cost per miss. A real

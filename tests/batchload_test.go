@@ -296,3 +296,29 @@ func TestAMisroutedLoadNamesTheKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestABatchLoadRemembersAndSkipsAbsences: in a namespace with negative
+// caching, keys the batch loader omitted are remembered, and the next batch
+// does not ask the loader for them (decision 0035, with 0034).
+func TestABatchLoadRemembersAndSkipsAbsences(t *testing.T) {
+	c, _ := newCache(t)
+	ctx := context.Background()
+	var asked [][]string
+	ns := c.Namespace("rows", peercache.WithNegativeCaching(time.Hour), peercache.WithBatchLoader(
+		func(_ context.Context, keys []string) (map[string][]byte, time.Duration, error) {
+			asked = append(asked, append([]string(nil), keys...))
+			return map[string][]byte{"here": []byte("v")}, 0, nil
+		}))
+	if _, err := ns.BatchGetOrLoad(ctx, []string{"here", "gone"}); err != nil {
+		t.Fatalf("BatchGetOrLoad: %v", err)
+	}
+	if _, err := ns.BatchGetOrLoad(ctx, []string{"here", "gone", "new"}); err != nil {
+		t.Fatalf("second BatchGetOrLoad: %v", err)
+	}
+	if len(asked) != 2 || strings.Join(asked[1], ",") != "new" {
+		t.Fatalf("the loader was asked %v; the second batch should ask only for new", asked)
+	}
+	if got := c.Stats().NegativeHits; got != 1 {
+		t.Fatalf("NegativeHits = %d, want 1: the second batch skipped gone", got)
+	}
+}

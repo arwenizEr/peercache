@@ -84,6 +84,19 @@ func (n *namespace) localBatchGetOrLoad(ctx context.Context, keys []string, out 
 // loadMissing loads keys this node owns and does not hold, and adds what it
 // found to out. A key the loader reports absent is left out.
 func (n *namespace) loadMissing(ctx context.Context, missing []string, out map[string][]byte) error {
+	// Keys this owner remembers its loader found missing are not asked
+	// for again (decision 0034).
+	if n.opts.NegativeTTL > 0 {
+		kept := missing[:0:0]
+		for _, key := range missing {
+			if !n.knownAbsent(key) {
+				kept = append(kept, key)
+			}
+		}
+		if missing = kept; len(missing) == 0 {
+			return nil
+		}
+	}
 	if n.opts.BatchLoader == nil {
 		// The per-key loader, through the same single-flight GetOrLoad
 		// uses: the round trips are saved, the queries stay per key.
@@ -152,6 +165,11 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 	for _, key := range keys {
 		val, ok := vals[key]
 		if !ok {
+			// It does not exist: remembered, in a namespace that
+			// remembers absences, as a per-key load's ErrNotFound is.
+			if n.opts.NegativeTTL > 0 {
+				n.store.MarkAbsent(key, n.opts.NegativeTTL)
+			}
 			continue
 		}
 		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)

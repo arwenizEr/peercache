@@ -21,8 +21,10 @@ and output-checked by `go test`:
 | `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
+| `ExampleWithNegativeCaching` | a missing key loaded once, and a Delete forgetting the absence |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
+| `ExampleWithL1MaxBytes` | the non-owned tier bounded in bytes, and zero refused |
 | `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
 | `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
@@ -70,7 +72,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-60 series in the Prometheus text exposition format, and PeerCache imports no
+61 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -228,10 +230,12 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
 | `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
+| `WithL1MaxBytes(int64)` | 64 MiB | Bounds the memory of the namespace's non-owned copies on each node: key, value and a fixed 128-byte overhead per copy. Past it copies are evicted (round trips, never data); a copy larger than the bound is not cached. Zero or negative is `ErrInvalidOption`. Eviction is asynchronous, so a write burst can overshoot briefly; leave headroom. |
 | `WithPersistence(persist.BlobStore)` | off | Writes the namespace behind to a blob store so keys survive losing every holder. See below. |
 | `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
+| `WithNegativeCaching(time.Duration)` | off | The owner remembers a loader's `ErrNotFound` for the TTL and answers `GetOrLoad` without loading. Any write of the key forgets it. Negative is `ErrInvalidOption`. See below. |
 | `WithBatchLoader(BatchLoader)` | none | Loads every key a `BatchGetOrLoad` owner is missing in one call. Without it, `BatchGetOrLoad` uses the `WithLoader` loader per key. See below. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 
@@ -326,6 +330,37 @@ alternative is wrong:
   everyone else.
 - **A panicking loader becomes `ErrLoaderPanic` for every waiter**, rather than a
   panic in a thousand unrelated goroutines. A loader is application code.
+
+### Remembering that a key does not exist
+
+```go
+users := cache.Namespace("users",
+    peercache.WithLoader(loadUser), // returns peercache.ErrNotFound for no such row
+    peercache.WithNegativeCaching(30*time.Second),
+)
+```
+
+Without it, a stream of lookups for keys that do not exist — deleted users, bots
+probing IDs — reaches the database once per request: single-flight collapses
+only *concurrent* misses. With it, when the loader returns an error matching
+`ErrNotFound`, the key's owner remembers the absence for the TTL and answers
+`GetOrLoad` with `ErrNotFound` without calling the loader. Probes through any
+pod reach that owner, so the database is asked once per key per TTL. Each saved
+load is counted in `Stats().NegativeHits`.
+
+- **Only `ErrNotFound` is remembered.** Any other loader error — the database
+  down — is returned and forgotten, so an outage is never served as "not found".
+- **An absence is not a value.** `Get`, `Exists`, `Keys`, replication,
+  hand-off and persistence never see it.
+- **Any write of the key forgets it**: `Set`, `Delete`, `Increment` and the
+  other atomic operations. `Delete` is how an application that just created
+  the row says "load this again". A write that lands while the loader runs wins
+  over the loader's "not found".
+- **It is bounded and owner-local:** at most 256 absences per shard, dropped
+  when full (one more load, never a wrong answer), not replicated, and lost when
+  the key changes owner.
+
+Decision 0034.
 
 ### L1 TTL is a correctness bound
 
@@ -1245,7 +1280,7 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 60 series come out of it.
+format with the content type a scraper expects, and 61 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
@@ -1284,7 +1319,7 @@ change can mix two moments; it is a node's belief, not a consensus.
 
 ### The metrics that are worth alerting on
 
-Most of the 60 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 61 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 

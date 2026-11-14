@@ -384,6 +384,23 @@ func WithCodec(name string) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.Codec = name }
 }
 
+// WithNegativeCaching makes a key's owner remember, for ttl, that the
+// namespace's loader reported the key does not exist — returned an error
+// matching ErrNotFound — and answer GetOrLoad of it with ErrNotFound without
+// calling the loader again. Off by default; zero turns it off and a negative
+// ttl is ErrInvalidOption.
+//
+// It stops a stream of lookups for keys that do not exist from reaching the
+// loader's database once per request. The absence is not a value: Get, Exists,
+// Keys, replication and persistence never see it, and any write of the key —
+// Set, Delete, an atomic operation — forgets it, so a Delete is how an
+// application says "load this again". Only ErrNotFound is remembered; any
+// other loader error, an outage included, is returned and forgotten. Absences
+// stay on the owner, at most 256 per shard: losing one costs one load.
+func WithNegativeCaching(ttl time.Duration) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.NegativeTTL = ttl }
+}
+
 // WithL1TTL bounds how long a copy of a non-owned key may be served from local
 // memory.
 //
@@ -397,6 +414,19 @@ func WithCodec(name string) NamespaceOption {
 // never lag, and the wrong one for almost everything else.
 func WithL1TTL(d time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.L1TTL = d }
+}
+
+// WithL1MaxBytes bounds the memory this namespace's non-owned tier may hold on
+// each node. Default 64 MiB.
+//
+// Each copy is charged its key and value bytes plus a fixed overhead, the same
+// charge the L1 bytes gauge and the memory budget see, so the bound and the
+// gauge agree. Past it the least valuable copies are evicted, which costs round
+// trips, never data. A copy larger than the whole bound is not cached at all.
+// The bound is in bytes, not entries, because a count says nothing about
+// memory once values differ in size. Zero or negative is ErrInvalidOption.
+func WithL1MaxBytes(n int64) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.L1MaxBytes = n }
 }
 
 // WithCompression compresses stored values of at least threshold bytes using

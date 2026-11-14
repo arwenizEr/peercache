@@ -121,12 +121,20 @@ say nothing about the cache.
 | `BenchmarkNamespaceSet` | 238.2 | 67 | 1 | the allocation is the value copy |
 | `BenchmarkNamespaceSetParallel` | 99.9 | 65 | 1 | |
 | `BenchmarkGetOrLoadHit` | 72.7 | 0 | 0 | resident path through singleflight |
+| `BenchmarkGetOrLoadNegativeHit` | 95.3 | 0 | 0 | a missing key answered from its remembered absence (decision 0034); spread 56–121 ns. Measured 2026-11-14 |
+| `BenchmarkGetOrLoadNotFound` | 3,423 | 945 | 18 | the same probe without negative caching, through a loader that does no work; a real one adds a database round trip |
 | `BenchmarkBatchGet` | 18,873 | 5464 | 4 | 100 keys, so ~189 ns/key; the allocations are the result map |
 | `BenchmarkBatchGetOrLoadWarm` | 9,796 | 5272 | 14 | 50 resident keys, ~196 ns/key: nothing loads. Measured 2026-11-14 (BatchGet ran 24,578 ns / 100 keys in the same sitting) |
 | `BenchmarkBatchGetOrLoadCold/batch` | 34,355 | 16930 | 92 | 50 missing keys, one batch loader call that does no work |
 | `BenchmarkBatchGetOrLoadCold/perkey` | 156,971 | 51438 | 771 | the same 50 through the per-key loader: 4.6x the cache's own cost, before the 49 extra queries a real loader makes (decision 0035) |
 | `BenchmarkNamespaceGetCompressed/plain` | 72.2 | 0 | 0 | 4 KiB value |
 | `BenchmarkNamespaceGetCompressed/lz4` | 5023 | 4864 | 1 | same value, 70x — this is why compression is opt-in |
+
+Negative caching added a nil-map check to every store write. Medians of five
+runs on Machine A, main against the branch, 2026-11-14 (the kind cluster idle
+in the background): `BenchmarkNamespaceSet` 441 → 458 ns, spreads 426–478 and
+412–518; `BenchmarkGetOrLoadHit` 82.9 → 84.7 ns; `BenchmarkNamespaceGet` 450 →
+437 ns. All within run-to-run noise.
 
 ### internal/store
 
@@ -166,6 +174,21 @@ the default of 256:
 | `BenchmarkInvalidateOlderThan` | 199.0 | 0 | 0 | |
 
 Candidate library comparison: `docs/decisions/0005-l1-cache-library.md`.
+
+**Bounded in bytes (decision 0033, 2026-11-14).** The tier's bound became a
+total cost, each entry costing its charged bytes. Medians of five runs, Machine
+A, main against the branch in one sitting:
+
+| Benchmark | entry-count bound | byte bound | Note |
+|---|---:|---:|---|
+| `BenchmarkPut` ns/op | 666.9 | 680.8 | +2%: the cost function and otter's cost-tracking node |
+| `BenchmarkPut` B/op | 165 | 181 | +16 B per entry, the node's cost field |
+| `BenchmarkGetHit` ns/op | 143.7 | 151.6 | within noise: both sides spread 84–157 across runs |
+| `BenchmarkGetHitParallel` ns/op | 61.2 | 63.1 | within noise |
+| `BenchmarkGetMiss` ns/op | 34.8 | 34.8 | |
+
+Reads are unchanged; a Put, which follows a network round trip, costs about
+14 ns more.
 
 ### internal/singleflight
 

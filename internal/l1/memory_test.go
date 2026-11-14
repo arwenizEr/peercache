@@ -60,17 +60,17 @@ func TestL1BytesTracksPutsAndRemovals(t *testing.T) {
 }
 
 // TestL1BytesFollowsCapacityEviction checks the path nobody calls: the library
-// evicting on its own because the entry count reached capacity.
+// evicting on its own because the tier reached its bound.
 func TestL1BytesFollowsCapacityEviction(t *testing.T) {
 	const capacity = 200
-	c, _ := newCache(t, func(o *l1.Options) { o.Capacity = capacity })
+	per := l1Charge("k:0000", make([]byte, 20))
+	c, _ := newCache(t, func(o *l1.Options) { o.MaxBytes = capacity * per })
 	for i := 0; i < capacity*5; i++ {
 		c.Put(fmt.Sprintf("k:%04d", i), make([]byte, 20), core.Stamp{Version: 1}, time.Minute)
 	}
 	for i := 0; i < 1_000_000 && c.Len() > capacity; i++ {
 		runtime.Gosched()
 	}
-	per := l1Charge("k:0000", make([]byte, 20))
 	want := int64(c.Len()) * per
 	if got := settleBytes(c, want); got != want {
 		t.Fatalf("after capacity eviction: Bytes = %d, %d resident entries account for %d",

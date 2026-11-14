@@ -2453,6 +2453,69 @@ mutate "a rolling upgrade's handovers are counted as forks" \
   'return held.Prev < in.Order' \
   'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
+# --- the L1 tier bounded in bytes ---
+
+mutate "the L1 bound counts entries, not bytes" \
+  internal/l1/l1.go \
+  '		Cost(cost).
+' \
+  '' \
+  'TestMaxBytesIsBounded$' ./internal/l1
+mutate "a namespace's L1 bound never reaches the tier" \
+  peercache.go \
+  '			MaxBytes: opts.L1MaxBytes,
+' \
+  '' \
+  'TestTheL1TierIsBoundedInBytes$' ./tests
+mutate "an L1 bound of zero is accepted" \
+  internal/core/options.go \
+  '	if o.L1MaxBytes <= 0 {' \
+  '	if o.L1MaxBytes < 0 {' \
+  'TestAnL1BoundMustBePositive$' ./tests
+# --- negative caching (decision 0034) ---
+
+mutate "a remembered absence is never consulted" \
+  namespace.go \
+  'if n.opts.NegativeTTL <= 0 || !n.store.KnownAbsent(key) {' \
+  'if true {' \
+  'TestARememberedAbsenceSavesTheLoad$' ./tests
+mutate "every loader error is remembered as an absence" \
+  namespace.go \
+  'if n.opts.NegativeTTL > 0 && errors.Is(err, ErrNotFound) {' \
+  'if n.opts.NegativeTTL > 0 {' \
+  'TestOnlyAnAbsenceIsRemembered$' ./tests
+mutate "a Delete does not forget an absence" \
+  internal/store/store.go \
+  '	sh.forget(key)
+	order := s.nextOrder()' \
+  '	order := s.nextOrder()' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "a Set does not forget an absence" \
+  internal/store/store.go \
+  '	sh.forget(key)
+	old, had := sh.entries[key]
+	version := old.version + 1' \
+  '	old, had := sh.entries[key]
+	version := old.version + 1' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "an atomic update does not forget an absence" \
+  internal/store/update.go \
+  '	sh.forget(key)
+' \
+  '' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "an absence is recorded over a write that landed during the load" \
+  internal/store/absent.go \
+  'if e, ok := sh.entries[key]; ok && (e.expiresAt == 0 || now.UnixNano() < e.expiresAt) {' \
+  'if e, ok := sh.entries[key]; false && ok && (e.expiresAt == 0 || now.UnixNano() < e.expiresAt) {' \
+  'TestAWriteDuringTheLoadIsNotHiddenByItsAbsence$' ./tests
+mutate "absences grow without bound" \
+  internal/store/absent.go \
+  '				delete(sh.absent, k)
+				break' \
+  '				_ = k
+				break' \
+  'TestAbsencesAreBoundedPerShard$' ./tests
 # --- batch loads (decision 0035) ---
 
 mutate "an owner does not load the keys a batch is missing" \
@@ -2481,10 +2544,9 @@ mutate "a batch load stores over a write that landed during it" \
 mutate "a key the batch loader omitted is stored empty" \
   batchload.go \
   '		val, ok := vals[key]
-		if !ok {
-			continue
-		}' \
-  '		val := vals[key]' \
+		if !ok {' \
+  '		val, ok := vals[key]
+		if ok = true; !ok {' \
   'TestKeysTheBatchLoaderOmitsAreAbsent$' ./tests
 mutate "a failed batch load is reported as success" \
   batchload.go \
@@ -2498,6 +2560,16 @@ mutate "a misrouted key in a load looks like a missing one" \
   '			if false {
 				out.Misrouted = append(out.Misrouted, key)' \
   'TestAMisroutedLoadNamesTheKeys$' ./tests
+mutate "a batch load asks for keys remembered as absent" \
+  batchload.go \
+  '			if !n.knownAbsent(key) {' \
+  '			if true {' \
+  'TestABatchLoadRemembersAndSkipsAbsences$' ./tests
+mutate "a batch load does not remember the keys it omitted" \
+  batchload.go \
+  '				n.store.MarkAbsent(key, n.opts.NegativeTTL)' \
+  '				_ = key' \
+  'TestABatchLoadRemembersAndSkipsAbsences$' ./tests
 mutate "a batch get from the earlier release cannot be read" \
   internal/wire/bounded.go \
   '	if n >= 4 {

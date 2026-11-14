@@ -45,10 +45,14 @@ type NamespaceDescription struct {
 	SyncReplication   bool          `json:"syncReplication"`
 	ReplicaReads      bool          `json:"replicaReads"`
 	L1TTL             time.Duration `json:"l1TTL"`
+	L1MaxBytes        int64         `json:"l1MaxBytes"`
 
 	OwnedKeys   int64 `json:"ownedKeys"`
 	ReplicaKeys int   `json:"replicaKeys"`
 	L1Entries   int64 `json:"l1Entries"`
+	// Absences is the number of keys this node remembers its loader found
+	// missing, in a namespace opened with WithNegativeCaching.
+	Absences int `json:"absences,omitempty"`
 
 	// Persistence is set only for a namespace opened with WithPersistence.
 	Persistence *PersistenceDescription `json:"persistence,omitempty"`
@@ -124,6 +128,7 @@ func (c *cache) describeNamespace(ns *namespace) NamespaceDescription {
 		SyncReplication:   ns.opts.SyncReplication,
 		ReplicaReads:      ns.opts.ReplicaReads,
 		L1TTL:             ns.opts.L1TTL,
+		L1MaxBytes:        ns.opts.L1MaxBytes,
 		ReplicaKeys:       len(c.replicas.Keys(ns.name)),
 	}
 	if ns.err != nil {
@@ -131,6 +136,7 @@ func (c *cache) describeNamespace(ns *namespace) NamespaceDescription {
 	}
 	if ns.store != nil {
 		nd.OwnedKeys = ns.store.Stats().Entries
+		nd.Absences = ns.store.Absences()
 	}
 	if ns.l1 != nil {
 		nd.L1Entries = int64(ns.l1.Len())
