@@ -158,6 +158,10 @@ type NamespaceOptions struct {
 	// correctness bound, not a tuning knob: invalidation is best-effort, so
 	// this is the only thing standing between a stale read and an unbounded one.
 	L1TTL time.Duration
+	// L1MaxBytes bounds the non-owned tier's memory, each entry charged its
+	// key and value bytes plus a fixed overhead. Past it the least valuable
+	// copies are evicted, which costs round trips, never data.
+	L1MaxBytes int64
 
 	// Compressor names the compressor applied to stored values at or above
 	// CompressionThreshold bytes. Empty means values are stored verbatim,
@@ -222,6 +226,8 @@ const (
 	DefaultReplicationFactor = 1
 	// DefaultL1TTL bounds non-owned copies by default. Short on purpose.
 	DefaultL1TTL = 5 * time.Second
+	// DefaultL1MaxBytes bounds a namespace's non-owned tier by default.
+	DefaultL1MaxBytes = 64 << 20
 	// MaxReplicationFactor is the highest replication factor a namespace
 	// may ask for.
 	MaxReplicationFactor = 3
@@ -238,6 +244,7 @@ func DefaultNamespaceOptions() NamespaceOptions {
 		Partitioner:       PartitionByKey(),
 		ReplicationFactor: DefaultReplicationFactor,
 		L1TTL:             DefaultL1TTL,
+		L1MaxBytes:        DefaultL1MaxBytes,
 		LoaderTimeout:     DefaultLoaderTimeout,
 	}
 }
@@ -261,6 +268,9 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.L1TTL == 0 {
 		return fmt.Errorf("peercache: L1 TTL must be positive, got %v: %w", o.L1TTL, ErrInvalidOption)
+	}
+	if o.L1MaxBytes <= 0 {
+		return fmt.Errorf("peercache: L1 max bytes must be positive, got %d: %w", o.L1MaxBytes, ErrInvalidOption)
 	}
 	if o.LoaderTimeout <= 0 {
 		return fmt.Errorf("peercache: loader timeout must be positive, got %v: %w",

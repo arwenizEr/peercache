@@ -288,6 +288,10 @@ configured capacity — measured at 40.9% over before settling back to exact.
 **Picked:** documented, and the L1 capacity should be configured with headroom.
 The tier shares a process with the owned store, so this is real memory.
 
+**Update (decision 0033):** the capacity is now configurable, per namespace and
+in bytes (`WithL1MaxBytes`, default 64 MiB). Until then "configure it with
+headroom" had no option to configure; the overshoot itself is unchanged.
+
 **What would force a change:** a memory-constrained deployment where the
 transient matters, which would need either a hard admission gate or a different
 library.

@@ -512,6 +512,31 @@ func ExampleWithShards() {
 	// dark-mode = on
 }
 
+// ExampleWithL1MaxBytes bounds the memory a namespace's copies of keys owned
+// elsewhere may take on each node. A namespace of large values gets a bound in
+// bytes; an entry count would say nothing about its memory.
+func ExampleWithL1MaxBytes() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	cache.Namespace("thumbnails", peercache.WithL1MaxBytes(256<<20))
+	for _, ns := range cache.Describe().Namespaces {
+		fmt.Printf("%s: L1 holds at most %d MiB per node\n", ns.Name, ns.L1MaxBytes>>20)
+	}
+
+	// Zero is refused: turning the tier off is WithL1TTL(-1)'s job.
+	none := cache.Namespace("broken", peercache.WithL1MaxBytes(0))
+	_, err = none.Get(context.Background(), "k")
+	fmt.Println(errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// thumbnails: L1 holds at most 256 MiB per node
+	// true
+}
+
 // ExamplePartitionByPrefix shows how keys are grouped so that related keys
 // share an owner and can be updated in a single actor turn.
 func ExamplePartitionByPrefix() {
