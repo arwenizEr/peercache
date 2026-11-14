@@ -2833,6 +2833,34 @@ mutate "a demoted owner keeps its keys in the owned store" \
   '' \
   'TestADemotedOwnerDoesNotResurrectAnOverwrittenValue$' ./tests
 
+# --- hot keys (decision 0040) ---
+
+mutate "an owner's operations are not counted" \
+  namespace.go \
+  '		n.hot.Seen(key)' \
+  '		_ = key' \
+  'TestTheHottestKeyIsReportedFirst$' ./tests
+mutate "hot-key counts never decay" \
+  internal/hotkeys/hotkeys.go \
+  '	for now.Sub(t.decayed) >= Window {' \
+  '	for false {' \
+  'TestHotKeysDecay$' ./tests
+mutate "a new key does not inherit the replaced count" \
+  internal/hotkeys/hotkeys.go \
+  '	t.counts[key] = minCount + 1' \
+  '	t.counts[key] = 1' \
+  'TestAKeyThatTurnsHotLateIsFound$' ./internal/hotkeys
+mutate "estimates are not scaled by the sample rate" \
+  internal/hotkeys/hotkeys.go \
+  '		out = append(out, Key{Key: k, Estimate: c * SampleEvery})' \
+  '		out = append(out, Key{Key: k, Estimate: c})' \
+  'TestTheHottestKeyIsReportedFirst$' ./tests
+mutate "hot-key tracking accepts any bound" \
+  internal/core/options.go \
+  '	if o.HotKeys < 0 || o.HotKeys > MaxHotKeys {' \
+  '	if o.HotKeys < 0 {' \
+  'TestHotKeysAreOffByDefaultAndBounded$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

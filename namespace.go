@@ -13,6 +13,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/codec"
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/hotkeys"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/singleflight"
 	"github.com/arwenizEr/peercache/internal/store"
@@ -171,6 +172,8 @@ type namespace struct {
 	// refreshes and refreshFailures count completed and failed reloads.
 	refreshes       atomic.Int64
 	refreshFailures atomic.Int64
+	// hot estimates the most accessed keys, with WithHotKeyTracking.
+	hot *hotkeys.Tracker
 	// demotedEpoch is the membership epoch whose ownership the owned store
 	// was last demoted to; see promoter.demote.
 	demotedEpoch atomic.Uint64
@@ -1142,6 +1145,11 @@ var _ Namespace = (*namespace)(nil)
 // restored since the last membership change; see persister.await. Elsewhere it
 // is free.
 func (n *namespace) awaitRestore(ctx context.Context, key string) error {
+	// Every operation the owner serves on a key passes here, which makes
+	// it the one place hot-key tracking needs to watch.
+	if n.hot != nil {
+		n.hot.Seen(key)
+	}
 	if n.persister == nil {
 		return nil
 	}

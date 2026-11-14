@@ -650,6 +650,11 @@ caught   a batch get from the earlier release cannot be read                -- T
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a demoted owner keeps its keys in the owned store                  -- TestADemotedOwnerDoesNotResurrectAnOverwrittenValue
+caught   an owner's operations are not counted                              -- TestTheHottestKeyIsReportedFirst
+caught   hot-key counts never decay                                         -- TestHotKeysDecay
+caught   a new key does not inherit the replaced count                      -- TestAKeyThatTurnsHotLateIsFound
+caught   estimates are not scaled by the sample rate                        -- TestTheHottestKeyIsReportedFirst
+caught   hot-key tracking accepts any bound                                 -- TestHotKeysAreOffByDefaultAndBounded
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
 caught   a replica delete leaves its digest behind                          -- TestTheReplicaDigestFollowsEveryWritePath

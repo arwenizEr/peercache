@@ -9,6 +9,10 @@ change the public API.
 
 ### Added
 
+- `WithHotKeyTracking(n)`: owners estimate their n most accessed keys (sampled
+  Space-Saving, halved every minute) and report them by name in `Describe` and
+  on the dashboard. Opt-in per namespace because it names keys, the one
+  exception to decision 0031. Decision 0040.
 - A live dashboard at the debug handler's `/ui`: this node's counters with
   rates, every member's view and agreement, namespaces, the replica check on
   demand and a key lookup. One embedded page reading the handler's own JSON;

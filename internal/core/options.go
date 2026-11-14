@@ -206,6 +206,11 @@ type NamespaceOptions struct {
 	// docs/decisions/0034-negative-caching.md.
 	NegativeTTL time.Duration
 
+	// HotKeys is how many of the most accessed keys this namespace's
+	// owners report in Describe. Zero, the default, tracks nothing. See
+	// docs/decisions/0040-hot-keys.md.
+	HotKeys int
+
 	// TTLJitter shortens every TTL the owner assigns by up to this
 	// fraction, fixed per key. See docs/decisions/0037-ttl-jitter.md.
 	TTLJitter float64
@@ -257,6 +262,9 @@ const (
 	DefaultReplicationFactor = 1
 	// DefaultL1TTL bounds non-owned copies by default. Short on purpose.
 	DefaultL1TTL = 5 * time.Second
+	// MaxHotKeys bounds WithHotKeyTracking: a report longer than this is
+	// a dump, not a diagnosis.
+	MaxHotKeys = 100
 	// DefaultL1MaxBytes bounds a namespace's non-owned tier by default.
 	DefaultL1MaxBytes = 64 << 20
 	// MaxReplicationFactor is the highest replication factor a namespace
@@ -313,6 +321,9 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {
 		return fmt.Errorf("peercache: TTL jitter must be in [0, 1), got %v: %w", o.TTLJitter, ErrInvalidOption)
+	}
+	if o.HotKeys < 0 || o.HotKeys > MaxHotKeys {
+		return fmt.Errorf("peercache: hot-key tracking reports 0..%d keys, got %d: %w", MaxHotKeys, o.HotKeys, ErrInvalidOption)
 	}
 	if o.NegativeTTL < 0 {
 		return fmt.Errorf("peercache: negative caching TTL must not be negative, got %v: %w",

@@ -464,6 +464,26 @@ func WithTTLJitter(fraction float64) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.TTLJitter = fraction }
 }
 
+// WithHotKeyTracking makes this namespace's owners estimate their n most
+// accessed keys, 1 <= n <= 100, and report them — by name — in Describe, the
+// debug handler and its dashboard.
+//
+// **It exposes keys.** Everything else the library reports holds counts and
+// options only (docs/decisions/0031-introspection.md), so the debug handler is
+// safe on an internal port. A hot-key list is useful only if it names keys, so
+// turning this on is a decision, per namespace, that its keys may be read by
+// whoever can reach that port; do not enable it on a namespace whose keys are
+// personal data.
+//
+// Every read and write the owner serves is counted — its own and its peers' —
+// but only one access in 16 takes a lock, and the counters are bounded at four
+// per reported key (Space-Saving), so the cost is small and fixed. Estimates
+// are halved every minute, so the list shows what is hot now. Zero, the
+// default, tracks nothing. See docs/decisions/0040-hot-keys.md.
+func WithHotKeyTracking(n int) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.HotKeys = n }
+}
+
 // WithL1TTL bounds how long a copy of a non-owned key may be served from local
 // memory.
 //

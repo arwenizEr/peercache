@@ -92,6 +92,11 @@ pre { margin: 10px 0 0; padding: 10px; background: var(--bg); border-radius: 6px
     </section>
   </div>
 
+  <section id="hot-section" hidden>
+    <h2>Hot keys <span class="muted">across the cluster, from namespaces opened with WithHotKeyTracking; estimates over about the last minute</span></h2>
+    <div class="scroll"><table id="hot"></table></div>
+  </section>
+
   <section>
     <h2>Namespaces on this node</h2>
     <div class="scroll"><table id="namespaces"></table></div>
@@ -158,6 +163,27 @@ function renderCluster(c) {
   }
   $("cluster").innerHTML = html;
   $("disagree").textContent = (c.disagreements || []).join(" · ");
+  renderHot(c);
+}
+
+function renderHot(c) {
+  const rows = [];
+  for (const n of c.nodes) {
+    for (const ns of ((n.description && n.description.namespaces) || [])) {
+      for (const h of (ns.hotKeys || [])) rows.push({node: n.id, ns: ns.name, key: h.key, accesses: h.accesses});
+    }
+  }
+  $("hot-section").hidden = rows.length === 0;
+  if (!rows.length) return;
+  rows.sort((a, b) => b.accesses - a.accesses);
+  const max = rows[0].accesses || 1;
+  let html = `<tr><th>Key</th><th>Namespace</th><th>Owner</th><th class="n">Accesses</th><th></th></tr>`;
+  for (const r of rows.slice(0, 20)) {
+    const w = Math.max(2, Math.round(160 * r.accesses / max));
+    html += `<tr><td class="mono">${esc(r.key)}</td><td class="mono">${esc(r.ns)}</td><td class="mono">${esc(r.node)}</td>
+      <td class="n">${fmt(r.accesses)}</td><td><span style="display:inline-block;height:8px;width:${w}px;background:var(--accent);border-radius:4px"></span></td></tr>`;
+  }
+  $("hot").innerHTML = html;
 }
 
 function renderNamespaces(list) {

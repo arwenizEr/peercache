@@ -15,6 +15,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/codec"
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/hlc"
+	"github.com/arwenizEr/peercache/internal/hotkeys"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -593,6 +594,9 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 	ns.store = st
 	if opts.Persistence != nil {
 		ns.persister = newPersister(ns, opts.Persistence)
+	}
+	if opts.HotKeys > 0 {
+		ns.hot = hotkeys.New(c.opts.Clock, opts.HotKeys)
 	}
 
 	// The non-owned tier only exists once there is somewhere else for a key
