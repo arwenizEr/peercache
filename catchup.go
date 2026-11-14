@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/replication"
@@ -231,6 +232,16 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 				c.splitBrain.Add(1)
 			}
 			after = e.Key
+		}
+
+		// Paced after the page, by what it carried, so the rate holds over
+		// the whole catch-up whatever the page size and however the keys
+		// fall between peers. See WithCatchUpRate.
+		if rate := c.opts.CatchUpRate; rate > 0 && len(resp.Entries) > 0 {
+			wait := time.Duration(len(resp.Entries)) * time.Second / time.Duration(rate)
+			if err := c.opts.Clock.Sleep(ctx, wait); err != nil {
+				return err
+			}
 		}
 
 		if !resp.More || len(resp.Entries) == 0 {

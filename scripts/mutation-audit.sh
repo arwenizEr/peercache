@@ -2578,6 +2578,19 @@ mutate "a batch get from the earlier release cannot be read" \
 		if r.Load, err = dec.DecodeBool(); err != nil {' \
   'TestABatchLoadRequestCrossesARollingUpgrade$' ./internal/wire
 
+# --- catch-up rate ---
+
+mutate "catch-up ignores its rate" \
+  catchup.go \
+  '		if rate := c.opts.CatchUpRate; rate > 0 && len(resp.Entries) > 0 {' \
+  '		if rate := c.opts.CatchUpRate; false && rate > 0 {' \
+  'TestCatchUpPullsAtTheConfiguredRate$' ./tests
+mutate "a negative catch-up rate is accepted" \
+  internal/core/options.go \
+  '	if o.CatchUpRate < 0 {' \
+  '	if false {' \
+  'TestCatchUpRateMustNotBeNegative$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

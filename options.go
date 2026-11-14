@@ -136,6 +136,23 @@ func WithCatchUpGate() Option {
 	return func(o *core.Options) { o.CatchUpGate = true }
 }
 
+// WithCatchUpRate bounds how fast CatchUp pulls, in entries per second across
+// all its peers. After each page CatchUp waits as long as that page's entries
+// take at this rate, so the bound holds on average over every page. Zero, the
+// default, pulls as fast as the peers answer.
+//
+// A node joining during peak traffic otherwise has every peer serve it pages at
+// full speed, competing with their own requests for CPU and the network. The
+// application already decides when to call CatchUp; this decides how fast. A
+// slower catch-up keeps the node unready longer — readiness waits for it — so
+// choose a rate that still finishes inside the rollout's patience: 20,000
+// entries per second catches up a million keys in under a minute. The wait is
+// on the cache's clock and stops at the context's deadline. A negative rate is
+// rejected with [ErrInvalidOption].
+func WithCatchUpRate(entriesPerSecond int) Option {
+	return func(o *core.Options) { o.CatchUpRate = entriesPerSecond }
+}
+
 // WithGroupMailboxSize bounds how many requests may queue for one group before
 // further calls are refused with [ErrGroupOverloaded]. The default is 64.
 //

@@ -925,6 +925,28 @@ func ExampleWithJoinProbation() {
 	// negative rejected: true
 }
 
+// ExampleWithCatchUpRate configures how fast CatchUp may pull from peers. On a
+// cluster of one there is nothing to pull; its pacing on a real cluster is what
+// TestCatchUpPullsAtTheConfiguredRate measures.
+func ExampleWithCatchUpRate() {
+	cache, err := peercache.New(
+		peercache.WithNodeID("pod-0"),
+		peercache.WithCatchUpRate(20_000),
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+	fmt.Println("catch-up:", cache.CatchUp(context.Background()))
+
+	_, err = peercache.New(peercache.WithNodeID("pod-1"), peercache.WithCatchUpRate(-1))
+	fmt.Println("negative rejected:", errors.Is(err, peercache.ErrInvalidOption))
+	// Output:
+	// catch-up: <nil>
+	// negative rejected: true
+}
+
 // ExampleNamespaceOf shows the typed view: values in and out as a Go type, a
 // loader that returns one, and the errors that keep a type mismatch from
 // passing for data.

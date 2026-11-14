@@ -649,6 +649,8 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   catch-up ignores its rate                                          -- TestCatchUpPullsAtTheConfiguredRate
+caught   a negative catch-up rate is accepted                               -- TestCatchUpRateMustNotBeNegative
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

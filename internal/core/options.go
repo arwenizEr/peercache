@@ -71,6 +71,9 @@ type Options struct {
 	// JoinProbation is how long a node must have been up before its peers
 	// rank it. Zero means no probation.
 	JoinProbation time.Duration
+	// CatchUpRate bounds how many entries per second CatchUp pulls from
+	// its peers. Zero pulls as fast as the peers answer.
+	CatchUpRate int
 	// OnEvent receives lifecycle events. It runs on the emitting group's
 	// goroutine and must not block.
 	OnEvent func(Event)
@@ -112,6 +115,9 @@ func (o *Options) Validate() error {
 	if len(o.Seeds) > 0 && o.Membership == nil {
 		return fmt.Errorf("peercache: seeds %v given with no membership authority to join through: %w",
 			o.Seeds, ErrInvalidOption)
+	}
+	if o.CatchUpRate < 0 {
+		return fmt.Errorf("peercache: catch-up rate %d must not be negative: %w", o.CatchUpRate, ErrInvalidOption)
 	}
 	if o.JoinProbation < 0 {
 		return fmt.Errorf("peercache: join probation %v must not be negative: %w", o.JoinProbation, ErrInvalidOption)
