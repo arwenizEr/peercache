@@ -21,6 +21,9 @@ change the public API.
 - `WithCatchUpRate(entriesPerSecond)`: `CatchUp` waits after each page as long
   as its entries take at the rate, so a node joining at peak traffic does not
   have every peer serve it at full speed.
+- `peercachetest`: an in-process cluster for an application's own tests — real
+  caches on a simulated network, membership and fake clock, with `Kill`,
+  `Restart`, `Partition`, `Heal`, `Advance`, `Settle` and `Owner`.
 - `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
   copy charged its key, value and a fixed overhead, the same charge the L1
   bytes gauge and the memory budget use. Decision 0033.

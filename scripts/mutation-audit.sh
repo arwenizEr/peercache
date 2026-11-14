@@ -2662,6 +2662,36 @@ mutate "a negative catch-up rate is accepted" \
   '	if o.CatchUpRate < 0 {' \
   '	if false {' \
   'TestCatchUpRateMustNotBeNegative$' ./tests
+# --- peercachetest ---
+
+mutate "Kill does not wait out failure detection" \
+  peercachetest/cluster.go \
+  '	c.net.Unregister(c.infos[i].ID)
+	c.clk.Advance(2 * c.mcfg.FailureTimeout)' \
+  '	c.net.Unregister(c.infos[i].ID)' \
+  'TestAKilledOwnersKeyIsServedByItsReplica$' ./peercachetest
+mutate "Restart does not rejoin the membership" \
+  peercachetest/cluster.go \
+  '	if err := c.members[i].Join(nil); err != nil {' \
+  '	if err := error(nil); err != nil {' \
+  'TestADrainedNodeRestartsIntoTheCluster$' ./peercachetest
+mutate "Heal leaves the partition in place" \
+  peercachetest/cluster.go \
+  '	c.net.Heal()
+' \
+  '' \
+  'TestAPartitionSplitsTheMembershipAndHealsBack$' ./peercachetest
+mutate "a partition is not applied to the network" \
+  peercachetest/cluster.go \
+  '	c.net.Partition(ids...)
+' \
+  '' \
+  'TestAPartitionSplitsTheMembershipAndHealsBack$' ./peercachetest
+mutate "a restarted node loses its own options" \
+  peercachetest/cluster.go \
+  '	opts := append(append(base, c.cfg.all...), c.cfg.perNode[i]...)' \
+  '	opts := append(base, c.cfg.all...)' \
+  'TestNodeOptionsReachOneNode$' ./peercachetest
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

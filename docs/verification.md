@@ -664,6 +664,11 @@ caught   a restored deadline is jittered again                              -- T
 caught   a jitter of one is accepted                                        -- TestTTLJitterMustBeAFraction
 caught   catch-up ignores its rate                                          -- TestCatchUpPullsAtTheConfiguredRate
 caught   a negative catch-up rate is accepted                               -- TestCatchUpRateMustNotBeNegative
+caught   Kill does not wait out failure detection                           -- TestAKilledOwnersKeyIsServedByItsReplica
+caught   Restart does not rejoin the membership                             -- TestADrainedNodeRestartsIntoTheCluster
+caught   Heal leaves the partition in place                                 -- TestAPartitionSplitsTheMembershipAndHealsBack
+caught   a partition is not applied to the network                          -- TestAPartitionSplitsTheMembershipAndHealsBack
+caught   a restarted node loses its own options                             -- TestNodeOptionsReachOneNode
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion
