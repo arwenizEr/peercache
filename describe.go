@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/arwenizEr/peercache/internal/debugui"
 )
 
 // Description is what one node currently believes. See [Cache.Describe].
@@ -209,6 +211,22 @@ func (c *cache) DebugHandler() http.Handler {
 			return
 		}
 		writeJSON(w, r, func() (any, int, error) { return c.Describe(), http.StatusOK, nil })
+	})
+	mux.HandleFunc("/ui", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		// Nothing but the page's own script runs, and nothing loads
+		// from elsewhere: the dashboard reads this handler and only it.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+		_, _ = w.Write(debugui.Page)
+	})
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, r, func() (any, int, error) { return c.Stats(), http.StatusOK, nil })
 	})
 	mux.HandleFunc("/namespaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, func() (any, int, error) { return c.Describe().Namespaces, http.StatusOK, nil })
