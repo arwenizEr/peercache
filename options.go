@@ -39,6 +39,17 @@ func WithClock(c Clock) Option {
 	return func(o *core.Options) { o.Clock = c }
 }
 
+// WithTracer traces the cache's hops: a span on the calling node around every
+// peer request, a span on the serving node around handling it, and a span
+// around every loader call, each a child of the span the caller's context
+// carries. Trace context crosses to peers in transport headers, so a request
+// served by another pod appears in the caller's trace. Spans name the
+// operation, the namespace and the nodes, never a key or a value. The default
+// traces nothing and costs nothing. See docs/decisions/0038.
+func WithTracer(t Tracer) Option {
+	return func(o *core.Options) { o.Tracer = t }
+}
+
 // WithLogger injects a logger. The default discards everything.
 func WithLogger(l Logger) Option {
 	return func(o *core.Options) { o.Logger = l }

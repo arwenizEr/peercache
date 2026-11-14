@@ -1,4 +1,6 @@
-// Package otel exports a PeerCache node's measurements through OpenTelemetry.
+// Package otel exports a PeerCache node's measurements and traces through
+// OpenTelemetry: [Register] bridges the metric series, [Tracer] adapts a
+// tracer provider and propagator for peercache.WithTracer.
 //
 // It is its own module, so that the OpenTelemetry API is a dependency of
 // programs that choose it and of nothing else; the core library carries no

@@ -1382,6 +1382,32 @@ built on the same pieces. The package's tests are its examples
 
 ## Observability
 
+### Tracing — `WithTracer`
+
+```go
+cache, err := peercache.New(...,
+    peercache.WithTracer(pcotel.Tracer(otel.GetTracerProvider(), otel.GetTextMapPropagator())),
+)
+```
+
+The hop to a key's owner happens inside the application's request, and without
+tracing it is invisible there. With a tracer, every peer request is a span on
+the calling node (`peercache.rpc <method>`, a client span) and handling it a
+span on the serving node (`peercache.serve <method>`, a server span), and every
+loader call — per key, batch or refresh — a `peercache.load` span on the owner.
+Each is a child of the span the caller's context carries; trace context crosses
+to the peer in request headers (`peercache-trace-…`), so a `Get` served by
+another pod, and the database query its loader ran, appear in the caller's
+trace.
+
+Attributes name the nodes (`peercache.node`, `peercache.peer`), the namespace
+and, for a load, how many keys — never a key or a value. Local operations are
+not traced: a span would cost more than the read. The default tracer does
+nothing. `peercache.Tracer` is four methods, so any tracing system can be
+adapted; the `otel` module's `Tracer(provider, propagator)` adapts
+OpenTelemetry. Decision 0038.
+
+
 ```go
 Metrics() []Metric
 WriteMetrics(w io.Writer) error

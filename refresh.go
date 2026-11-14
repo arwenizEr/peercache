@@ -43,7 +43,9 @@ func (n *namespace) refresh(key string, version uint64) {
 	result := n.flight.Do(context.Background(), key, func(loadCtx context.Context) ([]byte, time.Duration, error) {
 		loadCtx, cancel := clock.WithTimeout(loadCtx, n.cache.opts.Clock, n.opts.LoaderTimeout)
 		defer cancel()
+		loadCtx, span := n.cache.traceLoad(loadCtx, n.name, 1)
 		val, ttl, err := n.opts.Loader(loadCtx, key)
+		span.End(err)
 		if err != nil {
 			return nil, 0, err
 		}

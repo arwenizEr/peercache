@@ -36,7 +36,14 @@ func (h *peerHandler) Handle(ctx context.Context, from core.Node, method string,
 	if h.cache.isClosed() {
 		return nil, ErrClosed
 	}
+	ctx, span := h.cache.traceServe(ctx, method, from)
+	out, err := h.handle(ctx, from, method, req)
+	span.End(err)
+	return out, err
+}
 
+// handle dispatches one request by method.
+func (h *peerHandler) handle(ctx context.Context, from core.Node, method string, req []byte) ([]byte, error) {
 	switch method {
 	case transport.MethodGet:
 		return h.get(ctx, req)

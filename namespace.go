@@ -1055,7 +1055,9 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		loadCtx, cancel := clock.WithTimeout(loadCtx, n.cache.opts.Clock, n.opts.LoaderTimeout)
 		defer cancel()
 
+		loadCtx, span := n.cache.traceLoad(loadCtx, n.name, 1)
 		val, ttl, err := n.opts.Loader(loadCtx, key)
+		span.End(err)
 		if err != nil {
 			// Only an absence is remembered. Any other error, an outage
 			// above all, must not be served as "not found" once the

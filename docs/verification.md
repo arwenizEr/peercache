@@ -649,6 +649,12 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   the serving node does not continue the caller's trace              -- TestARemoteReadIsOneTraceAcrossTwoNodes
+caught   the caller does not send its trace context                         -- TestARemoteReadIsOneTraceAcrossTwoNodes
+caught   trace headers are not sent over gRPC                               -- TestTraceHeadersCrossTheHop
+caught   trace headers are not read back on the server                      -- TestTraceHeadersCrossTheHop
+caught   a load runs outside a span                                         -- TestAForwardedLoadIsTracedOnTheOwner
+caught   the OpenTelemetry adapter propagates nothing                       -- TestARemoteGetIsOneOpenTelemetryTrace
 caught   a hit inside the window does not refresh                           -- TestARefreshReloadsAKeyNearItsExpiry
 caught   every hit refreshes, whatever its remaining lifetime               -- TestARefreshReloadsAKeyNearItsExpiry
 caught   each hit in the window starts its own refresh                      -- TestConcurrentHitsStartOneRefresh

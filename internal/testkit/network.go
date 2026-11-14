@@ -499,7 +499,7 @@ func (p *peerClient) Invoke(ctx context.Context, method string, req []byte) ([]b
 
 	run := func() {
 		defer n.handlers.Done()
-		out, err := ep.handler.Handle(ctx, p.from, method, reqCopy)
+		out, err := ep.handler.Handle(acrossTheWire(ctx), p.from, method, reqCopy)
 		if dropResp {
 			// The handler ran and its side effects happened; only the
 			// reply was lost. This asymmetry is the interesting one:
@@ -548,3 +548,22 @@ var (
 	_ core.Transport  = (*netTransport)(nil)
 	_ core.PeerClient = (*peerClient)(nil)
 )
+
+// acrossTheWire is the context a handler on the far side of a real network
+// would get: the caller's deadline and cancellation, which gRPC transmits, and
+// the trace headers, which the transport carries — and none of the caller's
+// other values, which no network carries. Handing the handler the caller's
+// own context let a test pass that real gRPC would fail.
+func acrossTheWire(ctx context.Context) context.Context {
+	out := context.Context(wireContext{ctx})
+	if carrier := core.CarrierFrom(ctx); carrier != nil {
+		out = core.WithCarrier(out, carrier)
+	}
+	return out
+}
+
+// wireContext keeps a context's deadline and cancellation and drops its values.
+type wireContext struct{ context.Context }
+
+// Value implements context.Context: nothing crosses.
+func (wireContext) Value(any) any { return nil }

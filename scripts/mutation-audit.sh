@@ -2693,6 +2693,42 @@ mutate "a restarted node loses its own options" \
   '	opts := append(base, c.cfg.all...)' \
   'TestNodeOptionsReachOneNode$' ./peercachetest
 
+# --- tracing (decision 0038) ---
+
+mutate "the serving node does not continue the caller's trace" \
+  trace.go \
+  '		ctx = c.opts.Tracer.Extract(ctx, carrier)' \
+  '		_ = carrier' \
+  'TestARemoteReadIsOneTraceAcrossTwoNodes$' ./tests
+mutate "the caller does not send its trace context" \
+  trace.go \
+  '	c.opts.Tracer.Inject(ctx, carrier)
+' \
+  '' \
+  'TestARemoteReadIsOneTraceAcrossTwoNodes$' ./tests
+mutate "trace headers are not sent over gRPC" \
+  transport/client.go \
+  '		ctx = metadata.AppendToOutgoingContext(ctx, metadataTracePrefix+k, v)' \
+  '		_, _ = k, v' \
+  'TestTraceHeadersCrossTheHop$' ./transport
+mutate "trace headers are not read back on the server" \
+  transport/server.go \
+  '		ctx = core.WithCarrier(ctx, carrier)' \
+  '		_ = carrier' \
+  'TestTraceHeadersCrossTheHop$' ./transport
+mutate "a load runs outside a span" \
+  namespace.go \
+  '		loadCtx, span := n.cache.traceLoad(loadCtx, n.name, 1)
+		val, ttl, err := n.opts.Loader(loadCtx, key)
+		span.End(err)' \
+  '		val, ttl, err := n.opts.Loader(loadCtx, key)' \
+  'TestAForwardedLoadIsTracedOnTheOwner$' ./tests
+mutate "the OpenTelemetry adapter propagates nothing" \
+  otel/trace.go \
+  '	t.p.Inject(ctx, propagation.MapCarrier(carrier))' \
+  '	_ = carrier' \
+  'TestARemoteGetIsOneOpenTelemetryTrace$' otel::./
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
