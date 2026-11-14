@@ -689,6 +689,8 @@ func (c *cache) Stats() Stats {
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
 		stats.NegativeHits += ns.negativeHits.Load()
+		stats.Refreshes += ns.refreshes.Load()
+		stats.RefreshFailures += ns.refreshFailures.Load()
 		if ns.persister != nil {
 			pc := ns.persister.counters()
 			stats.PersistPending += int64(pc.pending)
@@ -837,6 +839,9 @@ func (c *cache) Close(ctx context.Context) error {
 			if ns.store == nil {
 				continue
 			}
+			// A refresh in flight stores into the store and may record
+			// for the persister; both outlive it.
+			ns.closeRefreshes()
 			if ns.persister != nil {
 				if err := ns.persister.Close(ctx); err != nil {
 					closeErr = errors.Join(closeErr, fmt.Errorf("flushing namespace %q: %w", ns.name, err))

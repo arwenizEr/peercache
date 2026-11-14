@@ -193,6 +193,11 @@ type NamespaceOptions struct {
 	// docs/decisions/0034-negative-caching.md.
 	NegativeTTL time.Duration
 
+	// RefreshAhead is the remaining lifetime under which a GetOrLoad hit on
+	// the owner reloads the key in the background. Zero, the default, never
+	// refreshes. See docs/decisions/0036-refresh-ahead.md.
+	RefreshAhead time.Duration
+
 	// Shards is the number of independently locked partitions in this
 	// namespace's store. Zero takes the store's default.
 	Shards int
@@ -280,6 +285,14 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.L1MaxBytes <= 0 {
 		return fmt.Errorf("peercache: L1 max bytes must be positive, got %d: %w", o.L1MaxBytes, ErrInvalidOption)
+	}
+	if o.RefreshAhead < 0 {
+		return fmt.Errorf("peercache: refresh-ahead window must not be negative, got %v: %w",
+			o.RefreshAhead, ErrInvalidOption)
+	}
+	if o.RefreshAhead > 0 && o.Loader == nil && o.TypedLoader == nil {
+		return fmt.Errorf("peercache: refresh-ahead reloads with the namespace's loader, and it has none: %w",
+			ErrInvalidOption)
 	}
 	if o.NegativeTTL < 0 {
 		return fmt.Errorf("peercache: negative caching TTL must not be negative, got %v: %w",

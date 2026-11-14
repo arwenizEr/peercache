@@ -53,6 +53,11 @@ type Stats struct {
 	// from a remembered absence, without calling the loader, in namespaces
 	// opened with WithNegativeCaching. See docs/decisions/0034.
 	NegativeHits int64
+	// Refreshes counts background reloads WithRefreshAhead completed, stored
+	// or dropped because a write landed first; RefreshFailures counts the
+	// ones whose loader failed, which left the current value in place.
+	Refreshes       int64
+	RefreshFailures int64
 
 	// ReplicaReadsServed counts reads this node answered from its replica
 	// copy, for a peer or for itself, in namespaces opened with

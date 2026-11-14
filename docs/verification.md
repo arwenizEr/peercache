@@ -649,6 +649,12 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   a hit inside the window does not refresh                           -- TestARefreshReloadsAKeyNearItsExpiry
+caught   every hit refreshes, whatever its remaining lifetime               -- TestARefreshReloadsAKeyNearItsExpiry
+caught   each hit in the window starts its own refresh                      -- TestConcurrentHitsStartOneRefresh
+caught   a refresh stores over a write that landed during it                -- TestAWriteDuringARefreshWins
+caught   Close does not wait for a refresh in flight                        -- TestCloseWaitsForARefresh
+caught   refresh-ahead is accepted without a loader                         -- TestRefreshAheadNeedsALoader
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

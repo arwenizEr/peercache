@@ -17,6 +17,7 @@ and output-checked by `go test`:
 | `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
 | `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
+| `ExampleWithRefreshAhead` | a hot key reloaded before it expires, the caller never waiting |
 | `ExampleWithBatchLoader` | `BatchGetOrLoad`: one loader call for every missing key, missing rows omitted |
 | `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
@@ -72,7 +73,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-61 series in the Prometheus text exposition format, and PeerCache imports no
+63 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -236,6 +237,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
 | `WithNegativeCaching(time.Duration)` | off | The owner remembers a loader's `ErrNotFound` for the TTL and answers `GetOrLoad` without loading. Any write of the key forgets it. Negative is `ErrInvalidOption`. See below. |
+| `WithRefreshAhead(time.Duration)` | off | A `GetOrLoad` hit on the owner with less than this left of its lifetime returns at once and reloads the key in the background. Needs a loader. See below. |
 | `WithBatchLoader(BatchLoader)` | none | Loads every key a `BatchGetOrLoad` owner is missing in one call. Without it, `BatchGetOrLoad` uses the `WithLoader` loader per key. See below. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 
@@ -330,6 +332,36 @@ alternative is wrong:
   everyone else.
 - **A panicking loader becomes `ErrLoaderPanic` for every waiter**, rather than a
   panic in a thousand unrelated goroutines. A loader is application code.
+
+### Refreshing a key before it expires
+
+```go
+prices := cache.Namespace("prices",
+    peercache.WithLoader(loadPrice), // returns a 60s TTL
+    peercache.WithRefreshAhead(10*time.Second),
+)
+```
+
+Without it, a popular loaded key is reloaded when it expires, and every caller
+of it waits for that load: single-flight makes it one query, not one wait. With
+it, a `GetOrLoad` on the key's owner that finds it with less than the window
+left returns the current value at once and reloads the key in the background;
+the next read gets the new value with a fresh lifetime. A key nobody reads in
+its last ten seconds is not reloaded — it expires, as before.
+
+- **One reload at a time**, in the key's single-flight: hits during it do not
+  start another, and a caller that misses because the key expired meanwhile
+  joins it.
+- **A write wins.** A `Set`, `Delete` or atomic operation that lands while the
+  loader runs is newer than what it read; the reload's value is dropped.
+- **A failed reload keeps the value** until its own expiry, so a database
+  restart at the wrong moment no longer empties the hottest keys. Counted in
+  `Stats().RefreshFailures`; completed reloads in `Refreshes`.
+- **Owner only, `GetOrLoad` only.** `Get` never loads. Non-owners see the new
+  value after their L1 copy's TTL, as they see every write.
+- `Close` waits for a reload in flight; the loader's own timeout bounds it.
+
+Decision 0036.
 
 ### Remembering that a key does not exist
 
@@ -1303,7 +1335,7 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 61 series come out of it.
+format with the content type a scraper expects, and 63 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
@@ -1342,7 +1374,7 @@ change can mix two moments; it is a node's belief, not a consensus.
 
 ### The metrics that are worth alerting on
 
-Most of the 61 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 63 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
