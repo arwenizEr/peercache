@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,11 @@ import (
 // changes when a pod restarts under a new identity. The handler is told who is
 // calling by name, because ownership is derived from the name.
 const metadataFromNode = "peercache-from-node"
+
+// metadataTracePrefix prefixes the headers carrying a request's trace
+// context, one per entry of the carrier the caller's tracer filled. See
+// docs/decisions/0038-trace-propagation.md.
+const metadataTracePrefix = "peercache-trace-"
 
 // serviceDesc is the gRPC service, written out rather than generated.
 //
@@ -209,11 +215,34 @@ func dispatch(ctx context.Context, h core.Handler, method string, dec func(any) 
 	}
 
 	from := core.Node{ID: callerID(ctx)}
+	if carrier := traceCarrier(ctx); carrier != nil {
+		ctx = core.WithCarrier(ctx, carrier)
+	}
 	out, err := h.Handle(ctx, from, method, in.payload)
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	return &rawMessage{payload: out}, nil
+}
+
+// traceCarrier reads the trace headers of a request back into a carrier, or
+// nil when there are none.
+func traceCarrier(ctx context.Context) map[string]string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+	var carrier map[string]string
+	for k, v := range md {
+		if len(v) == 0 || !strings.HasPrefix(k, metadataTracePrefix) {
+			continue
+		}
+		if carrier == nil {
+			carrier = make(map[string]string, 2)
+		}
+		carrier[strings.TrimPrefix(k, metadataTracePrefix)] = v[0]
+	}
+	return carrier
 }
 
 // callerID reads the calling node's ID from the request metadata. An empty

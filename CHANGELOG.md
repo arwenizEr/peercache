@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- `WithTracer` and `peercache.Tracer`: client and server spans around every
+  peer request and spans around loads, children of the caller's span, with
+  trace context carried in transport headers. `otel.Tracer(provider,
+  propagator)` adapts OpenTelemetry. Spans never carry keys or values.
+  Decision 0038.
 - `WithRefreshAhead(window)`: a `GetOrLoad` hit on a key's owner with less than
   `window` of its lifetime left returns the current value and reloads the key
   once in the background, storing only if no write landed meanwhile; a failed

@@ -158,7 +158,9 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 			found, err = nil, fmt.Errorf("%w: %v", ErrLoaderPanic, r)
 		}
 	}()
+	ctx, span := n.cache.traceLoad(ctx, n.name, len(keys))
 	vals, ttl, err := n.opts.BatchLoader(ctx, keys)
+	span.End(err)
 	if err != nil {
 		return nil, err
 	}

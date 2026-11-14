@@ -49,6 +49,9 @@ type Options struct {
 	Clock clock.Clock
 	// Logger receives diagnostics. Defaults to [NopLogger].
 	Logger Logger
+	// Tracer starts spans around peer requests and loads. Defaults to
+	// [NopTracer].
+	Tracer Tracer
 	// Transport is the peer fabric. A nil transport means single-node
 	// operation with no networking.
 	Transport Transport
@@ -98,6 +101,7 @@ func DefaultOptions() Options {
 	return Options{
 		Clock:  clock.Real(),
 		Logger: NopLogger{},
+		Tracer: NopTracer{},
 	}
 }
 
@@ -111,6 +115,9 @@ func (o *Options) Validate() error {
 	}
 	if o.Logger == nil {
 		return fmt.Errorf("peercache: Logger must not be nil: %w", ErrInvalidOption)
+	}
+	if o.Tracer == nil {
+		return fmt.Errorf("peercache: Tracer must not be nil: %w", ErrInvalidOption)
 	}
 	if len(o.Seeds) > 0 && o.Membership == nil {
 		return fmt.Errorf("peercache: seeds %v given with no membership authority to join through: %w",

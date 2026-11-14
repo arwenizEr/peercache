@@ -138,6 +138,10 @@ func (c *client) Invoke(ctx context.Context, method string, req []byte) ([]byte,
 	// Identify the caller by node ID. The peer address gRPC can see names a
 	// connection, not a cluster member.
 	ctx = metadata.AppendToOutgoingContext(ctx, metadataFromNode, c.transport.self.ID)
+	// Trace context, if the cache attached any: one header per entry.
+	for k, v := range core.CarrierFrom(ctx) {
+		ctx = metadata.AppendToOutgoingContext(ctx, metadataTracePrefix+k, v)
+	}
 
 	in := &rawMessage{payload: req}
 	out := &rawMessage{}

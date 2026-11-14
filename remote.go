@@ -76,7 +76,9 @@ func (r *router) invoke(ctx context.Context, node core.Node, method string, req 
 	if r.cache.remoteLatency != nil {
 		started = r.cache.opts.Clock.Now().UnixNano()
 	}
+	ctx, span := r.cache.traceRPC(ctx, method, node)
 	out, err := client.Invoke(ctx, method, body)
+	span.End(err)
 	if r.cache.remoteLatency != nil {
 		if elapsed := r.cache.opts.Clock.Now().UnixNano() - started; elapsed >= 0 {
 			r.cache.remoteLatency.Observe(uint64(elapsed))

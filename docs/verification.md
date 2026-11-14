@@ -653,6 +653,12 @@ caught   an L1 copy ignores its key's remaining lifetime                    -- T
 caught   the owner's Get grants no remaining lifetime                       -- TestANonOwnedCopyDoesNotOutliveItsKey
 caught   the owner's load grants no remaining lifetime                      -- TestALoadedCopyDoesNotOutliveItsKey
 caught   a batch entry grants no remaining lifetime                         -- TestABatchReadCopyDoesNotOutliveItsKey
+caught   the serving node does not continue the caller's trace              -- TestARemoteReadIsOneTraceAcrossTwoNodes
+caught   the caller does not send its trace context                         -- TestARemoteReadIsOneTraceAcrossTwoNodes
+caught   trace headers are not sent over gRPC                               -- TestTraceHeadersCrossTheHop
+caught   trace headers are not read back on the server                      -- TestTraceHeadersCrossTheHop
+caught   a load runs outside a span                                         -- TestAForwardedLoadIsTracedOnTheOwner
+caught   the OpenTelemetry adapter propagates nothing                       -- TestARemoteGetIsOneOpenTelemetryTrace
 caught   a hit inside the window does not refresh                           -- TestARefreshReloadsAKeyNearItsExpiry
 caught   every hit refreshes, whatever its remaining lifetime               -- TestARefreshReloadsAKeyNearItsExpiry
 caught   each hit in the window starts its own refresh                      -- TestConcurrentHitsStartOneRefresh

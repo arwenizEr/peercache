@@ -139,3 +139,18 @@ type Logger = core.Logger
 
 // NopLogger discards every message. It is the default [Logger].
 type NopLogger = core.NopLogger
+
+// Tracer starts spans around the cache's peer requests and loads, as children
+// of the caller's span, and carries their context to peers. Set it with
+// [WithTracer]; the otel module adapts OpenTelemetry. See
+// docs/decisions/0038-trace-propagation.md.
+type Tracer = core.Tracer
+
+// Span is one traced operation; see [Tracer].
+type Span = core.Span
+
+// Attr is one span attribute. Cache keys and values are never attributes.
+type Attr = core.Attr
+
+// NopTracer traces nothing. It is the default [Tracer].
+type NopTracer = core.NopTracer
