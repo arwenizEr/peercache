@@ -45,6 +45,7 @@ type NamespaceDescription struct {
 	SyncReplication   bool          `json:"syncReplication"`
 	ReplicaReads      bool          `json:"replicaReads"`
 	L1TTL             time.Duration `json:"l1TTL"`
+	L1MaxBytes        int64         `json:"l1MaxBytes"`
 
 	OwnedKeys   int64 `json:"ownedKeys"`
 	ReplicaKeys int   `json:"replicaKeys"`
@@ -127,6 +128,7 @@ func (c *cache) describeNamespace(ns *namespace) NamespaceDescription {
 		SyncReplication:   ns.opts.SyncReplication,
 		ReplicaReads:      ns.opts.ReplicaReads,
 		L1TTL:             ns.opts.L1TTL,
+		L1MaxBytes:        ns.opts.L1MaxBytes,
 		ReplicaKeys:       len(c.replicas.Keys(ns.name)),
 	}
 	if ns.err != nil {

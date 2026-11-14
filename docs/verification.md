@@ -629,6 +629,9 @@ caught   the replica store compares versions, ignoring the epoch            -- T
 caught   a fork is not counted                                              -- TestTwoWritersFromOneBaseIsAFork
 caught   a handover is counted as a fork                                    -- TestAHandoverIsNotAFork
 caught   a rolling upgrade's handovers are counted as forks                 -- TestAGracefulRollingUpgradeCountsNoFork
+caught   the L1 bound counts entries, not bytes                             -- TestMaxBytesIsBounded
+caught   a namespace's L1 bound never reaches the tier                      -- TestTheL1TierIsBoundedInBytes
+caught   an L1 bound of zero is accepted                                    -- TestAnL1BoundMustBePositive
 caught   a remembered absence is never consulted                            -- TestARememberedAbsenceSavesTheLoad
 caught   every loader error is remembered as an absence                     -- TestOnlyAnAbsenceIsRemembered
 caught   a Delete does not forget an absence                                -- TestEveryWriteForgetsAnAbsence

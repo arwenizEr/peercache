@@ -62,7 +62,17 @@ check() {
     $K logs "$p" --previous > "$OUT/$1/$(basename "$p").previous.log" 2>/dev/null || true
   done
   $K exec shop-0 -- wget -qO- http://localhost:8080/debug/peercache/namespaces > "$OUT/$1/namespaces.json" 2>/dev/null || true
-  log "$1: $(grep -E '^(acknowledged|uncertain|stock items)' "$OUT/$1/check.txt" | tr '\n' ' ') rc=$rc"
+  # Forks counted since each pod last started: a pod the scenario restarted
+  # reports only what it saw after the restart.
+  local forks=0 n p
+  : > "$OUT/$1/forks.txt"
+  for p in $($K get pods -l app=shop -o jsonpath='{.items[*].metadata.name}'); do
+    n=$($K exec "$p" -- wget -qO- http://localhost:8080/metrics 2>/dev/null \
+      | awk '$1 == "peercache_split_brain_detections_total" { print int($2) }')
+    echo "$p ${n:-?}" >> "$OUT/$1/forks.txt"
+    forks=$((forks + ${n:-0}))
+  done
+  log "$1: $(grep -E '^(acknowledged|uncertain|stock items)' "$OUT/$1/check.txt" | tr '\n' ' ') forks: $forks rc=$rc"
 }
 
 steady() {

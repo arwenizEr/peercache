@@ -9,6 +9,9 @@ change the public API.
 
 ### Added
 
+- `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
+  copy charged its key, value and a fixed overhead, the same charge the L1
+  bytes gauge and the memory budget use. Decision 0033.
 - `WithNegativeCaching(ttl)`: a key's owner remembers that the namespace's
   loader returned `ErrNotFound` and answers `GetOrLoad` of it without loading
   until the TTL passes or the key is written. The absence is not a value:
@@ -61,6 +64,11 @@ change the public API.
 
 ### Changed
 
+- The non-owned tier is bounded at 64 MiB per namespace and node by default,
+  instead of 100,000 entries whatever their size: under the old bound a
+  namespace of 1 MiB values could cache 100 GB of copies. A namespace of
+  small values (key and value under about 540 bytes) now holds more copies than before,
+  one of large values fewer. `WithL1MaxBytes` sets it.
 - A synchronous write applied on its owner whose replication then fails now
   returns an error wrapping `ErrUnderReplicated` — written, held below its
   factor — and is counted in `DegradedWrites`, instead of an error that could

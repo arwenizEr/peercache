@@ -416,6 +416,19 @@ func WithL1TTL(d time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.L1TTL = d }
 }
 
+// WithL1MaxBytes bounds the memory this namespace's non-owned tier may hold on
+// each node. Default 64 MiB.
+//
+// Each copy is charged its key and value bytes plus a fixed overhead, the same
+// charge the L1 bytes gauge and the memory budget see, so the bound and the
+// gauge agree. Past it the least valuable copies are evicted, which costs round
+// trips, never data. A copy larger than the whole bound is not cached at all.
+// The bound is in bytes, not entries, because a count says nothing about
+// memory once values differ in size. Zero or negative is ErrInvalidOption.
+func WithL1MaxBytes(n int64) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.L1MaxBytes = n }
+}
+
 // WithCompression compresses stored values of at least threshold bytes using
 // the named compressor. "lz4" is registered by default.
 //
