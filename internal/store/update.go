@@ -49,6 +49,7 @@ func (s *Store) Update(key string, fn func(cur []byte, ok bool) (m Mutation, wri
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	sh.forget(key)
 
 	old, had := sh.entries[key]
 	live := had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt)

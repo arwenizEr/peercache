@@ -121,9 +121,17 @@ say nothing about the cache.
 | `BenchmarkNamespaceSet` | 238.2 | 67 | 1 | the allocation is the value copy |
 | `BenchmarkNamespaceSetParallel` | 99.9 | 65 | 1 | |
 | `BenchmarkGetOrLoadHit` | 72.7 | 0 | 0 | resident path through singleflight |
+| `BenchmarkGetOrLoadNegativeHit` | 95.3 | 0 | 0 | a missing key answered from its remembered absence (decision 0034); spread 56–121 ns. Measured 2026-11-14 |
+| `BenchmarkGetOrLoadNotFound` | 3,423 | 945 | 18 | the same probe without negative caching, through a loader that does no work; a real one adds a database round trip |
 | `BenchmarkBatchGet` | 18,873 | 5464 | 4 | 100 keys, so ~189 ns/key; the allocations are the result map |
 | `BenchmarkNamespaceGetCompressed/plain` | 72.2 | 0 | 0 | 4 KiB value |
 | `BenchmarkNamespaceGetCompressed/lz4` | 5023 | 4864 | 1 | same value, 70x — this is why compression is opt-in |
+
+Negative caching added a nil-map check to every store write. Medians of five
+runs on Machine A, main against the branch, 2026-11-14 (the kind cluster idle
+in the background): `BenchmarkNamespaceSet` 441 → 458 ns, spreads 426–478 and
+412–518; `BenchmarkGetOrLoadHit` 82.9 → 84.7 ns; `BenchmarkNamespaceGet` 450 →
+437 ns. All within run-to-run noise.
 
 ### internal/store
 

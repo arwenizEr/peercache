@@ -12,6 +12,11 @@ change the public API.
 - `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
   copy charged its key, value and a fixed overhead, the same charge the L1
   bytes gauge and the memory budget use. Decision 0033.
+- `WithNegativeCaching(ttl)`: a key's owner remembers that the namespace's
+  loader returned `ErrNotFound` and answers `GetOrLoad` of it without loading
+  until the TTL passes or the key is written. The absence is not a value:
+  nothing but `GetOrLoad` sees it. `Stats().NegativeHits`,
+  `peercache_negative_hits_total` and `Describe`'s `absences`. Decision 0034.
 - `WithCatchUpGate`: a node refuses its peers' operations on keys it owns, in
   namespaces with replicas, with `ErrActivationPending` until its first
   `CatchUp` completes. Readiness keeps clients away from a restarted node but

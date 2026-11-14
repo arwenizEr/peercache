@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arwenizEr/peercache/internal/clock"
@@ -148,6 +149,9 @@ type namespace struct {
 	// into one fetch. It is separate from flight on purpose: a Get must
 	// never join a GetOrLoad's load, nor a GetOrLoad a Get's plain read.
 	readFlight singleflight.Group
+	// negativeHits counts GetOrLoad calls answered from a remembered
+	// absence; see [WithNegativeCaching].
+	negativeHits atomic.Int64
 
 	// l1 caches copies of keys this node does not own. Nil when there is no
 	// membership authority, because a cluster of one owns everything and a
@@ -997,15 +1001,24 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 	if stored, _, ok := n.store.Get(key); ok {
 		return n.decode(stored)
 	}
+	if n.knownAbsent(key) {
+		// Bare, as Get's miss is: a probe answered from memory should not
+		// allocate an error per call.
+		return nil, ErrNotFound
+	}
 
 	result := n.flight.Do(ctx, key, func(loadCtx context.Context) ([]byte, time.Duration, error) {
 		// Re-check under the flight. Between the miss above and becoming
 		// the leader, a previous load may have completed and populated
-		// the key; loading it again would be a pointless round trip to
-		// whatever the loader talks to.
+		// the key — or found nothing, and remembered that; loading it
+		// again would be a pointless round trip to whatever the loader
+		// talks to.
 		if stored, _, ok := n.store.Get(key); ok {
 			val, err := n.decode(stored)
 			return val, 0, err
+		}
+		if n.knownAbsent(key) {
+			return nil, 0, ErrNotFound
 		}
 
 		// The load is bounded by the namespace's timeout, not by
@@ -1017,6 +1030,13 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 
 		val, ttl, err := n.opts.Loader(loadCtx, key)
 		if err != nil {
+			// Only an absence is remembered. Any other error, an outage
+			// above all, must not be served as "not found" once the
+			// source is back. MarkAbsent declines if a write landed
+			// while the loader ran.
+			if n.opts.NegativeTTL > 0 && errors.Is(err, ErrNotFound) {
+				n.store.MarkAbsent(key, n.opts.NegativeTTL)
+			}
 			return nil, 0, err
 		}
 		// Store inside the flight so that every collapsed caller sees a
@@ -1037,6 +1057,16 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		return nil, fmt.Errorf("namespace %q key %q: %w", n.name, key, result.Err)
 	}
 	return result.Value, nil
+}
+
+// knownAbsent reports whether the owner remembers that key's loader found
+// nothing, counting the load it saved. See [WithNegativeCaching].
+func (n *namespace) knownAbsent(key string) bool {
+	if n.opts.NegativeTTL <= 0 || !n.store.KnownAbsent(key) {
+		return false
+	}
+	n.negativeHits.Add(1)
+	return true
 }
 
 // remoteGetOrLoad asks the owner, which loads if it must.
