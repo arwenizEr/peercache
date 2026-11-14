@@ -30,6 +30,7 @@ const (
 	MethodReplicate  = "/peercache.v1.Peer/Replicate"
 	MethodCatchUp    = "/peercache.v1.Peer/CatchUp"
 	MethodInvalidate = "/peercache.v1.Peer/Invalidate"
+	MethodDescribe   = "/peercache.v1.Peer/Describe"
 )
 
 // Methods is every method this transport serves, in the order they appear in
@@ -49,4 +50,5 @@ var Methods = []string{
 	MethodReplicate,
 	MethodCatchUp,
 	MethodInvalidate,
+	MethodDescribe,
 }

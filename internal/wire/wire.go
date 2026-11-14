@@ -372,6 +372,36 @@ type InvalidateRequest struct {
 // InvalidateResponse is empty.
 type InvalidateResponse struct{}
 
+// DescribeRequest asks a peer for its Describe, and with Digests for its
+// replica digests. See docs/decisions/0039-cluster-view.md.
+type DescribeRequest struct {
+	Digests bool `msgpack:"digests"`
+}
+
+// DescribeResponse is a peer's Describe, as the JSON Cache.Describe would
+// serve, and its digests when asked for.
+type DescribeResponse struct {
+	Description []byte            `msgpack:"description"`
+	Digests     []NamespaceDigest `msgpack:"digests"`
+}
+
+// NamespaceDigest is one namespace's running digests on one node, per
+// partition of the keyspace: Owned over its owned store, Held over the replica
+// copies it holds. Partitions with nothing in them are left out.
+type NamespaceDigest struct {
+	Namespace string       `msgpack:"namespace"`
+	Owned     []PartDigest `msgpack:"owned"`
+	Held      []PartDigest `msgpack:"held"`
+}
+
+// PartDigest is one partition's count of keys and the wrapping sum of a hash of
+// each key and its version. It carries no key.
+type PartDigest struct {
+	Part  uint32 `msgpack:"part"`
+	Count uint64 `msgpack:"count"`
+	Sum   uint64 `msgpack:"sum"`
+}
+
 // Encode marshals a message.
 func Encode(v any) ([]byte, error) {
 	c, err := codec.Get(Encoding)

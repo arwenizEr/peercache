@@ -48,12 +48,17 @@ func everyMessage() []struct {
 		{"ReplicateResponse", func() (any, func() int) { v := new(wire.ReplicateResponse); return v, func() int { return 0 } }},
 		{"CatchUpRequest", func() (any, func() int) { v := new(wire.CatchUpRequest); return v, func() int { return 0 } }},
 		{"InvalidateResponse", func() (any, func() int) { v := new(wire.InvalidateResponse); return v, func() int { return 0 } }},
+		{"DescribeRequest", func() (any, func() int) { v := new(wire.DescribeRequest); return v, func() int { return 0 } }},
 
 		// The ones with a variable-length field. Each of these is a place a
 		// declared length could have bought an allocation.
 		{"BatchGetRequest", func() (any, func() int) {
 			v := new(wire.BatchGetRequest)
 			return v, func() int { return len(v.Keys) }
+		}},
+		{"DescribeResponse", func() (any, func() int) {
+			v := new(wire.DescribeResponse)
+			return v, func() int { return len(v.Description) + len(v.Digests) }
 		}},
 		{"BatchGetResponse", func() (any, func() int) {
 			v := new(wire.BatchGetResponse)

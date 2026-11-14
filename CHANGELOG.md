@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- `Cache.DescribeCluster` and the debug handler's `/cluster` route: every
+  member's `Describe`, whether their member sets agree, and — with digests —
+  the partitions whose replica copies are out of step with their owners. Both
+  stores keep a running per-partition digest on every write, so the check
+  costs the same whatever they hold. New peer method `Describe`. Decision 0039.
 - `WithTracer` and `peercache.Tracer`: client and server spans around every
   peer request and spans around loads, children of the caller's span, with
   trace context carried in transport headers. `otel.Tracer(provider,

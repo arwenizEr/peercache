@@ -137,6 +137,12 @@ in the background): `BenchmarkNamespaceSet` 441 → 458 ns, spreads 426–478 an
 412–518; `BenchmarkGetOrLoadHit` 82.9 → 84.7 ns; `BenchmarkNamespaceGet` 450 →
 437 ns. All within run-to-run noise.
 
+**Running digests (decision 0039, 2026-11-14).** Every write now adds one key
+hash and one or two atomic adds to keep the store's digest. Medians of five
+runs, Machine A, main against the branch: replica `BenchmarkPutDistinctKeys`
+136 → 163 ns; store `BenchmarkSet` 245 → 284 ns, where both sides spread over
+~100 ns between runs. Reading the digests costs 64 pairs per store, whatever
+it holds.
 **Paging a whole store (2026-11-14).** `BenchmarkSnapshotFullPass`, 512-entry
 pages, Machine A:
 

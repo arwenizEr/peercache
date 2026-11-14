@@ -136,8 +136,17 @@ type Cache interface {
 	// wraps ErrNotFound.
 	DescribeKey(namespace, key string) (KeyPlacement, error)
 
-	// DebugHandler serves Describe at "/", its namespaces at "/namespaces"
-	// and DescribeKey at "/key?namespace=…&key=…", as JSON. It has no
+	// DescribeCluster asks every member of this node's view for its
+	// Describe and reports them side by side, with whether their member
+	// sets agree; with digests, it also checks each owner's keys against
+	// the copies its replicas hold, by count and hash, never naming a key.
+	// It reads and never repairs. Digests walk every store, so use them for
+	// incidents. See docs/decisions/0039-cluster-view.md.
+	DescribeCluster(ctx context.Context, digests bool) ClusterDescription
+
+	// DebugHandler serves Describe at "/", its namespaces at "/namespaces",
+	// DescribeKey at "/key?namespace=…&key=…" and DescribeCluster at
+	// "/cluster" ("?digests=1" for the replica check), as JSON. It has no
 	// authentication: mount it on an internal admin port, as one would
 	// net/http/pprof.
 	DebugHandler() http.Handler

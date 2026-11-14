@@ -102,6 +102,8 @@ func TestValidateAcceptsEveryRealEncoding(t *testing.T) {
 		&CatchUpResponse{Entries: []CatchUpEntry{{Key: "a", Value: []byte("v")}}, More: true},
 		&InvalidateRequest{Namespace: "n", Keys: []string{"a", "b"}},
 		&InvalidateResponse{},
+		&DescribeRequest{Digests: true},
+		&DescribeResponse{Description: make([]byte, 2048), Digests: []NamespaceDigest{{Namespace: "n", Owned: []PartDigest{{Part: 2, Count: 1}}}}},
 		&SubmitRequest{FuncName: "f", Batches: []GroupBatch{
 			{Group: "g1", Messages: [][]byte{[]byte("m1"), []byte("m2")}},
 			{Group: "g2", Messages: [][]byte{make([]byte, 5000)}},

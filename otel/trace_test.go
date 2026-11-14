@@ -8,11 +8,11 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/arwenizEr/peercache"
 	pcotel "github.com/arwenizEr/peercache/otel"
 	"github.com/arwenizEr/peercache/peercachetest"
+	"github.com/arwenizEr/peercache/transport"
 )
 
 // TestARemoteGetIsOneOpenTelemetryTrace: with the adapter and W3C trace
@@ -44,12 +44,15 @@ func TestARemoteGetIsOneOpenTelemetryTrace(t *testing.T) {
 	}
 	app.End()
 
+	// By name, not by kind alone: the Set's invalidation broadcast is a
+	// client/server pair of its own, in its own trace, and may end after
+	// the Get's — picking the last span of a kind picked it 11 times in 20.
 	var client, server sdktrace.ReadOnlySpan
 	for _, s := range rec.Ended() {
-		switch s.SpanKind() {
-		case trace.SpanKindClient:
+		switch s.Name() {
+		case "peercache.rpc " + transport.MethodGet:
 			client = s
-		case trace.SpanKindServer:
+		case "peercache.serve " + transport.MethodGet:
 			server = s
 		}
 	}
