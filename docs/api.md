@@ -848,11 +848,19 @@ going past each one: one unreachable peer is no reason to skip the others.
 
 ### Conflicts
 
-`Stats().SplitBrainDetections` counts writes a replica saw from two different
-nodes under one membership epoch. One group has one owner, so this cannot happen
-unless two nodes believed they owned the same key — the partition case. It is
+`Stats().SplitBrainDetections` counts forks a replica saw in a key's history.
+Every replicated write carries the order of the value it replaced; a replica
+holding a copy from one writer that receives a copy from another, where neither
+replaced the other's write, has seen two writers each unaware of the other. One
+group has one owner, so that means two nodes believed they owned the same key —
+the partition case — or a new owner wrote over a value it never received. It is
 counted and never merged; choosing between conflicting writes is the
 application's business.
+
+It is detection, not proof of absence: a copy that carries no history (a first
+write, a key relayed by its owner's catch-up, a peer on an earlier release) is
+not judged. It used to count "two writers in one epoch", and epochs are per view,
+so after a rolling restart it counted handovers by the tens of thousands.
 
 ---
 

@@ -739,21 +739,6 @@ mutate "the replica store compares versions, ignoring the epoch" \
   'if e.Stamp.Version <= existing.Stamp.Version {' \
   'TestALaterEpochWinsWhateverTheVersion' ./internal/replication/
 
-mutate "split brain is not detected" \
-  internal/replication/replica.go \
-  'existing.From != e.From {
-			conflict = true' \
-  'false {
-			conflict = true' \
-  'TestTwoOwnersInOneEpochIsAConflict' ./internal/replication/
-
-mutate "any writer change counts as a split brain" \
-  internal/replication/replica.go \
-  'existing.Stamp.Epoch == e.Stamp.Epoch && existing.From != "" && e.From != "" &&
-			existing.From != e.From' \
-  'existing.From != e.From' \
-  'TestDifferentEpochsAreNotAConflict' ./internal/replication/
-
 mutate "Drain leaves a stranded copy behind" \
   internal/replication/replica.go \
   '		taken[key] = e
@@ -2443,6 +2428,30 @@ mutate "an active group is not rechecked for ownership" \
   '} else if r.rt.opts.StillOwns != nil {' \
   '} else if false {' \
   'TestAnActiveGroupStopsServingWhenOwnershipMoves$' ./tests
+
+# --- open question 50: fork detection ---
+
+mutate "a handover is counted as a fork" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return held.Prev < in.Order' \
+  'TestAHandoverIsNotAFork$' ./internal/replication
+mutate "a fork is not counted" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return false' \
+  'TestTwoWritersFromOneBaseIsAFork$' ./internal/replication
+mutate "a write does not carry what it replaced" \
+  replicate.go \
+  '		Prev:      w.prev,
+' \
+  '' \
+  'TestAWriteOverAValueItNeverReceivedIsAFork$' ./tests
+mutate "a rolling upgrade's handovers are counted as forks" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return held.Prev < in.Order' \
+  'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

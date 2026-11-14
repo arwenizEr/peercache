@@ -84,6 +84,13 @@ change the public API.
 
 ### Fixed
 
+- `SplitBrainDetections` counted handovers. It tested "two writers in one
+  epoch", and epochs are per view, so after one rolling restart on kind it
+  reported tens of thousands of splits that never happened. It now counts forks
+  in a key's history: every replicated write carries the order of the value it
+  replaced (`ReplicateRequest.Prev`, relayed by catch-up and hand-off), and a
+  replica reports two writers neither of which replaced the other's write.
+  Found by M16 (open question 50).
 - A node restarted faster than failure detection — a SIGKILLed pod its kubelet
   restarts in a second or two — lost every key it owned, even at a synchronous
   replication factor of 3. Its peers never declared it dead, so nobody was

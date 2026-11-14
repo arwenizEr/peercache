@@ -222,6 +222,7 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 				ReceivedAt: now,
 				Order:      e.Order,
 				From:       from,
+				Prev:       e.Prev,
 			})
 			if accepted {
 				cu.pulled.Add(1)

@@ -279,6 +279,11 @@ type ReplicateRequest struct {
 	// and zero means that. It orders replica copies, and the replica keeps it
 	// so that a promotion continues it, and advances its own clock past it.
 	Order uint64 `msgpack:"order"`
+	// Prev is the order of the value this write replaced on its owner, zero
+	// if none or unknown. A replica holding a copy from another writer
+	// compares the two to tell a handover — this write descends from the
+	// copy — from a fork, two writers each unaware of the other's write.
+	Prev uint64 `msgpack:"prev"`
 }
 
 // ReplicateResponse reports whether the copy collided with another writer's.
@@ -333,6 +338,9 @@ type CatchUpEntry struct {
 	// hand-off does: two relays of one write are not two writers, and filing
 	// them as such counts a split brain that never happened.
 	From string `msgpack:"from"`
+	// Prev is a relayed copy's Prev, so a fork stays visible to its
+	// receiver; zero for a key the sender owns.
+	Prev uint64 `msgpack:"prev"`
 }
 
 // InvalidateRequest tells a peer that keys it may be caching have changed.

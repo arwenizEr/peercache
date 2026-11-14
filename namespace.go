@@ -572,7 +572,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	if n.persister != nil {
 		n.persister.record(key, n.encode(val), written.ExpiresAt, written.Order, false)
 	}
-	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
+	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		// Only synchronous replication can fail here: asynchronous
@@ -587,7 +587,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 }
 
 // fanOut sends a write or a deletion to this key's replicas.
-func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, order uint64, deleted bool) error {
+func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl time.Duration, stamp core.Stamp, order, prev uint64, deleted bool) error {
 	// The replication factor is checked once, inside replicaTargets, which
 	// is the only place that can act on it. Checking here as well would be
 	// two conditions that must agree forever, and breaking either on purpose
@@ -614,6 +614,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		ttl:       ttl,
 		stamp:     stamp,
 		order:     order,
+		prev:      prev,
 		deleted:   deleted,
 		targets:   targets,
 	}); err != nil {
@@ -768,7 +769,7 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 	// the key the moment it was promoted, which is worse than never having
 	// replicated it at all.
 	// Invalidated whether or not the fan-out succeeded; see localSet.
-	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
+	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
 	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	if err != nil {
 		return err

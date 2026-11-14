@@ -98,8 +98,8 @@ func Collect(s core.Stats) []Metric {
 
 		// Correctness. These are the ones that matter.
 		{"peercache_split_brain_detections_total", Counter,
-			"Writes a replica saw from two different nodes under one membership epoch. " +
-				"One group has one owner, so any non-zero value means two nodes believed they owned the same key.",
+			"Forks a replica saw in a key's history: copies from two writers, neither descending from the other's write. " +
+				"Any non-zero value means two nodes wrote one key unaware of each other, or a new owner wrote over a value it never received.",
 			float64(s.SplitBrainDetections)},
 		{"peercache_stale_epoch_refusals_total", Counter,
 			"Requests refused because the caller resolved ownership under a view this node has replaced.",

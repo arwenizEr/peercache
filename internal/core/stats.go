@@ -140,12 +140,14 @@ type Stats struct {
 	ReplicationsDropped int64
 	ReplicationsFailed  int64
 
-	// SplitBrainDetections counts writes a replica saw from two different
-	// nodes under one membership epoch.
+	// SplitBrainDetections counts forks a replica saw in a key's history:
+	// copies from two different writers, neither of which replaced the
+	// other's write (replication.Forked).
 	//
-	// One group has one owner, so this cannot happen unless two nodes
-	// believed they owned the same key — the partition case, which must be
-	// detected and counted. It is never merged: conflicting
+	// One group has one owner, so this means two nodes believed they owned
+	// the same key — the partition case — or a new owner wrote over a value
+	// it never received. Either way acknowledged writes diverged, which must
+	// be detected and counted. It is never merged: conflicting
 	// writes are reported, and choosing between them is the application's
 	// business.
 	//
