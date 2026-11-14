@@ -213,6 +213,11 @@ func (c *cache) DebugHandler() http.Handler {
 	mux.HandleFunc("/namespaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, func() (any, int, error) { return c.Describe().Namespaces, http.StatusOK, nil })
 	})
+	mux.HandleFunc("/cluster", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, r, func() (any, int, error) {
+			return c.DescribeCluster(r.Context(), r.URL.Query().Get("digests") == "1"), http.StatusOK, nil
+		})
+	})
 	mux.HandleFunc("/key", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, func() (any, int, error) {
 			q := r.URL.Query()

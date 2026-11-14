@@ -379,6 +379,7 @@ namespace.go      Namespace handle
 batchload.go      BatchGetOrLoad: one request per owner, one batch load per owner
 refresh.go        WithRefreshAhead: background reloads of keys read near expiry
 trace.go          WithTracer: spans around peer requests and loads
+cluster.go        DescribeCluster: every member's view, replica digests compared
 group.go          Group handle
 types.go          Shared public types
 errors.go         Sentinel errors
@@ -421,6 +422,7 @@ internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
   hlc/            Hybrid logical clock ordering persistent writes
+  digest/         Running per-partition digests of what a store holds
   testkit/        In-process cluster harness with fault injection
   store/          Sharded owned store, TTL, versions
   l1/             Non-owned cache, TTL and version discipline

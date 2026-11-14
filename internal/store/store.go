@@ -13,6 +13,7 @@ import (
 
 	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/digest"
 )
 
 // Defaults for [Options].
@@ -145,6 +146,8 @@ type Store struct {
 	order func() uint64
 	// jitter is [Options.TTLJitter].
 	jitter float64
+	// digest summarises every entry's key and version; see [Store.Digest].
+	digest digest.Set
 
 	sweepPerTick int
 	// cursor is the next shard the sweeper will visit. It is only touched
@@ -372,7 +375,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 		version = sh.floor + 1
 	}
 	order := s.nextOrder()
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -435,7 +438,7 @@ func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, 
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -571,7 +574,7 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, orde
 	} else if ok && existing.version >= version {
 		return false
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
 	delta := size(key, stored)
 	if ok {
 		delta -= size(key, existing.val)
@@ -603,7 +606,7 @@ func (s *Store) Remove(key string) (bool, uint64) {
 	order := s.nextOrder()
 	e, ok := sh.entries[key]
 	if ok {
-		delete(sh.entries, key)
+		s.deleteEntry(sh, key)
 		sh.bytes.Add(-size(key, e.val))
 		// The deletion's tombstone is replicated asynchronously and may
 		// not arrive, leaving a replica holding this version. A rewrite
@@ -745,7 +748,7 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 			if freed >= target {
 				break
 			}
-			delete(sh.entries, key)
+			s.deleteEntry(sh, key)
 			if e.version > sh.floor {
 				sh.floor = e.version
 			}
@@ -793,7 +796,7 @@ func (s *Store) Sweep(n int) int {
 		sh.mu.Lock()
 		for key, e := range sh.entries {
 			if e.expiresAt != 0 && now >= e.expiresAt {
-				delete(sh.entries, key)
+				s.deleteEntry(sh, key)
 				sh.bytes.Add(-size(key, e.val))
 				fromShard++
 			}
@@ -867,7 +870,7 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 		if !live {
 			return 0, false
 		}
-		delete(sh.entries, key)
+		s.deleteEntry(sh, key)
 		sh.bytes.Add(-size(key, old.val))
 		if old.version > sh.floor {
 			sh.floor = old.version
@@ -880,7 +883,7 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)

@@ -1386,6 +1386,30 @@ built on the same pieces. The package's tests are its examples
 
 ## Observability
 
+### The whole cluster — `DescribeCluster`
+
+```go
+d := cache.DescribeCluster(ctx, true) // or GET /debug/peercache/cluster?digests=1
+if !d.MembersAgree { log.Print(d.Disagreements) }
+for _, p := range d.OutOfStep { log.Printf("%s partition %d: %d copies of %d", p.Namespace, p.Partition, p.HeldCopies, p.WantCopies) }
+```
+
+`Describe` is one node's belief; during an incident the questions are about the
+cluster. `DescribeCluster` asks every member of this node's view for its
+`Describe` (each bounded by `DescribeTimeout`) and reports them side by side,
+with `MembersAgree` and, when not, what each node sees. A member it cannot reach
+is reported with the error.
+
+With digests it also checks the replicas. Each store keeps, on every write, a
+running digest per partition of the keyspace (64, by key hash): a count and a
+sum of hashes of each key with its version. Reading it costs the same whatever
+the store holds. In step, the copies held across the cluster are exactly the
+owned keys times `copies - 1`; `OutOfStep` lists the partitions where they are
+not, with each node's owned and held counts, so the short node shows. It needs
+every member's answer. Replication in flight, and keys around their TTL, can
+show briefly; read twice to tell lag from loss. It detects, never repairs, and
+like the rest of the debug handler holds no key and no value. Decision 0039.
+
 ### Tracing — `WithTracer`
 
 ```go

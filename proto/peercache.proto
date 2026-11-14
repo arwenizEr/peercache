@@ -95,6 +95,11 @@ service Peer {
   // latency optimisation and nothing more — correctness never depends on
   // one of these arriving. See design principle 6 (docs/design.md).
   rpc Invalidate(InvalidateRequest) returns (InvalidateResponse);
+
+  // Describe returns this node's Describe and, when asked, its replica
+  // digests, for Cache.DescribeCluster. Counts and hash sums only, never a
+  // key or a value. See docs/decisions/0039-cluster-view.md.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
 }
 
 // Stamp is an owner-issued (epoch, version) pair.
@@ -363,3 +368,25 @@ message InvalidateRequest {
 }
 
 message InvalidateResponse {}
+
+message DescribeRequest {
+  bool digests = 1;
+}
+
+message DescribeResponse {
+  // description is the JSON Cache.Describe serves.
+  bytes description = 1;
+  repeated NamespaceDigest digests = 2;
+}
+
+message NamespaceDigest {
+  string namespace = 1;
+  repeated PartDigest owned = 2;
+  repeated PartDigest held = 3;
+}
+
+message PartDigest {
+  uint32 part = 1;
+  uint64 count = 2;
+  uint64 sum = 3;
+}

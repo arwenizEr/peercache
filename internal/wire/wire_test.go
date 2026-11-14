@@ -59,6 +59,11 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 		}, func() any { return new(wire.InvalidateRequest) }},
 		{"InvalidateResponse", &wire.InvalidateResponse{},
 			func() any { return new(wire.InvalidateResponse) }},
+		{"DescribeRequest", &wire.DescribeRequest{Digests: true},
+			func() any { return new(wire.DescribeRequest) }},
+		{"DescribeResponse", &wire.DescribeResponse{Description: []byte(`{"node":{}}`), Digests: []wire.NamespaceDigest{
+			{Namespace: "n", Owned: []wire.PartDigest{{Part: 7, Count: 3, Sum: 1 << 63}}, Held: []wire.PartDigest{}},
+		}}, func() any { return new(wire.DescribeResponse) }},
 		{"SubmitRequest", &wire.SubmitRequest{
 			FuncName: "apply", Epoch: 3,
 			Batches: []wire.GroupBatch{
@@ -262,7 +267,8 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 		"TouchRequest", "TouchResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
 		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
-		"GroupFailure",
+		"GroupFailure", "DescribeRequest", "DescribeResponse", "NamespaceDigest",
+		"PartDigest",
 	}
 	for _, name := range implemented {
 		if !declared[name] {
@@ -295,6 +301,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.BatchGetRequest{}, &wire.BatchGetResponse{}, &wire.BatchEntry{},
 		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},
 		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
+		&wire.DescribeRequest{}, &wire.DescribeResponse{}, &wire.NamespaceDigest{}, &wire.PartDigest{},
 		&wire.LoadRequest{}, &wire.LoadResponse{}, &wire.ReplicateRequest{},
 		&wire.CatchUpRequest{}, &wire.CatchUpEntry{},
 		&wire.CondSetRequest{}, &wire.CondSetResponse{}, &wire.IncrementRequest{},
