@@ -9,6 +9,10 @@ change the public API.
 
 ### Added
 
+- `WithTTLJitter(fraction)`: the owner shortens every TTL it assigns by up to
+  `fraction`, by an amount fixed per key, so keys written together do not
+  expire together. Never lengthens; replicas and persistence carry the owner's
+  deadline. Decision 0037.
 - `WithL1MaxBytes`: a namespace's non-owned tier is bounded in bytes, each
   copy charged its key, value and a fixed overhead, the same charge the L1
   bytes gauge and the memory budget use. Decision 0033.

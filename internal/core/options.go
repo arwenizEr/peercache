@@ -193,6 +193,10 @@ type NamespaceOptions struct {
 	// docs/decisions/0034-negative-caching.md.
 	NegativeTTL time.Duration
 
+	// TTLJitter shortens every TTL the owner assigns by up to this
+	// fraction, fixed per key. See docs/decisions/0037-ttl-jitter.md.
+	TTLJitter float64
+
 	// Shards is the number of independently locked partitions in this
 	// namespace's store. Zero takes the store's default.
 	Shards int
@@ -280,6 +284,9 @@ func (o *NamespaceOptions) Validate() error {
 	}
 	if o.L1MaxBytes <= 0 {
 		return fmt.Errorf("peercache: L1 max bytes must be positive, got %d: %w", o.L1MaxBytes, ErrInvalidOption)
+	}
+	if o.TTLJitter < 0 || o.TTLJitter >= 1 || o.TTLJitter != o.TTLJitter {
+		return fmt.Errorf("peercache: TTL jitter must be in [0, 1), got %v: %w", o.TTLJitter, ErrInvalidOption)
 	}
 	if o.NegativeTTL < 0 {
 		return fmt.Errorf("peercache: negative caching TTL must not be negative, got %v: %w",

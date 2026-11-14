@@ -430,6 +430,44 @@ func ExampleNamespace_BatchGet() {
 	// asked for 3, received: 2
 }
 
+// ExampleWithTTLJitter writes a hundred keys at once with one TTL. With jitter
+// 0.2 they expire spread over the last fifth of it instead of all together, and
+// none outlives the TTL it was given.
+func ExampleWithTTLJitter() {
+	fc := clock.NewFake(clock.Epoch)
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithClock(fc))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	sessions := cache.Namespace("sessions", peercache.WithTTLJitter(0.2))
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		_ = sessions.Set(ctx, fmt.Sprintf("s:%d", i), []byte("v"), 10*time.Minute)
+	}
+	alive := func() int {
+		n := 0
+		for i := 0; i < 100; i++ {
+			if ok, _ := sessions.Exists(ctx, fmt.Sprintf("s:%d", i)); ok {
+				n++
+			}
+		}
+		return n
+	}
+	fc.Advance(8*time.Minute - time.Nanosecond)
+	fmt.Println("just before 8 minutes:", alive())
+	fc.Advance(time.Minute)
+	fmt.Println("at 9 minutes, some gone:", alive() > 0 && alive() < 100)
+	fc.Advance(time.Minute)
+	fmt.Println("at 10 minutes:", alive())
+	// Output:
+	// just before 8 minutes: 100
+	// at 9 minutes, some gone: true
+	// at 10 minutes: 0
+}
+
 // ExampleWithBatchLoader shows BatchGetOrLoad: the keys an owner is missing
 // reach the database in one call, and a row that does not exist is omitted.
 func ExampleWithBatchLoader() {

@@ -401,6 +401,23 @@ func WithNegativeCaching(ttl time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.NegativeTTL = ttl }
 }
 
+// WithTTLJitter shortens every TTL this namespace's owners assign by up to
+// fraction, 0 <= fraction < 1, so that keys written together do not expire
+// together. Keys loaded in one burst — a warm-up, a batch load, a restore, a
+// loader that always answers one TTL — otherwise all expire in the same instant
+// and their reloads reach the database at once.
+//
+// The amount is fixed per key, a function of the key alone: a key rewritten
+// keeps the same lifetime, and replicas and persistence carry the owner's
+// deadline, so no two nodes disagree. TTLs only get shorter, never longer,
+// because a TTL is often a bound on how stale a value may be. A fraction of
+// 0.1 turns a one-hour TTL into one between 54 and 60 minutes. Zero, the
+// default, assigns TTLs exactly; outside [0, 1) is ErrInvalidOption. See
+// docs/decisions/0037-ttl-jitter.md.
+func WithTTLJitter(fraction float64) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.TTLJitter = fraction }
+}
+
 // WithL1TTL bounds how long a copy of a non-owned key may be served from local
 // memory.
 //

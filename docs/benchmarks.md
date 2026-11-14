@@ -145,6 +145,7 @@ in the background): `BenchmarkNamespaceSet` 441 → 458 ns, spreads 426–478 an
 | `BenchmarkGetCold` | 321.2 | 0 | 0 | 1M keys, shuffled |
 | `BenchmarkGetWithTTL` | 71.5 | 0 | 0 | the clock read costs ~42 ns, which is why keys without a TTL skip it |
 | `BenchmarkGetMiss` | 35.2 | 0 | 0 | |
+| `BenchmarkSetWithTTLJitter` | 254.9 | 67 | 1 | a TTL'd Set with jitter 0.1: the key hash and multiply. BenchmarkSet ran 178–239 (median 235) in the same sitting, 2026-11-14; decision 0037 |
 | `BenchmarkGetParallel` | 88.3 | 0 | 0 | 1M keys across 20 threads |
 | `BenchmarkSet` | 238.2 | 67 | 1 | |
 | `BenchmarkExists` | 53.2 | 0 | 0 | |

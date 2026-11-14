@@ -649,6 +649,13 @@ caught   a misrouted key in a load looks like a missing one                 -- T
 caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
+caught   a namespace's jitter never reaches its store                       -- TestTTLJitterSpreadsAWarmUp
+caught   the store ignores its jitter                                       -- TestJitterShortensByAnAmountFixedPerKey
+caught   jitter lengthens a TTL                                             -- TestJitterShortensByAnAmountFixedPerKey
+caught   jitter is drawn afresh on every write                              -- TestJitterShortensByAnAmountFixedPerKey
+caught   an atomic update's TTL is not jittered                             -- TestTTLJitterSpreadsAWarmUp
+caught   a restored deadline is jittered again                              -- TestRestoreKeepsTheDeadlineItWasGiven
+caught   a jitter of one is accepted                                        -- TestTTLJitterMustBeAFraction
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

@@ -195,6 +195,26 @@ func BenchmarkSet(b *testing.B) {
 	}
 }
 
+// BenchmarkSetWithTTLJitter is BenchmarkSet in a store with TTL jitter: the
+// hash and multiply each TTL'd write pays (decision 0037).
+func BenchmarkSetWithTTLJitter(b *testing.B) {
+	const keys = 1 << 16
+
+	s, err := store.New(store.Options{Clock: clock.Real(), Shards: store.DefaultShards, TTLJitter: 0.1})
+	if err != nil {
+		b.Fatalf("store.New: %v", err)
+	}
+	b.Cleanup(func() { _ = s.Close() })
+	ks := benchKeys(keys)
+	value := make([]byte, 64)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Set(ks[i%keys], value, time.Hour)
+	}
+}
+
 func BenchmarkSetParallel(b *testing.B) {
 	const keys = 1 << 16
 
