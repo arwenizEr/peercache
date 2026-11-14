@@ -131,6 +131,12 @@ change the public API.
 
 ### Fixed
 
+- A node that lost a key's ownership kept the value in its owned store, outside
+  replication, hand-off and eviction; when ownership came back to it after the
+  newer holders died it served the overwritten value. Reconciliation now
+  demotes such keys to replica copies, which the existing rules keep, hand off
+  or drop. Found by the dashboard's replica check on kind.
+
 - Catch-up and hand-off cost O(n² log n) in the keys paged: every 512-entry
   page scanned and sorted every key above its cursor. A full pass over 400,000
   keys took 57 s and allocated 13.7 GB on the serving node, once per requester.
