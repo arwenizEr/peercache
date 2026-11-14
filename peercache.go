@@ -18,6 +18,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
+	"github.com/arwenizEr/peercache/internal/pager"
 	"github.com/arwenizEr/peercache/internal/replication"
 	"github.com/arwenizEr/peercache/internal/store"
 )
@@ -241,6 +242,7 @@ func New(opts ...Option) (Cache, error) {
 
 	c := &cache{
 		orders:     hlc.New(resolved.Clock),
+		pages:      pager.New(resolved.Clock, 0, 0),
 		opts:       resolved,
 		groups:     groups,
 		guard:      guard,
@@ -455,6 +457,11 @@ type cache struct {
 	// that only signals leaves the serving goroutine racing whatever runs
 	// next; this one waits.
 	serving sync.WaitGroup
+
+	// pages keeps the sorted key list of each catch-up and hand-off pass in
+	// progress, so a pass sorts once rather than once per page. See
+	// internal/pager.
+	pages *pager.Pager
 
 	// ticker drives one sweeper for every namespace. Per-namespace
 	// sweepers would mean a goroutine per namespace for work that is

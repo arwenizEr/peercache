@@ -137,6 +137,16 @@ in the background): `BenchmarkNamespaceSet` 441 → 458 ns, spreads 426–478 an
 412–518; `BenchmarkGetOrLoadHit` 82.9 → 84.7 ns; `BenchmarkNamespaceGet` 450 →
 437 ns. All within run-to-run noise.
 
+**Paging a whole store (2026-11-14).** `BenchmarkSnapshotFullPass`, 512-entry
+pages, Machine A:
+
+| Keys | `Snapshot` (re-sort per page) | `SnapshotFrom` (sorted once per pass) |
+|---:|---:|---:|
+| 10,000 | 22 ms, 7.3 MB | 2.1 ms, 1.6 MB |
+| 100,000 | 2.3 s, 823 MB | 30 ms, 18.5 MB |
+| 400,000 | 57 s, 13.7 GB | 172 ms, 74 MB |
+| 1,000,000 | — | 677 ms, 184 MB |
+
 ### internal/store
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |

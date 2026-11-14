@@ -2755,6 +2755,36 @@ mutate "the OpenTelemetry adapter propagates nothing" \
   '	_ = carrier' \
   'TestARemoteGetIsOneOpenTelemetryTrace$' otel::./
 
+# --- catch-up and hand-off paging, sorted once per pass ---
+
+mutate "every page rebuilds and re-sorts the key list" \
+  internal/pager/pager.go \
+  '	if after == "" || ps == nil {' \
+  '	if true {' \
+  'TestAPassSortsOnceAndCoversEveryKey$' ./internal/pager
+mutate "a finished pass keeps its key list" \
+  internal/pager/pager.go \
+  '		if p.passes[id] == ps {
+			delete(p.passes, id)
+		}' \
+  '		_ = ps' \
+  'TestAPassSortsOnceAndCoversEveryKey$' ./internal/pager
+mutate "passes are not bounded" \
+  internal/pager/pager.go \
+  '	for len(p.passes) > p.max {' \
+  '	for false {' \
+  'TestPassesAreBounded$' ./internal/pager
+mutate "a page emptied by removals ends the pass" \
+  internal/store/pages.go \
+  '		if len(page) > 0 || !more {' \
+  '		if true {' \
+  'TestAPassSkipsKeysRemovedMidPassWithoutStopping$' ./internal/store
+mutate "a pass sends keys the asker stopped being entitled to" \
+  internal/store/pages.go \
+  '			if ok && (e.expiresAt == 0 || now < e.expiresAt) && (want == nil || want(key)) {' \
+  '			if ok && (e.expiresAt == 0 || now < e.expiresAt) {' \
+  'TestAPassReappliesItsFilter$' ./internal/store
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

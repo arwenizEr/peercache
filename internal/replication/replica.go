@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/pager"
 )
 
 // Store holds copies of keys this node does not own.
@@ -638,4 +639,49 @@ func (s *Store) Snapshot(namespace, after string, limit int, now int64, want fun
 // String implements [fmt.Stringer] for debugging.
 func (s *Store) String() string {
 	return fmt.Sprintf("replication.Store(%d keys across %d namespaces)", s.Len(), len(s.Namespaces()))
+}
+
+// SnapshotFrom is [Store.Snapshot] for a pass through a namespace's copies,
+// with the pass's sorted key list kept by p under id; see
+// store.Store.SnapshotFrom, whose rules it follows.
+func (s *Store) SnapshotFrom(p *pager.Pager, id, namespace, after string, limit int, now int64, want func(key string) bool) ([]KeyedEntry, bool) {
+	s.mu.RLock()
+	nr, ok := s.ns[namespace]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	build := func() []string {
+		nr.mu.RLock()
+		defer nr.mu.RUnlock()
+		var keys []string
+		for key, e := range nr.entries {
+			if e.ExpiresAt != 0 && now >= e.ExpiresAt {
+				continue
+			}
+			if want != nil && !want(key) {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		return keys
+	}
+	for {
+		keys, more := p.Page(id, after, limit, build)
+		page := make([]KeyedEntry, 0, len(keys))
+		nr.mu.RLock()
+		for _, key := range keys {
+			e, ok := nr.entries[key]
+			if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) || (want != nil && !want(key)) {
+				continue
+			}
+			e.Value = append([]byte(nil), e.Value...)
+			page = append(page, KeyedEntry{Key: key, Entry: e})
+		}
+		nr.mu.RUnlock()
+		if len(page) > 0 || !more {
+			return page, more
+		}
+		after = keys[len(keys)-1]
+	}
 }

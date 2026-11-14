@@ -421,6 +421,7 @@ internal/
   core/           Type definitions shared by the public and internal packages
   clock/          Real and fake clock. Nothing else calls time.Now.
   hlc/            Hybrid logical clock ordering persistent writes
+  pager/          Sorted key lists for catch-up and hand-off passes, sorted once per pass
   testkit/        In-process cluster harness with fault injection
   store/          Sharded owned store, TTL, versions
   l1/             Non-owned cache, TTL and version discipline
