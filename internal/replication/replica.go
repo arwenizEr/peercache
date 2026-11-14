@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/digest"
 )
 
 // Store holds copies of keys this node does not own.
@@ -78,6 +79,29 @@ func size(key string, e Entry) int64 {
 type namespaceReplicas struct {
 	mu      sync.RWMutex
 	entries map[string]Entry
+	// digest summarises every copy's key and owner version; see
+	// [Store.Digest]. Kept by put and del, the only writers of entries.
+	digest digest.Set
+}
+
+// put stores e under key, keeping the digest in step. Callers hold mu.
+func (nr *namespaceReplicas) put(key string, e Entry) {
+	k := digest.KeyOf(key)
+	if old, held := nr.entries[key]; held {
+		nr.digest.Replace(k, old.Stamp.Version, e.Stamp.Version)
+	} else {
+		nr.digest.Add(k, e.Stamp.Version)
+	}
+	nr.entries[key] = e
+}
+
+// del removes key and its digest contribution. Callers hold mu; it is safe
+// inside a range over entries.
+func (nr *namespaceReplicas) del(key string) {
+	if old, held := nr.entries[key]; held {
+		nr.digest.Remove(digest.KeyOf(key), old.Stamp.Version)
+		delete(nr.entries, key)
+	}
 }
 
 // Entry is one replicated value and the stamp the owner issued for it.
@@ -173,7 +197,7 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 			return false, conflict
 		}
 	}
-	nr.entries[key] = e
+	nr.put(key, e)
 	delta := size(key, e)
 	if held {
 		delta -= size(key, existing)
@@ -256,7 +280,7 @@ func (s *Store) Delete(namespace, key string) bool {
 	if !held {
 		return false
 	}
-	delete(nr.entries, key)
+	nr.del(key)
 	s.bytes.Add(-size(key, e))
 	return true
 }
@@ -281,7 +305,7 @@ func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp, order
 	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {
 		return false
 	}
-	delete(nr.entries, key)
+	nr.del(key)
 	s.bytes.Add(-size(key, e))
 	return true
 }
@@ -370,7 +394,7 @@ func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool)
 			taken = make(map[string]Entry)
 		}
 		taken[key] = e
-		delete(nr.entries, key)
+		nr.del(key)
 		s.bytes.Add(-size(key, e))
 	}
 	return taken
@@ -410,7 +434,7 @@ func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 		if stillMine(key) {
 			continue
 		}
-		delete(nr.entries, key)
+		nr.del(key)
 		s.bytes.Add(-size(key, e))
 		dropped++
 	}
@@ -459,7 +483,7 @@ func (s *Store) SweepExpired(now int64) int {
 		nr.mu.Lock()
 		for key, e := range nr.entries {
 			if !e.Live(now) {
-				delete(nr.entries, key)
+				nr.del(key)
 				s.bytes.Add(-size(key, e))
 				removed++
 			}
@@ -517,7 +541,7 @@ func (s *Store) Shed(target int64) int64 {
 			if freed >= target {
 				break
 			}
-			delete(nr.entries, key)
+			nr.del(key)
 			n := size(key, e)
 			s.bytes.Add(-n)
 			s.shed.Add(1)
@@ -548,7 +572,7 @@ func (s *Store) EvictWhere(namespace string, keep func(key string, e Entry) bool
 		if keep(key, e) {
 			continue
 		}
-		delete(nr.entries, key)
+		nr.del(key)
 		s.bytes.Add(-size(key, e))
 		dropped++
 	}
@@ -638,4 +662,10 @@ func (s *Store) Snapshot(namespace, after string, limit int, now int64, want fun
 // String implements [fmt.Stringer] for debugging.
 func (s *Store) String() string {
 	return fmt.Sprintf("replication.Store(%d keys across %d namespaces)", s.Len(), len(s.Namespaces()))
+}
+
+// Digest returns the running digest of every copy held for namespace, without
+// walking them. See docs/decisions/0039-cluster-view.md.
+func (s *Store) Digest(namespace string) [digest.Parts]digest.Pair {
+	return s.namespaceFor(namespace).digest.Snapshot()
 }

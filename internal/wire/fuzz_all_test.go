@@ -53,6 +53,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		&wire.CatchUpResponse{},
 		&wire.InvalidateRequest{Namespace: "n", Keys: []string{"a"}},
 		&wire.InvalidateResponse{},
+		&wire.DescribeRequest{Digests: true},
+		&wire.DescribeResponse{Description: []byte("{}"), Digests: []wire.NamespaceDigest{{Namespace: "n", Owned: []wire.PartDigest{{Part: 1}}}}},
 		// The submit family was missing from this list while the fuzz body
 		// below already decoded into two of the three, which is the same shape
 		// of gap this target exists to close: a sample that has quietly fallen
@@ -124,6 +126,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 			cuResp   wire.CatchUpResponse
 			invReq   wire.InvalidateRequest
 			invResp  wire.InvalidateResponse
+			descReq  wire.DescribeRequest
+			descResp wire.DescribeResponse
 			subReq   wire.SubmitRequest
 			subResp  wire.SubmitResponse
 			// GroupBatch is a field of SubmitRequest rather than an RPC
@@ -159,6 +163,8 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		_ = wire.Decode(data, &cuResp)
 		_ = wire.Decode(data, &invReq)
 		_ = wire.Decode(data, &invResp)
+		_ = wire.Decode(data, &descReq)
+		_ = wire.Decode(data, &descResp)
 		_ = wire.Decode(data, &subReq)
 		_ = wire.Decode(data, &subResp)
 		_ = wire.Decode(data, &batch)
@@ -174,6 +180,7 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 			"BatchGetRequest.Keys":     len(bgReq.Keys),
 			"BatchGetResponse.Entries": len(bgResp.Entries),
 			"InvalidateRequest.Keys":   len(invReq.Keys),
+			"DescribeResponse.Digests": len(descResp.Digests),
 			"CatchUpResponse.Entries":  len(cuResp.Entries),
 			"SubmitRequest.Batches":    len(subReq.Batches),
 			"SubmitResponse.Failures":  len(subResp.Failures),

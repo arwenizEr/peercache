@@ -73,6 +73,8 @@ func (h *peerHandler) handle(ctx context.Context, from core.Node, method string,
 		return h.catchUp(ctx, req)
 	case transport.MethodInvalidate:
 		return h.invalidate(ctx, from, req)
+	case transport.MethodDescribe:
+		return h.describe(ctx, req)
 	default:
 		return nil, fmt.Errorf("peercache: unknown method %q from %s: %w",
 			method, from.ID, ErrNotImplemented)

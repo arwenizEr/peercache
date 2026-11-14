@@ -2755,6 +2755,46 @@ mutate "the OpenTelemetry adapter propagates nothing" \
   '	_ = carrier' \
   'TestARemoteGetIsOneOpenTelemetryTrace$' otel::./
 
+# --- cluster view and running digests (decision 0039) ---
+
+mutate "a store delete leaves its digest behind" \
+  internal/store/digest.go \
+  '		s.digest.Remove(digest.KeyOf(key), old.version)' \
+  '		_ = old' \
+  'TestTheRunningDigestFollowsEveryWritePath$' ./internal/store
+mutate "a store overwrite is counted as a new key" \
+  internal/store/digest.go \
+  '		s.digest.Replace(k, old.version, e.version)' \
+  '		s.digest.Add(k, e.version)' \
+  'TestTheRunningDigestFollowsEveryWritePath$' ./internal/store
+mutate "a replica delete leaves its digest behind" \
+  internal/replication/replica.go \
+  '		nr.digest.Remove(digest.KeyOf(key), old.Stamp.Version)' \
+  '		_ = old' \
+  'TestTheReplicaDigestFollowsEveryWritePath$' ./internal/replication
+mutate "a replica's missing copies are not reported" \
+  cluster.go \
+  '		if t.held.Count == t.owned.Count*m && t.held.Sum == t.owned.Sum*m {' \
+  '		if true {' \
+  'TestAReplicaThatMissedWritesIsReported$' ./tests
+mutate "an in-step partition is reported as out of step" \
+  cluster.go \
+  '		m := uint64(copies - 1)' \
+  '		m := uint64(copies)' \
+  'TestInStepReplicasMatchTheirOwners$' ./tests
+mutate "a cluster with a member unreachable is reported as agreeing" \
+  cluster.go \
+  '		if n.Description == nil {
+			agree = false' \
+  '		if n.Description == nil {
+			_ = agree' \
+  'TestAnUnreachableMemberIsReported$' ./tests
+mutate "a silent member holds DescribeCluster forever" \
+  cluster.go \
+  '			mctx, cancel := clock.WithTimeout(ctx, c.opts.Clock, DescribeTimeout)' \
+  '			mctx, cancel := context.WithCancel(ctx)' \
+  'TestAMemberThatNeverAnswersCostsOnlyTheTimeout$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
