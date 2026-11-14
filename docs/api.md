@@ -17,6 +17,7 @@ and output-checked by `go test`:
 | `ExampleNamespace_Set` | TTL expiry under an injected clock; non-positive TTL |
 | `ExampleNamespace_Get` | the aliasing contract — `Set` copies, `Get` does not |
 | `ExampleNamespace_BatchGet` | batch semantics; absent keys omitted |
+| `ExampleWithBatchLoader` | `BatchGetOrLoad`: one loader call for every missing key, missing rows omitted |
 | `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
@@ -158,6 +159,7 @@ type Namespace interface {
     Delete(ctx context.Context, key string) error
     Exists(ctx context.Context, key string) (bool, error)
     BatchGet(ctx context.Context, keys []string) (map[string][]byte, error)
+    BatchGetOrLoad(ctx context.Context, keys []string) (map[string][]byte, error)
     BatchSet(ctx context.Context, kv map[string][]byte, ttl time.Duration) error
     GetOrLoad(ctx context.Context, key string) ([]byte, error)
 
@@ -234,6 +236,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
 | `WithNegativeCaching(time.Duration)` | off | The owner remembers a loader's `ErrNotFound` for the TTL and answers `GetOrLoad` without loading. Any write of the key forgets it. Negative is `ErrInvalidOption`. See below. |
+| `WithBatchLoader(BatchLoader)` | none | Loads every key a `BatchGetOrLoad` owner is missing in one call. Without it, `BatchGetOrLoad` uses the `WithLoader` loader per key. See below. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 
 `Namespace` cannot return an error, so an invalid option is reported by every
@@ -259,6 +262,40 @@ returns the stored slice **without copying**, so a caller must not modify it.
 Copying on read was measured at 2.6x the cost and one allocation per read, which
 would also undo the allocation-free property the latency tail depends on. See
 [`docs/decisions/0007-get-returns-the-stored-slice.md`](decisions/0007-get-returns-the-stored-slice.md).
+
+### BatchGetOrLoad: one query for many misses
+
+```go
+rows := cache.Namespace("products",
+    peercache.WithBatchLoader(func(ctx context.Context, keys []string) (map[string][]byte, time.Duration, error) {
+        return db.LoadProducts(ctx, keys) // SELECT ... WHERE id IN (...)
+    }),
+)
+page, err := rows.BatchGetOrLoad(ctx, productIDs)
+```
+
+Keys go to their owners as `BatchGet`'s do, one request per owner. Each owner
+answers what it holds and calls the batch loader **once** with every key it is
+missing, so a page that misses fifty keys over three owners costs three
+requests and three queries, not fifty of each.
+
+- A key absent from the loader's map does not exist and is omitted from the
+  result, as `BatchGet` omits absent keys.
+- One TTL applies to every value a call returns.
+- Each value is stored only if no write landed while the loader ran; the write
+  wins and is what the caller gets.
+- A failing owner's keys are missing and its error is joined into the returned
+  error, beside every other owner's keys. There is no atomicity across keys.
+- Without `WithBatchLoader` the namespace's per-key loader runs for each missing
+  key on its owner, through `GetOrLoad`'s single-flight: the round trips are
+  saved, the queries are not. With no loader at all, `ErrNoLoader`.
+- A batch load does not join a concurrent `GetOrLoad` of one of its keys: both
+  may query, and the first store wins. Never a wrong value; occasionally one
+  extra query for a key hot enough to be in flight.
+- During a rolling upgrade a peer on an earlier release answers a load request
+  as a `BatchGet`: what it holds, nothing loaded.
+
+Decision 0035.
 
 ### GetOrLoad has no loader argument
 

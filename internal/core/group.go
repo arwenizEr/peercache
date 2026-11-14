@@ -61,6 +61,11 @@ type GroupFunc func(ctx context.Context, s GroupState, arg []byte) ([]byte, erro
 // value means the loaded value does not expire on its own.
 type Loader func(ctx context.Context, key string) (val []byte, ttl time.Duration, err error)
 
+// BatchLoader reconstructs many missing keys in one call, on their owner. A key
+// absent from the returned map does not exist; ttl applies to every value
+// returned. An error fails the whole call.
+type BatchLoader func(ctx context.Context, keys []string) (vals map[string][]byte, ttl time.Duration, err error)
+
 // TypedLoaderSpec is a loader that returns a typed value, held in namespace
 // options until the namespace's codec is known.
 //

@@ -478,6 +478,26 @@ func WithShards(n int) NamespaceOption {
 // refreshed, which is occasionally what is wanted and more often an oversight.
 type Loader = core.Loader
 
+// BatchLoader reconstructs many missing keys in one call; see
+// [WithBatchLoader].
+type BatchLoader = core.BatchLoader
+
+// WithBatchLoader registers the loader BatchGetOrLoad calls on each key's owner
+// with every key in the batch that owner is missing — one call, usually one
+// database query, instead of one per key. A key absent from the returned map
+// does not exist and is left out of the result; the TTL applies to every value
+// returned; an error fails that owner's share of the batch and stores nothing.
+// Each value is stored only if no write landed while the loader ran.
+//
+// It runs where the per-key loader does, on the owner, bounded by
+// WithLoaderTimeout and not by the caller's context. A namespace without one
+// still answers BatchGetOrLoad with its WithLoader loader, once per missing
+// key. It is byte-valued; a NamespaceOf view's BatchGetOrLoad uses it or its
+// typed loader. See docs/decisions/0035-batch-loads.md.
+func WithBatchLoader(fn BatchLoader) NamespaceOption {
+	return func(o *core.NamespaceOptions) { o.BatchLoader = fn }
+}
+
 // Partitioner maps a cache key to the group key that decides its owner.
 type Partitioner = core.Partitioner
 

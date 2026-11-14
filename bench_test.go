@@ -368,6 +368,70 @@ func benchNotFound(b *testing.B, opts ...peercache.NamespaceOption) {
 	}
 }
 
+// BenchmarkBatchGetOrLoadCold reads 50 keys none of which is resident, through
+// a batch loader (one call) and through the per-key loader (fifty), both of
+// which do no work: what is measured is the cache's own cost per miss. A real
+// loader adds one database query to the first and fifty to the second.
+func BenchmarkBatchGetOrLoadCold(b *testing.B) {
+	value := make([]byte, 64)
+	for _, tc := range []struct {
+		name string
+		opt  peercache.NamespaceOption
+	}{
+		{"batch", peercache.WithBatchLoader(func(_ context.Context, keys []string) (map[string][]byte, time.Duration, error) {
+			out := make(map[string][]byte, len(keys))
+			for _, k := range keys {
+				out[k] = value
+			}
+			return out, 0, nil
+		})},
+		{"perkey", peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+			return value, 0, nil
+		})},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			c := benchCache(b)
+			ns := c.Namespace("bench", tc.opt)
+			ctx := context.Background()
+			ks := benchKeys(50)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				for _, k := range ks {
+					_ = ns.Delete(ctx, k)
+				}
+				b.StartTimer()
+				if got, err := ns.BatchGetOrLoad(ctx, ks); err != nil || len(got) != len(ks) {
+					b.Fatalf("BatchGetOrLoad = %d, %v", len(got), err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkBatchGetOrLoadWarm is BatchGetOrLoad of 50 resident keys: its cost
+// over BatchGet when nothing needs loading.
+func BenchmarkBatchGetOrLoadWarm(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench", peercache.WithBatchLoader(func(context.Context, []string) (map[string][]byte, time.Duration, error) {
+		b.Fatal("the loader ran on resident keys")
+		return nil, 0, nil
+	}))
+	ctx := context.Background()
+	ks := benchKeys(50)
+	for _, k := range ks {
+		_ = ns.Set(ctx, k, make([]byte, 64), 0)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if got, err := ns.BatchGetOrLoad(ctx, ks); err != nil || len(got) != len(ks) {
+			b.Fatalf("BatchGetOrLoad = %d, %v", len(got), err)
+		}
+	}
+}
+
 func BenchmarkBatchGet(b *testing.B) {
 	const batch = 100
 

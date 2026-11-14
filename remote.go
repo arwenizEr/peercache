@@ -249,6 +249,22 @@ func (r *router) remoteBatchGet(ctx context.Context, p placement, ns string, key
 	return resp.Entries, nil
 }
 
+// remoteBatchGetOrLoad is remoteBatchGet asking the owner to load what it does
+// not hold. It also returns the keys the owner reported it does not own.
+func (r *router) remoteBatchGetOrLoad(ctx context.Context, p placement, ns string, keys []string) ([]wire.BatchEntry, []string, error) {
+	var resp wire.BatchGetResponse
+	err := r.invoke(ctx, p.owner, transport.MethodBatchGet, &wire.BatchGetRequest{
+		Namespace: ns,
+		Keys:      keys,
+		Epoch:     p.epoch,
+		Load:      true,
+	}, &resp)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp.Entries, resp.Misrouted, nil
+}
+
 // retryable reports whether an error means "ask again, possibly elsewhere".
 //
 // Ownership answers go stale in flight: a key can move between resolving its

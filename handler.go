@@ -346,6 +346,7 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 	}
 
 	out := wire.BatchGetResponse{Entries: make([]wire.BatchEntry, 0, len(in.Keys))}
+	var missing []string
 	for _, key := range in.Keys {
 		// The context is checked inside the loop rather than only at
 		// entry. A large batch against a slow node would otherwise run
@@ -358,7 +359,12 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			// One misrouted key does not spoil the batch: the
 			// caller resolved it, so the caller can re-resolve it.
 			// Omitting it looks like a miss, which is the outcome
-			// the caller must already handle.
+			// a BatchGet caller must already handle; a load must
+			// not, because "missing" there means "does not exist",
+			// so it is named.
+			if in.Load {
+				out.Misrouted = append(out.Misrouted, key)
+			}
 			continue
 		}
 		if err := ns.awaitRestore(ctx, key); err != nil {
@@ -366,6 +372,9 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 		}
 		stored, version, found := ns.store.Get(key)
 		if !found {
+			if in.Load {
+				missing = append(missing, key)
+			}
 			continue
 		}
 		value, err := ns.decode(stored)
@@ -377,6 +386,33 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			Value: value,
 			Stamp: h.stamp(version),
 		})
+	}
+
+	if len(missing) > 0 {
+		// The keys this owner does not hold, loaded in one call — the
+		// point of BatchGetOrLoad. A failed load fails this owner's
+		// share; the caller keeps every other owner's.
+		if ns.opts.Loader == nil && ns.opts.BatchLoader == nil {
+			return nil, fmt.Errorf("namespace %q: %w", in.Namespace, ErrNoLoader)
+		}
+		loaded := make(map[string][]byte, len(missing))
+		if err := ns.loadMissing(ctx, missing, loaded); err != nil {
+			return nil, err
+		}
+		for _, key := range missing {
+			value, ok := loaded[key]
+			if !ok {
+				continue
+			}
+			// The stamp the value was stored under, for the caller's
+			// L1. A value that was already gone again carries none.
+			_, version, _ := ns.store.Get(key)
+			out.Entries = append(out.Entries, wire.BatchEntry{
+				Key:   key,
+				Value: value,
+				Stamp: h.stamp(version),
+			})
+		}
 	}
 	return wire.Encode(&out)
 }

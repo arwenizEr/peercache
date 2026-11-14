@@ -17,6 +17,11 @@ change the public API.
   until the TTL passes or the key is written. The absence is not a value:
   nothing but `GetOrLoad` sees it. `Stats().NegativeHits`,
   `peercache_negative_hits_total` and `Describe`'s `absences`. Decision 0034.
+- `Namespace.BatchGetOrLoad` and `WithBatchLoader`: keys go to their owners one
+  request per owner, and each owner loads every key it is missing in one batch
+  loader call, or per key with the ordinary loader. Wire: `BatchGetRequest`
+  field 4 `load` and `BatchGetResponse` field 2 `misrouted`, both readable by
+  and from the previous release. Decision 0035.
 - `WithCatchUpGate`: a node refuses its peers' operations on keys it owns, in
   namespaces with replicas, with `ErrActivationPending` until its first
   `CatchUp` completes. Readiness keeps clients away from a restarted node but

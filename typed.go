@@ -2,6 +2,7 @@ package peercache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -51,6 +52,9 @@ type TypedNamespace[T any] interface {
 	// BatchGet returns the values present among keys; absent keys are
 	// omitted.
 	BatchGet(ctx context.Context, keys []string) (map[string]T, error)
+	// BatchGetOrLoad returns the values for keys, loading missing ones on
+	// their owners. See [Namespace.BatchGetOrLoad].
+	BatchGetOrLoad(ctx context.Context, keys []string) (map[string]T, error)
 	// BatchSet stores every entry of kv for ttl.
 	BatchSet(ctx context.Context, kv map[string]T, ttl time.Duration) error
 	// GetOrLoad returns the value under key, loading it on the owner with
@@ -230,6 +234,22 @@ func (t *typedNamespace[T]) BatchGet(ctx context.Context, keys []string) (map[st
 		out[key] = v
 	}
 	return out, nil
+}
+
+func (t *typedNamespace[T]) BatchGetOrLoad(ctx context.Context, keys []string) (map[string]T, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
+	raw, err := t.raw.BatchGetOrLoad(ctx, keys)
+	out := make(map[string]T, len(raw))
+	for key, b := range raw {
+		v, derr := t.decode(key, b)
+		if derr != nil {
+			return out, errors.Join(err, derr)
+		}
+		out[key] = v
+	}
+	return out, err
 }
 
 func (t *typedNamespace[T]) BatchSet(ctx context.Context, kv map[string]T, ttl time.Duration) error {

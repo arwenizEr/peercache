@@ -105,6 +105,14 @@ type Namespace interface {
 	// non-nil error.
 	BatchGet(ctx context.Context, keys []string) (map[string][]byte, error)
 
+	// BatchGetOrLoad is BatchGet that loads, on each key's owner, the keys
+	// that owner does not hold: one request per owner, and one call to the
+	// namespace's WithBatchLoader per owner, or one WithLoader call per
+	// missing key without it. Keys that do not exist are omitted. A partial
+	// failure returns what was retrieved with a non-nil error. There is no
+	// atomicity across keys. Without any loader it reports ErrNoLoader.
+	BatchGetOrLoad(ctx context.Context, keys []string) (map[string][]byte, error)
+
 	// BatchSet stores every pair in kv with the same ttl. Each pair goes to
 	// its key's owner exactly as Set would — routed, replicated and
 	// invalidated — one request per key; unlike BatchGet it is not yet

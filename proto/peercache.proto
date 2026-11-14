@@ -227,12 +227,19 @@ message BatchGetRequest {
   string namespace = 1;
   repeated string keys = 2;
   uint64 epoch = 3;
+  // load asks the owner to load the keys it does not hold (BatchGetOrLoad,
+  // docs/decisions/0035-batch-loads.md). A peer on an earlier release ignores
+  // it and answers what it holds.
+  bool load = 4;
 }
 
 message BatchGetResponse {
   // entries is sparse: a key that was absent on the owner has no entry.
   // Callers must not assume index alignment with the request.
   repeated BatchEntry entries = 1;
+  // misrouted lists, for a request with load, the keys the responder does not
+  // own, so the caller asks their owner instead of taking them as missing.
+  repeated string misrouted = 2;
 }
 
 message BatchEntry {
