@@ -2824,6 +2824,15 @@ mutate "a pass sends keys the asker stopped being entitled to" \
   '			if ok && (e.expiresAt == 0 || now < e.expiresAt) {' \
   'TestAPassReappliesItsFilter$' ./internal/store
 
+# --- demotion of keys a node no longer owns ---
+
+mutate "a demoted owner keeps its keys in the owned store" \
+  promote.go \
+  '		p.demote(ns, self)
+' \
+  '' \
+  'TestADemotedOwnerDoesNotResurrectAnOverwrittenValue$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

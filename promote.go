@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/ownership"
 	"github.com/arwenizEr/peercache/internal/replication"
 )
@@ -153,6 +154,19 @@ func (p *promoter) reconcile() {
 		})
 		p.restore(ns, taken)
 
+		// Demote what this node owns no longer. A key whose ownership moved
+		// away stayed in the owned store, outside every rule: never
+		// replicated to, never handed off, never dropped — and, if ownership
+		// later came back with no fresher copy here, served as the truth.
+		// Under a rolling restart that brought overwritten values back
+		// (TestADemotedOwnerDoesNotResurrectAnOverwrittenValue), and on kind
+		// the owned stores held twice as many entries as there were keys.
+		// Filed as replica copies, the passes below keep them where this
+		// node still ranks, hand them to the nodes that do where it does
+		// not, and drop them below RF 2 — and catch-up's replica pass still
+		// serves them to a returning owner, which is why they were kept.
+		p.demote(ns, self)
+
 		// Hand off rather than evict.
 		//
 		// Dropping a replica because *this* node stopped ranking for it says
@@ -299,4 +313,46 @@ func (p *promoter) Close() {
 // counters reports promotion activity.
 func (p *promoter) counters() (promoted, evicted, rounds int64) {
 	return p.promoted.Load(), p.evicted.Load(), p.rounds.Load()
+}
+
+// demote moves the owned-store entries of keys this node no longer owns into
+// the replica store, as copies this node wrote. See reconcile.
+func (p *promoter) demote(ns *namespace, self string) {
+	c := p.cache
+	if ns.store == nil {
+		return
+	}
+	table := c.guard.Table()
+	if len(table.Members()) == 0 {
+		// An empty view says nothing about ownership; giving keys up
+		// because gossip blinked would be the wrong direction.
+		return
+	}
+	// Once per view. An owned store gains keys it does not own only when
+	// ownership moves — every write needs ownership, and restore and
+	// catch-up filter by it — so a view already demoted has nothing new.
+	// Walking the store on every reconciliation instead slowed the
+	// simulation by a quarter.
+	epoch := uint64(table.Epoch())
+	if ns.demotedEpoch.Swap(epoch) == epoch {
+		return
+	}
+	given := ns.store.TakeWhere(func(key string) bool {
+		owner, _, err := table.Owner(ns.groupKeyFor(key))
+		return err == nil && owner.ID != self
+	})
+	if len(given) == 0 {
+		return
+	}
+	now := c.opts.Clock.Now().UnixNano()
+	for _, e := range given {
+		c.replicas.Put(ns.name, e.Key, replication.Entry{
+			Value:      e.Value,
+			Stamp:      core.Stamp{Epoch: epoch, Version: e.Version},
+			ExpiresAt:  e.ExpiresAt,
+			ReceivedAt: now,
+			Order:      e.Order,
+			From:       self,
+		})
+	}
 }

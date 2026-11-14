@@ -1690,3 +1690,24 @@ and wrong means an application applying a non-idempotent write twice. The
 ambiguous answer is the safe one. Revisit if gRPC exposes the distinction, or
 if the transport takes over dialing itself so that a failed dial never reaches
 `Invoke`.
+
+## 53. A demoted owner kept its keys and brought old values back — found on kind, resolved
+
+**Found** with the dashboard's replica check on kind, after a rolling restart:
+the owned stores held 2.4M entries for about 1.2M keys, and the replicas far
+fewer copies than owners times one. Reconciliation moved replicas a node came
+to own into its owned store, and handed off replicas it stopped ranking for —
+but nothing ever touched an owned-store key whose ownership moved away. It
+stayed, outside every rule: never replicated to, never handed off, never
+dropped. That was half deliberate (a returning owner's catch-up pulls from a
+demoted node's owned store), and it had a consequence nobody had written down:
+when ownership came back to that node after the newer holders died, it served
+the old value as the truth. `TestADemotedOwnerDoesNotResurrectAnOverwrittenValue`
+reproduced it — v1 served after v2 overwrote it.
+
+**Picked:** every reconciliation demotes: owned-store keys this node no longer
+owns move into its replica store as copies it wrote (`Store.TakeWhere`, no
+tombstone). The passes that follow then treat them as any replica: kept where
+this node still ranks, handed to the nodes that do where it does not, dropped
+below RF 2. Catch-up's replica pass still serves them to a returning owner, so
+what the old behaviour was kept for still works.

@@ -171,6 +171,9 @@ type namespace struct {
 	// refreshes and refreshFailures count completed and failed reloads.
 	refreshes       atomic.Int64
 	refreshFailures atomic.Int64
+	// demotedEpoch is the membership epoch whose ownership the owned store
+	// was last demoted to; see promoter.demote.
+	demotedEpoch atomic.Uint64
 	// negativeHits counts GetOrLoad calls answered from a remembered
 	// absence; see [WithNegativeCaching].
 	negativeHits atomic.Int64
