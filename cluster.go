@@ -50,10 +50,17 @@ type NodeReport struct {
 // copies there should be, how many there are, and each node's share. No key
 // is named.
 type PartitionCheck struct {
-	Namespace  string      `json:"namespace"`
-	Partition  int         `json:"partition"`
-	Owned      uint64      `json:"owned"`
-	WantCopies uint64      `json:"wantCopies"`
+	Namespace  string `json:"namespace"`
+	Partition  int    `json:"partition"`
+	Owned      uint64 `json:"owned"`
+	WantCopies uint64 `json:"wantCopies"`
+	// Loaded is set for a namespace with a loader. A loaded value is
+	// stored on its owner only — loads are not replicated, they are
+	// reconstructible — so a partition holding loaded keys shows fewer
+	// copies than owned keys times copies-1, and that is expected rather
+	// than lost. Only copies above the expectation, or a namespace
+	// without a loader, point at a fault.
+	Loaded     bool        `json:"loaded,omitempty"`
 	HeldCopies uint64      `json:"heldCopies"`
 	Nodes      []NodeShare `json:"nodes"`
 }
@@ -148,13 +155,15 @@ func (c *cache) DescribeCluster(ctx context.Context, digests bool) ClusterDescri
 	}
 	if digests && len(byNode) == len(members) {
 		rf := map[string]int{}
+		loaded := map[string]bool{}
 		c.mu.RLock()
 		for name, ns := range c.namespaces {
 			rf[name] = ns.opts.ReplicationFactor
+			loaded[name] = ns.opts.Loader != nil || ns.opts.BatchLoader != nil || ns.opts.TypedLoader != nil
 		}
 		c.mu.RUnlock()
 		out.Digests = true
-		out.OutOfStep = checkPartitions(byNode, rf, len(members))
+		out.OutOfStep = checkPartitions(byNode, rf, loaded, len(members))
 	}
 	return out
 }
@@ -198,7 +207,7 @@ func sparse(parts [digest.Parts]digest.Pair) []wire.PartDigest {
 // times copies-1 — exactly, sums wrapping alike. Only partitions out of step
 // are returned, with every node's share so the short node shows. It needs
 // every member's digests; with one missing nothing is concluded.
-func checkPartitions(byNode map[string][]wire.NamespaceDigest, rf map[string]int, members int) []PartitionCheck {
+func checkPartitions(byNode map[string][]wire.NamespaceDigest, rf map[string]int, loaded map[string]bool, members int) []PartitionCheck {
 	type key struct {
 		ns   string
 		part uint32
@@ -250,7 +259,7 @@ func checkPartitions(byNode map[string][]wire.NamespaceDigest, rf map[string]int
 		if t.held.Count == t.owned.Count*m && t.held.Sum == t.owned.Sum*m {
 			continue
 		}
-		pc := PartitionCheck{Namespace: k.ns, Partition: int(k.part), Owned: t.owned.Count,
+		pc := PartitionCheck{Namespace: k.ns, Partition: int(k.part), Owned: t.owned.Count, Loaded: loaded[k.ns],
 			WantCopies: t.owned.Count * m, HeldCopies: t.held.Count}
 		for _, n := range t.nodes {
 			pc.Nodes = append(pc.Nodes, *n)

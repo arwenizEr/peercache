@@ -47,6 +47,14 @@ sum times `copies - 1`, sums wrapping alike. A partition that does not is
 reported with every node's owned and held counts, which shows the node that is
 short. Every member must answer, or nothing is concluded.
 
+**Loaded keys are expected short.** A loaded value is stored on its owner
+alone — loads are reconstructible and not replicated — so a namespace with a
+loader holds fewer copies than its owned keys imply. Its out-of-step partitions
+carry `Loaded`, and only copies above the expectation point at a fault there. A
+per-entry flag excluding loaded values from the digest was rejected: eight
+bytes on every entry of every namespace, and catch-up sends loaded values to
+replicas anyway, so the flag would not make the count exact.
+
 **Detection only.** Nothing is repaired: catch-up and reconciliation already
 do that, and a debug read that wrote would be a second, untested repair path.
 Replication in flight shows as a transient mismatch, and so can keys with a TTL

@@ -2833,6 +2833,12 @@ mutate "a demoted owner keeps its keys in the owned store" \
   '' \
   'TestADemotedOwnerDoesNotResurrectAnOverwrittenValue$' ./tests
 
+mutate "a namespace with a loader is not marked" \
+  cluster.go \
+  '			loaded[name] = ns.opts.Loader != nil || ns.opts.BatchLoader != nil || ns.opts.TypedLoader != nil' \
+  '			loaded[name] = false' \
+  'TestLoadedKeysAreMarkedNotMissing$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

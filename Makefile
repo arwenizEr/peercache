@@ -21,14 +21,16 @@ TIMEOUT ?= 300s
 # 300s did — what 300s had additionally become was an undeclared performance
 # budget that the suite outgrew silently.
 #
-# The margin is 1.7x and was 2.0x before the simulation tests. Re-measure before assuming
-# it, rather than after the gate stops passing; that is the mistake 300s was.
+# The margin was 2.0x before the simulation tests, 1.7x at the end of M8 and
+# 1.1x by November 2026 (816s for one pass of tests), when it went to 1500s.
+# Re-measure before assuming it, rather than after the gate stops passing;
+# that is the mistake 300s was.
 #
 # Where the time goes is measured in docs/benchmarks.md, "What the test suite
 # itself costs" — three tests are 81% of a race pass, their cost is inherent to
 # running many nodes under the detector, and two of them are acceptance criteria.
 # The figures live there rather than here so there is one copy to keep true.
-RACE_TIMEOUT ?= 900s
+RACE_TIMEOUT ?= 1500s
 
 .PHONY: all ci test test-s3 test-otel test-race latency examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
 

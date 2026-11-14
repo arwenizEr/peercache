@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arwenizEr/peercache"
 )
@@ -136,6 +137,34 @@ func TestTheClusterViewNamesNoKey(t *testing.T) {
 	for _, s := range []string{"secret-key-7", "secret-value"} {
 		if strings.Contains(string(body), s) {
 			t.Fatalf("the cluster view contains %q: %s", s, body)
+		}
+	}
+}
+
+// TestLoadedKeysAreMarkedNotMissing: loaded values live on their owner only,
+// so a namespace with a loader holds fewer copies than owned keys times
+// copies-1. Its partitions are reported as Loaded, so the shortfall reads as
+// expected, while a namespace without a loader carries no such mark.
+func TestLoadedKeysAreMarkedNotMissing(t *testing.T) {
+	f := newFabric(t, 3)
+	for _, id := range f.ids {
+		f.caches[id].Namespace("profiles", peercache.WithReplicationFactor(2),
+			peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) { return []byte("p"), 0, nil }))
+	}
+	f.settle(t)
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("u:%d", i)
+		if _, err := f.caches[f.ownerOf(t, key)].Namespace("profiles").GetOrLoad(context.Background(), key); err != nil {
+			t.Fatalf("GetOrLoad: %v", err)
+		}
+	}
+	d := f.caches[f.ids[0]].DescribeCluster(context.Background(), true)
+	if len(d.OutOfStep) == 0 {
+		t.Fatal("loaded keys have no replicas, yet nothing was reported short")
+	}
+	for _, pc := range d.OutOfStep {
+		if !pc.Loaded || pc.HeldCopies > pc.WantCopies {
+			t.Fatalf("a partition short only by loaded keys is reported as %+v", pc)
 		}
 	}
 }
