@@ -149,6 +149,9 @@ type NamespaceOptions struct {
 	// Codec names the registered codec used for typed values. Empty means
 	// the typed view's default, MessagePack.
 	Codec string
+	// BatchLoader loads many keys an owner is missing in one call, for
+	// BatchGetOrLoad. Without it, BatchGetOrLoad uses Loader per key.
+	BatchLoader BatchLoader
 	// TypedLoader is a loader that returns a typed value; see
 	// [TypedLoaderSpec]. It conflicts with Loader.
 	TypedLoader TypedLoaderSpec

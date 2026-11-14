@@ -99,7 +99,7 @@ func decodeEntries(dec *msgpack.Decoder) ([]BatchEntry, error) {
 
 // EncodeMsgpack implements [msgpack.CustomEncoder].
 func (r BatchGetRequest) EncodeMsgpack(enc *msgpack.Encoder) error {
-	if err := enc.EncodeArrayLen(3); err != nil {
+	if err := enc.EncodeArrayLen(4); err != nil {
 		return err
 	}
 	if err := enc.EncodeString(r.Namespace); err != nil {
@@ -113,28 +113,50 @@ func (r BatchGetRequest) EncodeMsgpack(enc *msgpack.Encoder) error {
 			return err
 		}
 	}
-	return enc.EncodeUint(r.Epoch)
+	if err := enc.EncodeUint(r.Epoch); err != nil {
+		return err
+	}
+	return enc.EncodeBool(r.Load)
 }
 
 // DecodeMsgpack implements [msgpack.CustomDecoder].
+//
+// Three fields is a request from a release before Load; fields past the fourth
+// are from a later one and are skipped, so either side of a rolling upgrade
+// can read the other.
 func (r *BatchGetRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
-	if _, err := dec.DecodeArrayLen(); err != nil {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
 		return err
 	}
-	var err error
+	if n < 3 {
+		return fmt.Errorf("wire: a batch get request of %d fields", n)
+	}
 	if r.Namespace, err = dec.DecodeString(); err != nil {
 		return err
 	}
 	if r.Keys, err = decodeStrings(dec); err != nil {
 		return err
 	}
-	r.Epoch, err = dec.DecodeUint64()
-	return err
+	if r.Epoch, err = dec.DecodeUint64(); err != nil {
+		return err
+	}
+	if n >= 4 {
+		if r.Load, err = dec.DecodeBool(); err != nil {
+			return err
+		}
+	}
+	for i := 4; i < n; i++ {
+		if err := dec.Skip(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EncodeMsgpack implements [msgpack.CustomEncoder].
 func (r BatchGetResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
-	if err := enc.EncodeArrayLen(1); err != nil {
+	if err := enc.EncodeArrayLen(2); err != nil {
 		return err
 	}
 	if err := enc.EncodeArrayLen(len(r.Entries)); err != nil {
@@ -145,17 +167,43 @@ func (r BatchGetResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
 			return err
 		}
 	}
+	if err := enc.EncodeArrayLen(len(r.Misrouted)); err != nil {
+		return err
+	}
+	for _, k := range r.Misrouted {
+		if err := enc.EncodeString(k); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // DecodeMsgpack implements [msgpack.CustomDecoder].
+//
+// One field is a response from a release before Misrouted; fields past the
+// second are from a later one and are skipped.
 func (r *BatchGetResponse) DecodeMsgpack(dec *msgpack.Decoder) error {
-	if _, err := dec.DecodeArrayLen(); err != nil {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
 		return err
 	}
-	var err error
-	r.Entries, err = decodeEntries(dec)
-	return err
+	if n < 1 {
+		return fmt.Errorf("wire: a batch get response of %d fields", n)
+	}
+	if r.Entries, err = decodeEntries(dec); err != nil {
+		return err
+	}
+	if n >= 2 {
+		if r.Misrouted, err = decodeStrings(dec); err != nil {
+			return err
+		}
+	}
+	for i := 2; i < n; i++ {
+		if err := dec.Skip(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EncodeMsgpack implements [msgpack.CustomEncoder].

@@ -41,7 +41,7 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 			func() any { return new(wire.DeleteRequest) }},
 		{"DeleteResponse", &wire.DeleteResponse{}, func() any { return new(wire.DeleteResponse) }},
 		{"BatchGetRequest", &wire.BatchGetRequest{
-			Namespace: "n", Keys: []string{"a", "", "c"}, Epoch: 5,
+			Namespace: "n", Keys: []string{"a", "", "c"}, Epoch: 5, Load: true,
 		}, func() any { return new(wire.BatchGetRequest) }},
 		{"BatchGetResponse", &wire.BatchGetResponse{Entries: []wire.BatchEntry{
 			{Key: "a", Value: []byte("v"), Stamp: wire.Stamp{Epoch: 1, Version: 1}},

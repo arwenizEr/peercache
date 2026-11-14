@@ -122,6 +122,9 @@ say nothing about the cache.
 | `BenchmarkNamespaceSetParallel` | 99.9 | 65 | 1 | |
 | `BenchmarkGetOrLoadHit` | 72.7 | 0 | 0 | resident path through singleflight |
 | `BenchmarkBatchGet` | 18,873 | 5464 | 4 | 100 keys, so ~189 ns/key; the allocations are the result map |
+| `BenchmarkBatchGetOrLoadWarm` | 9,796 | 5272 | 14 | 50 resident keys, ~196 ns/key: nothing loads. Measured 2026-11-14 (BatchGet ran 24,578 ns / 100 keys in the same sitting) |
+| `BenchmarkBatchGetOrLoadCold/batch` | 34,355 | 16930 | 92 | 50 missing keys, one batch loader call that does no work |
+| `BenchmarkBatchGetOrLoadCold/perkey` | 156,971 | 51438 | 771 | the same 50 through the per-key loader: 4.6x the cache's own cost, before the 49 extra queries a real loader makes (decision 0035) |
 | `BenchmarkNamespaceGetCompressed/plain` | 72.2 | 0 | 0 | 4 KiB value |
 | `BenchmarkNamespaceGetCompressed/lz4` | 5023 | 4864 | 1 | same value, 70x — this is why compression is opt-in |
 

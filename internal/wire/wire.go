@@ -180,6 +180,11 @@ type BatchGetRequest struct {
 	Namespace string   `msgpack:"namespace"`
 	Keys      []string `msgpack:"keys"`
 	Epoch     uint64   `msgpack:"epoch"`
+	// Load asks the owner to load the keys it does not hold, as
+	// BatchGetOrLoad does (docs/decisions/0035-batch-loads.md). It is the
+	// fourth field of the array: a peer on an earlier release reads three
+	// and answers what it holds, which is BatchGet.
+	Load bool `msgpack:"load"`
 }
 
 // BatchGetResponse carries whatever the owner had.
@@ -188,7 +193,11 @@ type BatchGetRequest struct {
 // by key rather than by index, because the response is not aligned with the
 // request and a future owner is free to reorder.
 type BatchGetResponse struct {
-	Entries []BatchEntry `msgpack:"entries"`
+	// Misrouted lists, for a request with Load, the keys this node does
+	// not own, so the caller asks their owner rather than taking them as
+	// missing. The second field of the array; empty for a plain BatchGet.
+	Misrouted []string     `msgpack:"misrouted"`
+	Entries   []BatchEntry `msgpack:"entries"`
 }
 
 // BatchEntry is one key's worth of a [BatchGetResponse].

@@ -629,6 +629,14 @@ caught   the replica store compares versions, ignoring the epoch            -- T
 caught   a fork is not counted                                              -- TestTwoWritersFromOneBaseIsAFork
 caught   a handover is counted as a fork                                    -- TestAHandoverIsNotAFork
 caught   a rolling upgrade's handovers are counted as forks                 -- TestAGracefulRollingUpgradeCountsNoFork
+caught   an owner does not load the keys a batch is missing                 -- TestABatchLoadCostsOneLoaderCallPerOwner
+caught   the batch loader is never called                                   -- TestABatchLoadCostsOneLoaderCallPerOwner
+caught   a load request goes out without load                               -- TestABatchLoadCostsOneLoaderCallPerOwner
+caught   a batch load stores over a write that landed during it             -- TestAWriteDuringTheBatchLoadWins
+caught   a key the batch loader omitted is stored empty                     -- TestKeysTheBatchLoaderOmitsAreAbsent
+caught   a failed batch load is reported as success                         -- TestAFailingOwnersShareIsMissing
+caught   a misrouted key in a load looks like a missing one                 -- TestAMisroutedLoadNamesTheKeys
+caught   a batch get from the earlier release cannot be read                -- TestABatchLoadRequestCrossesARollingUpgrade
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

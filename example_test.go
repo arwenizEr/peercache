@@ -387,6 +387,54 @@ func ExampleNamespace_BatchGet() {
 	// asked for 3, received: 2
 }
 
+// ExampleWithBatchLoader shows BatchGetOrLoad: the keys an owner is missing
+// reach the database in one call, and a row that does not exist is omitted.
+func ExampleWithBatchLoader() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	table := map[string]string{"p:1": "lamp", "p:2": "desk", "p:3": "chair"}
+	var queries int
+	products := cache.Namespace("products",
+		peercache.WithBatchLoader(func(_ context.Context, keys []string) (map[string][]byte, time.Duration, error) {
+			queries++ // one SELECT ... WHERE id IN (...)
+			out := make(map[string][]byte, len(keys))
+			for _, k := range keys {
+				if v, ok := table[k]; ok {
+					out[k] = []byte(v)
+				}
+			}
+			return out, time.Hour, nil
+		}),
+	)
+	ctx := context.Background()
+	_ = products.Set(ctx, "p:1", []byte("lamp (cached)"), 0)
+
+	got, err := products.BatchGetOrLoad(ctx, []string{"p:1", "p:2", "p:3", "p:404"})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Printf("%s = %s\n", k, got[k])
+	}
+	fmt.Println("queries:", queries)
+	// Output:
+	// p:1 = lamp (cached)
+	// p:2 = desk
+	// p:3 = chair
+	// queries: 1
+}
+
 // ExampleWithCompression shows opt-in compression above a size threshold.
 //
 // It is off by default: a decompress costs roughly seventy times a plain read,

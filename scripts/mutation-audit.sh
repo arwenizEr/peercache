@@ -2453,6 +2453,59 @@ mutate "a rolling upgrade's handovers are counted as forks" \
   'return held.Prev < in.Order' \
   'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
+# --- batch loads (decision 0035) ---
+
+mutate "an owner does not load the keys a batch is missing" \
+  handler.go \
+  '			if in.Load {
+				missing = append(missing, key)
+			}' \
+  '' \
+  'TestABatchLoadCostsOneLoaderCallPerOwner$' ./tests
+mutate "the batch loader is never called" \
+  batchload.go \
+  '	if n.opts.BatchLoader == nil {' \
+  '	if true {' \
+  'TestABatchLoadCostsOneLoaderCallPerOwner$' ./tests
+mutate "a load request goes out without load" \
+  internal/wire/bounded.go \
+  '	return enc.EncodeBool(r.Load)' \
+  '	return enc.EncodeBool(false)' \
+  'TestABatchLoadCostsOneLoaderCallPerOwner$' ./tests
+mutate "a batch load stores over a write that landed during it" \
+  batchload.go \
+  '		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)' \
+  '		n.store.Set(key, n.encode(val), ttl)
+		resident, stored := []byte(nil), true' \
+  'TestAWriteDuringTheBatchLoadWins$' ./tests
+mutate "a key the batch loader omitted is stored empty" \
+  batchload.go \
+  '		val, ok := vals[key]
+		if !ok {
+			continue
+		}' \
+  '		val := vals[key]' \
+  'TestKeysTheBatchLoaderOmitsAreAbsent$' ./tests
+mutate "a failed batch load is reported as success" \
+  batchload.go \
+  '		if r.err != nil {' \
+  '		if false && r.err != nil {' \
+  'TestAFailingOwnersShareIsMissing$' ./tests
+mutate "a misrouted key in a load looks like a missing one" \
+  handler.go \
+  '			if in.Load {
+				out.Misrouted = append(out.Misrouted, key)' \
+  '			if false {
+				out.Misrouted = append(out.Misrouted, key)' \
+  'TestAMisroutedLoadNamesTheKeys$' ./tests
+mutate "a batch get from the earlier release cannot be read" \
+  internal/wire/bounded.go \
+  '	if n >= 4 {
+		if r.Load, err = dec.DecodeBool(); err != nil {' \
+  '	{
+		if r.Load, err = dec.DecodeBool(); err != nil {' \
+  'TestABatchLoadRequestCrossesARollingUpgrade$' ./internal/wire
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then
