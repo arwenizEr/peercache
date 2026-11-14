@@ -2447,6 +2447,11 @@ mutate "a write does not carry what it replaced" \
 ' \
   '' \
   'TestAWriteOverAValueItNeverReceivedIsAFork$' ./tests
+mutate "a rolling upgrade's handovers are counted as forks" \
+  internal/replication/replica.go \
+  'return in.Prev < held.Order && held.Prev < in.Order' \
+  'return held.Prev < in.Order' \
+  'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"

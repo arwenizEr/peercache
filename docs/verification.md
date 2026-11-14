@@ -628,6 +628,7 @@ caught   an older replica copy overwrites a newer one                       -- T
 caught   the replica store compares versions, ignoring the epoch            -- TestALaterEpochWinsWhateverTheVersion
 caught   a fork is not counted                                              -- TestTwoWritersFromOneBaseIsAFork
 caught   a handover is counted as a fork                                    -- TestAHandoverIsNotAFork
+caught   a rolling upgrade's handovers are counted as forks                 -- TestAGracefulRollingUpgradeCountsNoFork
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion
@@ -2439,7 +2440,7 @@ testable claims they come to seventy. Each one, and the named test that would fa
 | M4 | killing the transport mid-request surfaces an error, never a hang | `TestKillingTheTransportMidRequestSurfacesAnError` |
 | M5 | killing an owner ungracefully promotes and resumes service | `TestKillingAnOwnerPromotesAReplica` |
 | M5 | chaos: a kill every 2s for 60s loses no synchronously written key | `TestChaosLosesNoSynchronouslyWrittenKey` |
-| M5 | split-brain writes detected and counted in metrics | `TestTwoWritersFromOneBaseIsAFork`, `TestAWriteOverAValueItNeverReceivedIsAFork`, `TestEveryStatsFieldIsExported` |
+| M5 | split-brain writes detected and counted in metrics | `TestTwoWritersFromOneBaseIsAFork`, `TestAWriteOverAValueItNeverReceivedIsAFork`, `TestAGracefulRollingUpgradeCountsNoFork`, `TestEveryStatsFieldIsExported` |
 | M6 | 9-node rolling upgrade: zero failed requests, movement within ±10% | `TestRollingUpgradeLosesNoRequests` |
 | M7 | soak at target throughput, memory flat | `TestSoakMemoryStaysFlat`, `TestSoakGoroutinesStayFlat` |
 | M7 | correctness metrics exported as counters | `TestCorrectnessMetricsAreCounters`, `TestEveryStatsFieldIsExported` |
@@ -2494,7 +2495,7 @@ testable claims they come to seventy. Each one, and the named test that would fa
 | M15 | the OpenTelemetry bridge makes each series one instrument of its kind, with help, node attribute and a counter's name less _total | `TestEverySeriesIsBridged`, `TestCounterNamesDropTheirTotal` |
 | M15 | the bridge follows the cache between collections and stops when unregistered | `TestValuesFollowTheCache`, `TestUnregisterStopsObserving` |
 
-All eighty-six names in the table were verified to exist before it was
+All eighty-seven names in the table were verified to exist before it was
 committed to, which is the discipline the rest of this file argues for and which
 five wrong figures in the M8 section demonstrate the need for.
 

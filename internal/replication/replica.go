@@ -112,9 +112,8 @@ type Entry struct {
 	// if none or unknown. With Order and From it is what fork detection
 	// compares; see [Store.Put].
 	Prev uint64
-	// From is the node that sent this copy. It is what makes split-brain
-	// detectable: two different nodes writing the same key under the same
-	// epoch means two of them believe they own it.
+	// From is the node that sent this copy. With Order and Prev it is what
+	// makes split brain detectable; see [Forked].
 	From string
 }
 
@@ -150,11 +149,11 @@ func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
 // default, so two updates to one key can arrive out of order, and a late
 // delivery of an old value must not undo a new one.
 //
-// conflict reports that a *different* node wrote this key under the *same*
-// epoch. Under one owner per group that cannot happen, so it is direct evidence
-// that two nodes believed they owned the same key at the same time — the
-// split-brain that must be detected and counted. It is reported, not resolved:
-// conflicting writes are never automatically merged.
+// conflict reports that the held copy and e fork the key's history (see
+// [Forked]): two nodes wrote it with neither replacing the other's write, which
+// under one owner per group is direct evidence of the split brain that must be
+// detected and counted. It is reported, not resolved: conflicting writes are
+// never automatically merged.
 func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	nr := s.namespaceFor(namespace)
 
