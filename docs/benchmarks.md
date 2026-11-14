@@ -143,6 +143,15 @@ runs, Machine A, main against the branch: replica `BenchmarkPutDistinctKeys`
 136 → 163 ns; store `BenchmarkSet` 245 → 284 ns, where both sides spread over
 ~100 ns between runs. Reading the digests costs 64 pairs per store, whatever
 it holds.
+**Paging a whole store (2026-11-14).** `BenchmarkSnapshotFullPass`, 512-entry
+pages, Machine A:
+
+| Keys | `Snapshot` (re-sort per page) | `SnapshotFrom` (sorted once per pass) |
+|---:|---:|---:|
+| 10,000 | 22 ms, 7.3 MB | 2.1 ms, 1.6 MB |
+| 100,000 | 2.3 s, 823 MB | 30 ms, 18.5 MB |
+| 400,000 | 57 s, 13.7 GB | 172 ms, 74 MB |
+| 1,000,000 | — | 677 ms, 184 MB |
 
 ### internal/store
 

@@ -118,7 +118,7 @@ func (c *cache) handOff(ctx context.Context) error {
 				return errors.Join(problems, err)
 			}
 
-			entries, more := ns.store.Snapshot(after, handOffPageSize, nil)
+			entries, more := ns.store.SnapshotFrom(c.pages, "\x00drain\x00"+ns.name, after, handOffPageSize, nil)
 			if len(entries) == 0 {
 				break
 			}

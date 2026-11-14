@@ -127,6 +127,14 @@ change the public API.
 
 ### Fixed
 
+- Catch-up and hand-off cost O(n² log n) in the keys paged: every 512-entry
+  page scanned and sorted every key above its cursor. A full pass over 400,000
+  keys took 57 s and allocated 13.7 GB on the serving node, once per requester.
+  A pass's sorted key list is now built once and kept for its duration
+  (`internal/pager`, at most 16 passes, dropped after a minute idle), so a page
+  costs its own size: 400,000 keys in 172 ms, a million in 0.7 s. No wire
+  change; a requester on an earlier release pages the same way.
+
 - A non-owner's L1 copy of a key with a TTL could outlive the key by up to
   the namespace's L1 TTL: the owner never filled the remaining lifetime its
   responses carry, so a session expired on its owner stayed readable through

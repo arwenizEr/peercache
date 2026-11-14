@@ -656,6 +656,11 @@ caught   a replica's missing copies are not reported                        -- T
 caught   an in-step partition is reported as out of step                    -- TestInStepReplicasMatchTheirOwners
 caught   a cluster with a member unreachable is reported as agreeing        -- TestAnUnreachableMemberIsReported
 caught   a silent member holds DescribeCluster forever                      -- TestAMemberThatNeverAnswersCostsOnlyTheTimeout
+caught   every page rebuilds and re-sorts the key list                      -- TestAPassSortsOnceAndCoversEveryKey
+caught   a finished pass keeps its key list                                 -- TestAPassSortsOnceAndCoversEveryKey
+caught   passes are not bounded                                             -- TestPassesAreBounded
+caught   a page emptied by removals ends the pass                           -- TestAPassSkipsKeysRemovedMidPassWithoutStopping
+caught   a pass sends keys the asker stopped being entitled to              -- TestAPassReappliesItsFilter
 caught   an L1 copy ignores its key's remaining lifetime                    -- TestANonOwnedCopyDoesNotOutliveItsKey
 caught   the owner's Get grants no remaining lifetime                       -- TestANonOwnedCopyDoesNotOutliveItsKey
 caught   the owner's load grants no remaining lifetime                      -- TestALoadedCopyDoesNotOutliveItsKey

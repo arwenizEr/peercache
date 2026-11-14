@@ -609,7 +609,10 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 		return h.catchUpReplicas(ctx, ns, in, limit)
 	}
 
-	entries, more := ns.store.Snapshot(in.After, limit, func(key string) bool {
+	// One pass per asker and namespace: its key list is sorted once, when
+	// it asks for the first page, not once per page.
+	pass := in.Requester + "\x00" + ns.name + "\x00owned"
+	entries, more := ns.store.SnapshotFrom(h.cache.pages, pass, in.After, limit, func(key string) bool {
 		if h.cache.guard == nil {
 			return false
 		}
@@ -682,7 +685,8 @@ func (h *peerHandler) catchUpReplicas(ctx context.Context, ns *namespace, in wir
 		return wire.Encode(&wire.CatchUpResponse{})
 	}
 	now := h.cache.opts.Clock.Now().UnixNano()
-	entries, more := h.cache.replicas.Snapshot(ns.name, in.After, limit, now, func(key string) bool {
+	pass := in.Requester + "\x00" + ns.name + "\x00replicas"
+	entries, more := h.cache.replicas.SnapshotFrom(h.cache.pages, pass, ns.name, in.After, limit, now, func(key string) bool {
 		owner, _, err := h.cache.guard.Table().Owner(ns.groupKeyFor(key))
 		return err == nil && owner.ID == in.Requester
 	})
