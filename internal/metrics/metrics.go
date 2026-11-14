@@ -94,6 +94,7 @@ func Collect(s core.Stats) []Metric {
 		{"peercache_persist_splits_total", Counter, "Log sets this node moved into partition segments as its namespace's splitter.", float64(s.PersistSplits)},
 		{"peercache_persist_split_failures_total", Counter, "Splits that stopped part-way; the next one completes them.", float64(s.PersistSplitFailures)},
 		{"peercache_coalesced_reads_total", Counter, "Reads of keys owned elsewhere that joined a fetch already in flight on this node instead of sending their own.", float64(s.CoalescedReads)},
+		{"peercache_negative_hits_total", Counter, "GetOrLoad calls answered not-found from a remembered absence, without calling the loader.", float64(s.NegativeHits)},
 		{"peercache_inflight_loads", Gauge, "Callers currently waiting on a loader.", float64(s.InflightLoads)},
 
 		// Correctness. These are the ones that matter.

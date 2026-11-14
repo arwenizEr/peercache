@@ -687,6 +687,7 @@ func (c *cache) Stats() Stats {
 		stats.Loads += ns.flight.Loads()
 		stats.CollapsedLoads += ns.flight.Collapsed()
 		stats.CoalescedReads += ns.readFlight.Collapsed()
+		stats.NegativeHits += ns.negativeHits.Load()
 		if ns.persister != nil {
 			pc := ns.persister.counters()
 			stats.PersistPending += int64(pc.pending)

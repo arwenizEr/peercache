@@ -108,6 +108,20 @@ type shard struct {
 	// rewritten is never versioned at or below a copy a replica may still
 	// hold. See [Store.Shed].
 	floor uint64
+
+	// absent is the shard's remembered absences — keys a loader reported
+	// not found — each with its Unix-nanosecond deadline, guarded by mu
+	// and nil until first used. It is not an entry: nothing that reads
+	// entries sees it, and every mutation of a key forgets the key's
+	// absence. See [Store.MarkAbsent] and docs/decisions/0034.
+	absent map[string]int64
+}
+
+// forget drops key's remembered absence. Callers hold mu for writing.
+func (sh *shard) forget(key string) {
+	if sh.absent != nil {
+		delete(sh.absent, key)
+	}
 }
 
 // size is what one entry is charged.
@@ -321,6 +335,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 
 	sh := s.shardFor(key)
 	sh.mu.Lock()
+	sh.forget(key)
 	old, had := sh.entries[key]
 	version := old.version + 1
 	if !had && version <= sh.floor {
@@ -381,6 +396,7 @@ func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, 
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	sh.forget(key)
 	old, had := sh.entries[key]
 	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
 		return old.val, false
@@ -513,6 +529,7 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, orde
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	sh.forget(key)
 
 	existing, ok := sh.entries[key]
 	// By order when both carry one, for the reason replicas do: a version
@@ -552,6 +569,7 @@ func (s *Store) Remove(key string) (bool, uint64) {
 	sh := s.shardFor(key)
 
 	sh.mu.Lock()
+	sh.forget(key)
 	order := s.nextOrder()
 	e, ok := sh.entries[key]
 	if ok {
@@ -750,6 +768,7 @@ func (s *Store) Sweep(n int) int {
 				fromShard++
 			}
 		}
+		sh.dropExpiredAbsences(now)
 		sh.mu.Unlock()
 		if fromShard > 0 {
 			sh.expired.Add(int64(fromShard))
@@ -807,6 +826,7 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	sh.forget(key)
 
 	old, had := sh.entries[key]
 	live := had && (old.expiresAt == 0 || s.clk.Now().UnixNano() < old.expiresAt)

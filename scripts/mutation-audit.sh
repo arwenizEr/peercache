@@ -2453,6 +2453,51 @@ mutate "a rolling upgrade's handovers are counted as forks" \
   'return held.Prev < in.Order' \
   'TestAGracefulRollingUpgradeCountsNoFork$' ./tests
 
+# --- negative caching (decision 0034) ---
+
+mutate "a remembered absence is never consulted" \
+  namespace.go \
+  'if n.opts.NegativeTTL <= 0 || !n.store.KnownAbsent(key) {' \
+  'if true {' \
+  'TestARememberedAbsenceSavesTheLoad$' ./tests
+mutate "every loader error is remembered as an absence" \
+  namespace.go \
+  'if n.opts.NegativeTTL > 0 && errors.Is(err, ErrNotFound) {' \
+  'if n.opts.NegativeTTL > 0 {' \
+  'TestOnlyAnAbsenceIsRemembered$' ./tests
+mutate "a Delete does not forget an absence" \
+  internal/store/store.go \
+  '	sh.forget(key)
+	order := s.nextOrder()' \
+  '	order := s.nextOrder()' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "a Set does not forget an absence" \
+  internal/store/store.go \
+  '	sh.forget(key)
+	old, had := sh.entries[key]
+	version := old.version + 1' \
+  '	old, had := sh.entries[key]
+	version := old.version + 1' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "an atomic update does not forget an absence" \
+  internal/store/update.go \
+  '	sh.forget(key)
+' \
+  '' \
+  'TestEveryWriteForgetsAnAbsence$' ./tests
+mutate "an absence is recorded over a write that landed during the load" \
+  internal/store/absent.go \
+  'if e, ok := sh.entries[key]; ok && (e.expiresAt == 0 || now.UnixNano() < e.expiresAt) {' \
+  'if e, ok := sh.entries[key]; false && ok && (e.expiresAt == 0 || now.UnixNano() < e.expiresAt) {' \
+  'TestAWriteDuringTheLoadIsNotHiddenByItsAbsence$' ./tests
+mutate "absences grow without bound" \
+  internal/store/absent.go \
+  '				delete(sh.absent, k)
+				break' \
+  '				_ = k
+				break' \
+  'TestAbsencesAreBoundedPerShard$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

@@ -629,6 +629,13 @@ caught   the replica store compares versions, ignoring the epoch            -- T
 caught   a fork is not counted                                              -- TestTwoWritersFromOneBaseIsAFork
 caught   a handover is counted as a fork                                    -- TestAHandoverIsNotAFork
 caught   a rolling upgrade's handovers are counted as forks                 -- TestAGracefulRollingUpgradeCountsNoFork
+caught   a remembered absence is never consulted                            -- TestARememberedAbsenceSavesTheLoad
+caught   every loader error is remembered as an absence                     -- TestOnlyAnAbsenceIsRemembered
+caught   a Delete does not forget an absence                                -- TestEveryWriteForgetsAnAbsence
+caught   a Set does not forget an absence                                   -- TestEveryWriteForgetsAnAbsence
+caught   an atomic update does not forget an absence                        -- TestEveryWriteForgetsAnAbsence
+caught   an absence is recorded over a write that landed during the load    -- TestAWriteDuringTheLoadIsNotHiddenByItsAbsence
+caught   absences grow without bound                                        -- TestAbsencesAreBoundedPerShard
 caught   Drain leaves a stranded copy behind                                -- TestDrainTakesOnlyWhatItClaims
 caught   promotion restarts the version sequence                            -- TestRestoreContinuesTheVersionSequence
 caught   Restore overwrites a newer value                                   -- TestRestoreRefusesAnOlderVersion

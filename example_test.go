@@ -261,6 +261,49 @@ func ExampleWithLoader() {
 	// no loader: true
 }
 
+// ExampleWithNegativeCaching shows a key that does not exist reaching the
+// loader once, however often it is asked for, until a write says otherwise.
+func ExampleWithNegativeCaching() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	rows := map[string]string{} // the database
+	var loaderCalls int
+	users := cache.Namespace("users",
+		peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
+			loaderCalls++
+			if v, ok := rows[key]; ok {
+				return []byte(v), 0, nil
+			}
+			return nil, 0, peercache.ErrNotFound
+		}),
+		peercache.WithNegativeCaching(time.Minute),
+	)
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_, err := users.GetOrLoad(ctx, "user:7")
+		fmt.Println("not found:", errors.Is(err, peercache.ErrNotFound))
+	}
+	fmt.Println("loader calls:", loaderCalls)
+
+	// The row is created; a Delete tells the cache to load it again.
+	rows["user:7"] = "Ada"
+	_ = users.Delete(ctx, "user:7")
+	val, _ := users.GetOrLoad(ctx, "user:7")
+	fmt.Printf("after Delete: %s, loader calls: %d\n", val, loaderCalls)
+	// Output:
+	// not found: true
+	// not found: true
+	// not found: true
+	// loader calls: 1
+	// after Delete: Ada, loader calls: 2
+}
+
 // ExampleNamespace_Set shows TTL expiry driven by an injected clock, which is
 // how every timeout in this library is meant to be tested: no sleeping, and the
 // same behaviour every run.

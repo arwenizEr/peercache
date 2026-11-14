@@ -49,6 +49,10 @@ type Stats struct {
 	// and joined a fetch from the owner already in flight on this node,
 	// instead of sending their own. See docs/decisions/0028.
 	CoalescedReads int64
+	// NegativeHits counts GetOrLoad calls the owner answered ErrNotFound
+	// from a remembered absence, without calling the loader, in namespaces
+	// opened with WithNegativeCaching. See docs/decisions/0034.
+	NegativeHits int64
 
 	// ReplicaReadsServed counts reads this node answered from its replica
 	// copy, for a peer or for itself, in namespaces opened with

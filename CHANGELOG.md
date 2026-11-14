@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- `WithNegativeCaching(ttl)`: a key's owner remembers that the namespace's
+  loader returned `ErrNotFound` and answers `GetOrLoad` of it without loading
+  until the TTL passes or the key is written. The absence is not a value:
+  nothing but `GetOrLoad` sees it. `Stats().NegativeHits`,
+  `peercache_negative_hits_total` and `Describe`'s `absences`. Decision 0034.
 - `WithCatchUpGate`: a node refuses its peers' operations on keys it owns, in
   namespaces with replicas, with `ErrActivationPending` until its first
   `CatchUp` completes. Readiness keeps clients away from a restarted node but

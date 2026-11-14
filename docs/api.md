@@ -20,6 +20,7 @@ and output-checked by `go test`:
 | `ExampleNamespace_Increment` | a counter in a window, `SetIfAbsent` claiming once, `CompareAndSwap` refusing a stale value |
 | `ExampleWithLoader` | `GetOrLoad`, loader registration, `ErrNoLoader` |
 | `ExampleWithLoaderTimeout` | the load is bounded by the namespace, not the caller |
+| `ExampleWithNegativeCaching` | a missing key loaded once, and a Delete forgetting the absence |
 | `ExampleWithCompression` | opt-in compression, threshold, unknown compressor rejected |
 | `ExampleWithShards` | per-namespace shard count |
 | `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
@@ -69,7 +70,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-60 series in the Prometheus text exposition format, and PeerCache imports no
+61 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -230,6 +231,7 @@ because equal values of `T` need not encode to equal bytes.
 | `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
 | `WithLoaderTimeout(time.Duration)` | 30s | Bounds one loader invocation. |
+| `WithNegativeCaching(time.Duration)` | off | The owner remembers a loader's `ErrNotFound` for the TTL and answers `GetOrLoad` without loading. Any write of the key forgets it. Negative is `ErrInvalidOption`. See below. |
 | `WithShards(int)` | 256 | Independently locked partitions, rounded up to a power of two. |
 
 `Namespace` cannot return an error, so an invalid option is reported by every
@@ -289,6 +291,37 @@ alternative is wrong:
   everyone else.
 - **A panicking loader becomes `ErrLoaderPanic` for every waiter**, rather than a
   panic in a thousand unrelated goroutines. A loader is application code.
+
+### Remembering that a key does not exist
+
+```go
+users := cache.Namespace("users",
+    peercache.WithLoader(loadUser), // returns peercache.ErrNotFound for no such row
+    peercache.WithNegativeCaching(30*time.Second),
+)
+```
+
+Without it, a stream of lookups for keys that do not exist — deleted users, bots
+probing IDs — reaches the database once per request: single-flight collapses
+only *concurrent* misses. With it, when the loader returns an error matching
+`ErrNotFound`, the key's owner remembers the absence for the TTL and answers
+`GetOrLoad` with `ErrNotFound` without calling the loader. Probes through any
+pod reach that owner, so the database is asked once per key per TTL. Each saved
+load is counted in `Stats().NegativeHits`.
+
+- **Only `ErrNotFound` is remembered.** Any other loader error — the database
+  down — is returned and forgotten, so an outage is never served as "not found".
+- **An absence is not a value.** `Get`, `Exists`, `Keys`, replication,
+  hand-off and persistence never see it.
+- **Any write of the key forgets it**: `Set`, `Delete`, `Increment` and the
+  other atomic operations. `Delete` is how an application that just created
+  the row says "load this again". A write that lands while the loader runs wins
+  over the loader's "not found".
+- **It is bounded and owner-local:** at most 256 absences per shard, dropped
+  when full (one more load, never a wrong answer), not replicated, and lost when
+  the key changes owner.
+
+Decision 0034.
 
 ### L1 TTL is a correctness bound
 
@@ -1208,7 +1241,7 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 60 series come out of it.
+format with the content type a scraper expects, and 61 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
@@ -1247,7 +1280,7 @@ change can mix two moments; it is a node's belief, not a consensus.
 
 ### The metrics that are worth alerting on
 
-Most of the 60 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 61 are ordinary levels and rates. These eleven are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
