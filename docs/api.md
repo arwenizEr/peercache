@@ -404,6 +404,10 @@ lost; this TTL is the only thing that turns an unbounded stale read into a
 bounded one. Longer means faster and staler, and the staleness is what a caller
 has to reason about.
 
+A copy never outlives its key: a key with less than an L1 TTL left is cached
+elsewhere only for what it has left, so a session that expires on its owner is
+gone everywhere at the same instant.
+
 ### Persistence — `WithPersistence`
 
 Off by default; a namespace without it is memory-only, exactly as before. With

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/arwenizEr/peercache/internal/clock"
 )
@@ -213,7 +214,7 @@ func (n *namespace) remoteBatchGetOrLoad(ctx context.Context, batch *ownerBatch,
 	for _, e := range entries {
 		out[e.Key] = e.Value // plain; see remoteGet
 		if n.l1 != nil {
-			n.l1.Put(e.Key, e.Value, e.Stamp, n.opts.L1TTL)
+			n.l1.Put(e.Key, e.Value, e.Stamp, l1Lifetime(n.opts.L1TTL, time.Duration(e.TTLRemainingNanos)))
 		}
 	}
 	var failures error

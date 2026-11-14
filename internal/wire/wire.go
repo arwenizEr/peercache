@@ -63,6 +63,9 @@ type ReplicaGetResponse struct {
 	// clock. The caller caches the value for its L1 TTL minus this, so the
 	// copy's whole life stays inside one TTL of its arrival.
 	AgeNanos int64 `msgpack:"age_ns"`
+	// TTLRemainingNanos is how long the key itself has left, as
+	// GetResponse's is; zero for no expiry. A copy must not outlive its key.
+	TTLRemainingNanos int64 `msgpack:"ttl_remaining_ns"`
 }
 
 // LoadRequest asks an owner for a key, reconstructing it if absent.

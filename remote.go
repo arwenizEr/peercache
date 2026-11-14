@@ -115,7 +115,8 @@ func (c *cache) memberCount() int {
 
 // remoteGet fetches one key from its owner and returns the value with the
 // owner's stamp.
-func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, error) {
+// The duration is how long the key has left on the owner, zero for no expiry.
+func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, time.Duration, error) {
 	var resp wire.GetResponse
 	err := r.invoke(ctx, p.owner, transport.MethodGet, &wire.GetRequest{
 		Namespace: ns,
@@ -123,12 +124,12 @@ func (r *router) remoteGet(ctx context.Context, p placement, ns, key string) ([]
 		Epoch:     p.epoch,
 	}, &resp)
 	if err != nil {
-		return nil, core.Stamp{}, err
+		return nil, core.Stamp{}, 0, err
 	}
 	if !resp.Found {
-		return nil, core.Stamp{}, ErrNotFound
+		return nil, core.Stamp{}, 0, ErrNotFound
 	}
-	return resp.Value, resp.Stamp, nil
+	return resp.Value, resp.Stamp, time.Duration(resp.TTLRemainingNanos), nil
 }
 
 // replicaGet asks one of a key's replicas for its copy.
@@ -143,7 +144,8 @@ func (r *router) replicaGet(ctx context.Context, node core.Node, epoch uint64, n
 }
 
 // remoteLoad asks an owner for a key, letting it reconstruct if absent.
-func (r *router) remoteLoad(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, error) {
+// The duration is how long the key has left on the owner, zero for no expiry.
+func (r *router) remoteLoad(ctx context.Context, p placement, ns, key string) ([]byte, core.Stamp, time.Duration, error) {
 	var resp wire.LoadResponse
 	err := r.invoke(ctx, p.owner, transport.MethodLoad, &wire.LoadRequest{
 		Namespace: ns,
@@ -151,12 +153,12 @@ func (r *router) remoteLoad(ctx context.Context, p placement, ns, key string) ([
 		Epoch:     p.epoch,
 	}, &resp)
 	if err != nil {
-		return nil, core.Stamp{}, err
+		return nil, core.Stamp{}, 0, err
 	}
 	if !resp.Found {
-		return nil, core.Stamp{}, ErrNotFound
+		return nil, core.Stamp{}, 0, ErrNotFound
 	}
-	return resp.Value, resp.Stamp, nil
+	return resp.Value, resp.Stamp, time.Duration(resp.TTLRemainingNanos), nil
 }
 
 // remoteSet writes one key on its owner.
