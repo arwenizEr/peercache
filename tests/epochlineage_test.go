@@ -85,6 +85,12 @@ func TestAWriteByAnOwnerWithALowerEpochSurvivesFailover(t *testing.T) {
 	f.hardKill(t, interim)
 	f.clk.Advance(2 * testkit.DefaultFailureTimeout)
 	f.convergeTo(t, 1)
+	// And the survivor has reconciled: its replica copy is promoted on the
+	// guard's callback, after the view changes. With the activation delay
+	// switched off, as this fabric has it, a read in between found an owned
+	// store without the key, 5 runs in 200, on every release since v0.2.0;
+	// with the delay on, as in production, it is refused until then.
+	f.settle(t)
 	got, err := open(replica).Get(ctx, key)
 	if err != nil || string(got) != "v3" {
 		t.Fatalf("after two of three holders failed, %q = %q, %v on %s; want the acknowledged v3. "+
