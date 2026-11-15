@@ -36,6 +36,15 @@ the program gains it after that release is the previous one.
 Supported skew is one release: adjacent releases interoperate. Two releases
 apart is not promised and not tested.
 
+**Storage crosses too (2026-11-16).** Once the previous release had
+persistence, every node also persists a `durable` namespace to a shared
+directory. After the two mixed clusters, two more start cold over what they
+left: the previous release alone over the first, this tree alone over the
+second. Each must read back every key every node of both releases persisted.
+An upgrade with a persistent namespace depends on exactly this, and nothing
+checked it: changing the segment format's version byte on this tree fails all
+four clusters.
+
 ## Consequences
 
 - A wire change that breaks the earlier release fails CI on the pull request,
