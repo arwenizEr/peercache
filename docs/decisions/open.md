@@ -1575,7 +1575,7 @@ option. Measured: a thousand keys over every partition flush as one request
 (`TestAFlushWritesOneObject`); a split writes at most one segment per partition
 (`TestASplitMovesLogsIntoPartitions`).
 
-## 49. A node restarted faster than failure detection — found in M16
+## 49. A node restarted faster than failure detection — found in M16, resolved
 
 **Found** by M16's kill -9 on kind. A SIGKILLed pod was back in two seconds,
 same name, same address; the failure detector never fired, so no peer's epoch
@@ -1615,6 +1615,14 @@ Options:
 
 Leaning towards 1, measured before deciding: M16's next kill -9 run says how
 often the window is hit under load.
+
+**Resolved, part two: option 1, opt-in.** `WithCatchUpGate` refuses peers'
+operations on a node's keys with `ErrActivationPending` until its first
+catch-up completes; opt-in because a node whose application never calls
+`CatchUp` would otherwise refuse its keys forever. The shop enables it; with
+it, kill -9 on kind loses nothing. Question 56 later held a node's own callers
+to the activation delay as well, and question 58 made every owner check again
+just before it applies a write.
 
 ## 50. Replica copies were ordered by a per-view epoch — found in M16, resolved
 
@@ -1738,114 +1746,7 @@ Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
 on the first receiver only; the one adopted key had landed on the second.
 A test bug; it now checks each receiver whose counter moved.
 
-## 58. A write that waited out a restore was applied after its key moved — found on kind, resolved
-
-**Found** after question 57: with no restore failing, a rolling restart still
-reset, about one run in six, a stock counter the first restarted pod owned. A
-temporary build logging every store write of the traced keys, with its caller,
-showed the sequence on the interim owner, shop-1:
-
-1. promoted the key's replica copy, `-142`, when shop-3 drained;
-2. accepted a peer's Increment — the ownership check passed;
-3. the Increment waited in `awaitRestore` for the key's partition;
-4. shop-3's replacement joined; shop-1's reconciliation demoted the key out of
-   its owned store;
-5. the restore finished (skipping the key, no longer owned) and the Increment
-   ran — on a store without the key: `-1`, with a newer order than `-142`;
-6. it replicated `-1` to the returning owner, which adopted it; every later
-   restore and promotion of `-142` was refused as older.
-
-**Picked:** an owner checks again just before applying. A read-modify-write
-checks inside the store's update, under the shard lock demotion also takes, so
-the two are ordered: the update runs first and the key leaves with its new
-value, or the key has left and the update refuses. Set and Delete check again
-after the wait. Each refusal is `ErrNotOwner` or the activation delay's
-`ErrActivationPending`, answered before anything is applied.
-`TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves` reproduces the
-sequence exactly and failed before, for Increment and for Set.
-
-## 57. A failed restore let a returning owner count from nothing — found on kind, resolved
-
-**Found** after question 56's fix: v0.2.0's M16 rolling scenario still ended 5
-stock counters hundreds of decrements high. Sampling every counter through a
-rolling restart caught one reset to almost its initial stock the moment its
-owner's replacement started serving; pod logs (the shop now wires the library's
-Logger, and a failed restore is now logged) showed why: restores failing on
-every pod, dozens a minute, all `reading <ns>/log/seg-…: not found`.
-
-Two defects, in series:
-
-- **A restore read every unsplit log and started over when one vanished.** The
-  splitter deletes logs once their partition segments are durable, every ten
-  seconds; a restore reading a hundred logs found one gone, started its whole
-  read again, and after three tries failed — over and over.
-- **A failed restore served the partition from memory.** Decision 0029 chose
-  that so a store outage degrades rather than stops a namespace. For keys memory
-  holds it is right. For keys memory does not hold — exactly the keys a restore
-  exists to bring back to a node that has just come to own them — "not found",
-  an Increment from zero or a SetIfAbsent that succeeds is a guess the next
-  restore cannot correct, since the write made on it outranks the record.
-
-**Picked:**
-
-- A scan skips an object that vanished between listing and reading, lists
-  again, and reads only what is new, until a pass finds nothing gone (at most
-  sixteen). An object vanishes only after its records are durable in a snapshot
-  or a partition segment (decision 0030), which the next listing shows.
-- With a partition's restore failed, any operation on a key memory does not
-  hold is refused with `ErrActivationPending`; a key memory holds is served
-  from it. Decision 0029's availability is kept where it is safe and given up
-  where it was a guess.
-- Blind writes were first let through, on the reasoning that a Set reads
-  nothing and outranks whatever a later restore reads. The second half is
-  false: the Set's order comes from a clock that, the restore having failed,
-  has observed none of storage's records and may be behind them; the next
-  restore lays the stored value over the Set. The test caught it under -race
-  — the Set's order equal to the stored record's, its log's name the same, the
-  record overwritten — so blind writes are refused too, and log names now
-  carry a random suffix so that two logs can never share one.
-
-`TestARestoreOutlastsASplitterDeletingItsLogs` failed before (the restore
-failed and a stored key read back not found);
-`TestAnUnavailableStoreDegradesToMemory` now asserts the refusal, and that a
-blind write and a held key are still served.
-
-## 56. Local callers skipped the activation delay, and a drained node kept serving — found on kind, resolved
-
-**Found** re-running the volume experiment of question 55 with every fix from
-it: no OOM kill, no lost order across 2.1 million, and every one of the 14 stock
-counters a single restarted pod (shop-3) owned wrong — and only those. A
-fake-network test of a rolling restart with counters decremented through every
-node (`TestARollingRestartAppliesEachDecrementOnce`) lost decrements at once,
-and a probe found both paths:
-
-- the router decided "this key is local" by ownership alone. The activation
-  delay and the catch-up gate are checked in the peer handler, so a peer's
-  request to a node that had just acquired a key waited, but the node's own
-  caller did not: its Increment ran on an owned store the key's replica copy had
-  not been promoted into yet, counted from zero, and the promotion then refused
-  the copy as older. Acknowledged, and the history before it gone;
-- a drained node's own view still names it the owner of the keys it handed on.
-  Its callers' writes, and peers' that had not noticed the departure, were
-  applied to a store nobody would read again.
-
-**Picked:** the router refuses a local placement the peer handler would refuse
-(`mayServeLocally`): `ErrNotOwner` while draining, the activation delay's
-`ErrActivationPending` otherwise; the peer handler refuses while draining too.
-Both are answered before anything is applied, so every caller already retries
-them. This makes the delay what decision 5 says it is — a window of refusal for
-the keys that moved — for every caller rather than for remote ones only. The
-cost is that window, now visible to local callers as well: the M6 criterion's
-test client retried twenty times without letting time pass, and passed only
-because its attempts through the new owner skipped the delay; it now backs off
-250 ms between attempts and still sees no failure (70 retries, down from 240).
-
-**Not yet explained:** on kind the wrong counters were *below* what was
-acknowledged — decrements applied more often than acknowledged — while this
-path loses decrements. Re-run on kind with the fix to see whether it was the
-same cause by another route.
-
-## 55. Under memory pressure a pod exceeds its budget and acknowledged orders are lost — found on kind, open
+## 55. Under memory pressure a pod exceeds its budget and acknowledged orders are lost — found on kind, resolved
 
 **Found** running v0.2.0's M16 scenarios on accumulated data (docs/m16-results.md,
 "The same release on accumulated data"): with ~600k owned orders a pod, a
@@ -1913,6 +1814,118 @@ cannot bound its process by counting; the runtime can, with GOMEMLIMIT.
 none. It was likely the starved pod's gossip failing, its view shrinking to
 itself (question 37's window), which A's memory pressure caused.
 
-**Next:** A — `GOMEMLIMIT` in the deployment guidance and the shop's manifest,
-and the budget's documentation saying what it does and does not bound. Then
-the stock decrements.
+**Resolved.** B and D are fixed, each with a test that failed before. A is
+documented, warned about at `New`, and set in the shop's manifest: with
+`GOMEMLIMIT`, a run over about two million orders saw no OOM kill. C did not
+recur once A and B were addressed. The stock decrements that run still lost
+were questions 56, 57 and 58. All in v0.2.1.
+
+## 56. Local callers skipped the activation delay, and a drained node kept serving — found on kind, resolved
+
+**Found** re-running the volume experiment of question 55 with every fix from
+it: no OOM kill, no lost order across 2.1 million, and every one of the 14 stock
+counters a single restarted pod (shop-3) owned wrong — and only those. A
+fake-network test of a rolling restart with counters decremented through every
+node (`TestARollingRestartAppliesEachDecrementOnce`) lost decrements at once,
+and a probe found both paths:
+
+- the router decided "this key is local" by ownership alone. The activation
+  delay and the catch-up gate are checked in the peer handler, so a peer's
+  request to a node that had just acquired a key waited, but the node's own
+  caller did not: its Increment ran on an owned store the key's replica copy had
+  not been promoted into yet, counted from zero, and the promotion then refused
+  the copy as older. Acknowledged, and the history before it gone;
+- a drained node's own view still names it the owner of the keys it handed on.
+  Its callers' writes, and peers' that had not noticed the departure, were
+  applied to a store nobody would read again.
+
+**Picked:** the router refuses a local placement the peer handler would refuse
+(`mayServeLocally`): `ErrNotOwner` while draining, the activation delay's
+`ErrActivationPending` otherwise; the peer handler refuses while draining too.
+Both are answered before anything is applied, so every caller already retries
+them. This makes the delay what decision 5 says it is — a window of refusal for
+the keys that moved — for every caller rather than for remote ones only. The
+cost is that window, now visible to local callers as well: the M6 criterion's
+test client retried twenty times without letting time pass, and passed only
+because its attempts through the new owner skipped the delay; it now backs off
+250 ms between attempts and still sees no failure (70 retries, down from 240).
+
+**Not fully explained:** on kind the wrong counters were *below* what was
+acknowledged — decrements applied more often than acknowledged — while this
+path loses decrements. With this fix that pattern did not recur in any later
+run; the loss that remained was the other direction and was questions 57 and
+58. The most likely route is a `SetIfAbsent` order claim succeeding twice on a
+new owner's unpromoted store, so that one checkout decremented twice, but no
+run captured it.
+
+## 57. A failed restore let a returning owner count from nothing — found on kind, resolved
+
+**Found** after question 56's fix: v0.2.0's M16 rolling scenario still ended 5
+stock counters hundreds of decrements high. Sampling every counter through a
+rolling restart caught one reset to almost its initial stock the moment its
+owner's replacement started serving; pod logs (the shop now wires the library's
+Logger, and a failed restore is now logged) showed why: restores failing on
+every pod, dozens a minute, all `reading <ns>/log/seg-…: not found`.
+
+Two defects, in series:
+
+- **A restore read every unsplit log and started over when one vanished.** The
+  splitter deletes logs once their partition segments are durable, every ten
+  seconds; a restore reading a hundred logs found one gone, started its whole
+  read again, and after three tries failed — over and over.
+- **A failed restore served the partition from memory.** Decision 0029 chose
+  that so a store outage degrades rather than stops a namespace. For keys memory
+  holds it is right. For keys memory does not hold — exactly the keys a restore
+  exists to bring back to a node that has just come to own them — "not found",
+  an Increment from zero or a SetIfAbsent that succeeds is a guess the next
+  restore cannot correct, since the write made on it outranks the record.
+
+**Picked:**
+
+- A scan skips an object that vanished between listing and reading, lists
+  again, and reads only what is new, until a pass finds nothing gone (at most
+  sixteen). An object vanishes only after its records are durable in a snapshot
+  or a partition segment (decision 0030), which the next listing shows.
+- With a partition's restore failed, any operation on a key memory does not
+  hold is refused with `ErrActivationPending`; a key memory holds is served
+  from it. Decision 0029's availability is kept where it is safe and given up
+  where it was a guess.
+- Blind writes were first let through, on the reasoning that a Set reads
+  nothing and outranks whatever a later restore reads. The second half is
+  false: the Set's order comes from a clock that, the restore having failed,
+  has observed none of storage's records and may be behind them; the next
+  restore lays the stored value over the Set. The test caught it under -race
+  — the Set's order equal to the stored record's, its log's name the same, the
+  record overwritten — so blind writes are refused too, and log names now
+  carry a random suffix so that two logs can never share one.
+
+`TestARestoreOutlastsASplitterDeletingItsLogs` failed before (the restore
+failed and a stored key read back not found);
+`TestAnUnavailableStoreDegradesToMemory` now asserts the refusal, and that a
+blind write and a held key are still served.
+
+## 58. A write that waited out a restore was applied after its key moved — found on kind, resolved
+
+**Found** after question 57: with no restore failing, a rolling restart still
+reset, about one run in six, a stock counter the first restarted pod owned. A
+temporary build logging every store write of the traced keys, with its caller,
+showed the sequence on the interim owner, shop-1:
+
+1. promoted the key's replica copy, `-142`, when shop-3 drained;
+2. accepted a peer's Increment — the ownership check passed;
+3. the Increment waited in `awaitRestore` for the key's partition;
+4. shop-3's replacement joined; shop-1's reconciliation demoted the key out of
+   its owned store;
+5. the restore finished (skipping the key, no longer owned) and the Increment
+   ran — on a store without the key: `-1`, with a newer order than `-142`;
+6. it replicated `-1` to the returning owner, which adopted it; every later
+   restore and promotion of `-142` was refused as older.
+
+**Picked:** an owner checks again just before applying. A read-modify-write
+checks inside the store's update, under the shard lock demotion also takes, so
+the two are ordered: the update runs first and the key leaves with its new
+value, or the key has left and the update refuses. Set and Delete check again
+after the wait. Each refusal is `ErrNotOwner` or the activation delay's
+`ErrActivationPending`, answered before anything is applied.
+`TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves` reproduces the
+sequence exactly and failed before, for Increment and for Set.
