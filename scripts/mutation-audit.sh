@@ -1924,18 +1924,21 @@ mutate "a delete runs ahead of the restore" \
   'func (n *namespace) localDelete(ctx context.Context, key string) error {' \
   'TestAWriteBeforeTheFirstReadStillRestoresFirst$' ./tests
 
-mutate "a restore skips a corrupt segment" \
+# Flushes write logs (decision 0030), and the test's seed is never split, so
+# the object it corrupts is a log. The segment loop's identical check had been
+# the target, which no test reached: the entry passed with it broken.
+mutate "a restore skips a corrupt log" \
   persistence.go \
   '		f, err := p.load(ctx, name)
 		if err != nil {
 			return nil, err
 		}
-		merge(f)' \
+		kept := f.Records[:0]' \
   '		f, err := p.load(ctx, name)
 		if err != nil {
 			continue
 		}
-		merge(f)' \
+		kept := f.Records[:0]' \
   'TestACorruptSegmentFailsTheRestore$' ./tests
 
 mutate "a failed restore is never retried" \
@@ -1947,11 +1950,11 @@ mutate "a failed restore is never retried" \
 mutate "a restore replaces newer memory" \
   internal/store/store.go \
   '	if live && old.order >= order {
-		return false
+		return 0, false
 	}
 	if tombstone {' \
   '	if false {
-		return false
+		return 0, false
 	}
 	if tombstone {' \
   'TestMergeIfNewerKeepsWhateverIsNewer$' ./internal/store/

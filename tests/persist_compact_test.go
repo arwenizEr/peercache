@@ -96,11 +96,24 @@ func writeFlushed(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Du
 	}
 }
 
-func compacted(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Duration) }) {
+func compacted(t *testing.T, c peercache.Cache, fc *clock.Fake) {
 	t.Helper()
 	before := c.Stats().PersistCompactions
-	fc.Advance(compactInterval)
+	toCompactionTick(fc)
 	waitFor(t, "a compaction", func() bool { return c.Stats().PersistCompactions > before })
+}
+
+// toCompactionTick advances to the next compaction tick exactly, so that it is
+// the last thing the advance fires. The compactor bounds its run with a
+// timeout on the same clock, armed when it takes the tick: one advance of a
+// whole interval that fired the tick part-way could, if the compactor armed
+// its timeout before the advance finished, fire that timeout too and cancel
+// the run before it compacted anything. CI under -race did, and waited out
+// waitFor for a compaction that had been cancelled. The ticker's phase is
+// the namespace's creation, at clock.Epoch in these tests.
+func toCompactionTick(fc *clock.Fake) {
+	into := fc.Now().Sub(clock.Epoch) % compactInterval
+	fc.Advance(compactInterval - into)
 }
 
 func TestCompactionFoldsSegmentsIntoASnapshot(t *testing.T) {
@@ -252,7 +265,7 @@ func TestAFailedSnapshotDeletesNothing(t *testing.T) {
 
 	writeFlushed(t, c, fc, ns, "k", compactAfter)
 	before := c.Stats().PersistCompactFailures
-	fc.Advance(compactInterval)
+	toCompactionTick(fc)
 	waitFor(t, "the compaction to fail", func() bool { return c.Stats().PersistCompactFailures > before })
 
 	if _, segs := objectsUnder(t, inner, prefix); len(segs) != compactAfter {
