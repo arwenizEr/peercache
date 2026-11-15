@@ -178,8 +178,9 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 	ticker := p.clk.NewTicker(interval)
 	compact := p.clk.NewTicker(persistCompactInterval)
 	split := p.clk.NewTicker(persistSplitInterval)
-	p.wg.Add(1)
-	go p.run(ticker, compact, split)
+	p.wg.Add(2)
+	go p.run(ticker)
+	go p.maintain(compact, split)
 	return p
 }
 
@@ -250,22 +251,45 @@ func recordSize(r *segment.Record) int {
 	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + 32
 }
 
-func (p *persister) run(ticker, compact, split clock.Ticker) {
+// run is the flusher. It does nothing else: whatever shares its goroutine
+// delays every flush behind it, and a delayed flush is a longer loss window.
+// Compaction and splitting once ran here, and on kind, with a million orders,
+// each compaction held flushes off for seconds every minute (open question
+// 55): pending records rose from ~150 to ~1,500 at every compaction tick.
+func (p *persister) run(ticker clock.Ticker) {
 	defer p.wg.Done()
 	defer ticker.Stop()
-	defer compact.Stop()
-	defer split.Stop()
 	for {
 		select {
 		case <-p.done:
 			return
 		case <-ticker.C():
 		case <-p.kick:
+		}
+		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+		_ = p.flush(ctx)
+		cancel()
+	}
+}
+
+// maintain compacts partitions and splits logs, on its own goroutine so that
+// neither holds up a flush. Running alongside this node's flushes is safe for
+// the reason running alongside other nodes' compactors and splitters is
+// (decision 0030): a compaction deletes only the objects its snapshot
+// covers, a split deletes logs only once their segments are durable, and
+// readers take the union of whatever is there.
+func (p *persister) maintain(compact, split clock.Ticker) {
+	defer p.wg.Done()
+	defer compact.Stop()
+	defer split.Stop()
+	for {
+		select {
+		case <-p.done:
+			return
 		case <-compact.C():
 			ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
 			p.compactOwned(ctx)
 			cancel()
-			continue
 		case <-split.C():
 			if p.splitsLogs() {
 				ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
@@ -274,11 +298,7 @@ func (p *persister) run(ticker, compact, split clock.Ticker) {
 				}
 				cancel()
 			}
-			continue
 		}
-		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
-		_ = p.flush(ctx)
-		cancel()
 	}
 }
 
