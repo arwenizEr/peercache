@@ -18,8 +18,10 @@ import (
 // in the library wait on it.
 type Clock = clock.Fake
 
-// Epoch is the instant every cluster's clock starts at.
-var Epoch = clock.Epoch
+// Epoch returns the instant every cluster's clock starts at. A function rather
+// than a variable: assigning to an exported variable compiled and changed
+// nothing, since clusters start at the fixed instant.
+func Epoch() time.Time { return clock.Epoch }
 
 // Option configures a [Cluster].
 type Option func(*config)

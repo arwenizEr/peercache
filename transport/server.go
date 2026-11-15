@@ -41,10 +41,10 @@ func serviceDesc(handlerFor func(string) grpc.MethodHandler) *grpc.ServiceDesc {
 	desc := &grpc.ServiceDesc{
 		ServiceName: ServiceName,
 		HandlerType: (*any)(nil),
-		Methods:     make([]grpc.MethodDesc, 0, len(Methods)),
+		Methods:     make([]grpc.MethodDesc, 0, len(methods)),
 		Metadata:    "proto/peercache.proto",
 	}
-	for _, full := range Methods {
+	for _, full := range methods {
 		desc.Methods = append(desc.Methods, grpc.MethodDesc{
 			MethodName: shortName(full),
 			Handler:    handlerFor(full),

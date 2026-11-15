@@ -9,6 +9,11 @@ change the public API.
 
 ### Changed
 
+- `transport.Methods` and `peercachetest.Epoch` are functions, `Methods()` and
+  `Epoch()`, instead of exported variables: an importer could assign to them,
+  and appending to `transport.Methods` before `transport.New` changed what the
+  server registered. A repository test now keeps public packages from
+  exporting any variable but an error sentinel.
 - `ReadyState`'s JSON field names are camelCase (`ready`, `reason`,
   `caughtUp`, …) like the rest of `Description`'s, instead of Go's field names.
   The debug handler's `/` and `/cluster` responses change accordingly.

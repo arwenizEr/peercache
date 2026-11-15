@@ -92,7 +92,7 @@ func TestNothingMovesUntilTheTestMovesTheClock(t *testing.T) {
 	ns := c.Cache(c.Owner("sessions", "s")).Namespace("sessions")
 	ctx := context.Background()
 	start := c.Clock().Now()
-	if !start.After(peercachetest.Epoch) {
+	if !start.After(peercachetest.Epoch()) {
 		t.Fatalf("New left the clock at %v; it advances it to form the cluster", start)
 	}
 	if err := ns.Set(ctx, "s", []byte("v"), time.Minute); err != nil {

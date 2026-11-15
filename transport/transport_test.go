@@ -676,8 +676,8 @@ func TestProtoMatchesMethodConstants(t *testing.T) {
 		t.Fatal("no rpc declarations found in the proto; the parser or the file is wrong")
 	}
 
-	registered := make(map[string]bool, len(transport.Methods))
-	for _, full := range transport.Methods {
+	registered := make(map[string]bool, len(transport.Methods()))
+	for _, full := range transport.Methods() {
 		idx := strings.LastIndex(full, "/")
 		if idx < 0 {
 			t.Fatalf("method %q is not a full gRPC path", full)
