@@ -2990,11 +2990,11 @@ mutate "a read-modify-write is applied after its key moved" \
   'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
 mutate "a Set is applied after its key moved" \
   namespace.go \
-  '	// outside every rule.
-	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
+  '	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
 		return err
-	}' \
-  '	// outside every rule.' \
+	}
+	written := n.store.Put(key, n.encode(val), ttl)' \
+  '	written := n.store.Put(key, n.encode(val), ttl)' \
   'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
 
 # --- the memory budget says what it does not bound (open question 55) ---
