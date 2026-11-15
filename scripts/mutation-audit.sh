@@ -2918,7 +2918,13 @@ mutate "a compaction holds up the flusher" \
 		case <-split.C():' \
   'TestAFlushIsNotHeldUpByACompaction$' ./tests
 
-mutate "a budget without a memory limit is not warned about"   peercache.go   '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {'   '	if false {'   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
+# --- the memory budget says what it does not bound (open question 55) ---
+
+mutate "a budget without a memory limit is not warned about" \
+  peercache.go \
+  '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {' \
+  '	if false {' \
+  'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
