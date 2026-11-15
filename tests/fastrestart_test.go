@@ -149,3 +149,90 @@ func TestTheReplicaPassSendsOnlyWhatTheAskerOwns(t *testing.T) {
 			"More means a peer sent copies of keys the asker does not own", pulled, ranked, keys)
 	}
 }
+
+// TestAPersistedCounterSurvivesARestartFasterThanDetection is the same kill -9
+// on a persistent namespace, with the restarted owner's newest increments
+// never flushed. Its peers hold them, synchronously replicated; storage holds
+// an older count. The restarted owner restores the older count from storage on
+// first access, and must not then count on from it: on kind, after an OOM
+// kill, 4 of 50 stock counters ended hundreds of decrements high.
+func TestAPersistedCounterSurvivesARestartFasterThanDetection(t *testing.T) {
+	for _, gate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("catch-up gate %v", gate), func(t *testing.T) {
+			var opts []peercache.Option
+			if gate {
+				opts = append(opts, peercache.WithCatchUpGate())
+			}
+			f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1, withCacheOptions(opts...))
+			store := newHeldStore()
+			ctx := context.Background()
+			open := func(id string) peercache.Namespace {
+				return f.caches[id].Namespace("stock",
+					peercache.WithReplicationFactor(3),
+					peercache.WithSyncReplication(),
+					peercache.WithPersistence(store))
+			}
+			for _, id := range f.ids {
+				open(id)
+				if err := f.caches[id].CatchUp(ctx); err != nil {
+					t.Fatalf("CatchUp(%s): %v", id, err)
+				}
+			}
+			victim := f.ids[1]
+			var keys []string
+			for i := 0; len(keys) < 5 && i < 200; i++ {
+				if k := fmt.Sprintf("item/%d", i); f.ownerOf(t, k) == victim {
+					keys = append(keys, k)
+				}
+			}
+			if len(keys) == 0 {
+				t.Fatal("the victim owns nothing")
+			}
+			via := f.ids[0]
+			for _, k := range keys {
+				if _, err := open(via).Increment(ctx, k, 100, 0); err != nil {
+					t.Fatalf("Increment(%s): %v", k, err)
+				}
+			}
+			flushAll(t, f)
+
+			// Acknowledged on three nodes, never flushed: the crash's final
+			// flush fails, as an OOM kill's never happens.
+			store.failPut.Store(true)
+			for _, k := range keys {
+				if _, err := open(via).Increment(ctx, k, 10, 0); err != nil {
+					t.Fatalf("Increment(%s): %v", k, err)
+				}
+			}
+			crash(f, victim)
+			store.failPut.Store(false)
+			f.revive(t, victim)
+			f.clk.Advance(2 * testkit.DefaultJoinDelay)
+			f.converge(t)
+			open(victim)
+			if err := f.caches[victim].CatchUp(ctx); err != nil {
+				t.Fatalf("CatchUp: %v", err)
+			}
+
+			for _, k := range keys {
+				v, err := open(via).Increment(ctx, k, 1, 0)
+				if err != nil {
+					t.Fatalf("Increment(%s) after the restart: %v", k, err)
+				}
+				if v != 111 {
+					t.Fatalf("%s counted on to %d after the restart, want 111: the restarted owner "+
+						"counted from the older value storage held, losing acknowledged increments", k, v)
+				}
+			}
+		})
+	}
+}
+
+// crash kills id as hardKill does, but expects its final flush to fail: the
+// point of the crash is that what was pending never reached storage.
+func crash(f *fabric, id string) {
+	f.dead[id] = true
+	_ = f.caches[id].Close(context.Background())
+	f.memberships[id].Close()
+	f.net.Unregister(id)
+}
