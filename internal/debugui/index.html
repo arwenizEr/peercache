@@ -154,9 +154,9 @@ function renderCluster(c) {
     }
     const d = n.description, ns = d.namespaces || [];
     const sum = (f) => ns.reduce((a, x) => a + (x[f] || 0), 0);
-    const ready = d.ready && d.ready.Ready;
+    const ready = d.ready && d.ready.ready;
     html += `<tr><td class="mono">${esc(n.id)}</td>
-      <td><span class="badge ${ready ? "ok" : "warn"}">${ready ? "ready" : esc((d.ready && d.ready.Reason) || "not ready")}</span></td>
+      <td><span class="badge ${ready ? "ok" : "warn"}">${ready ? "ready" : esc((d.ready && d.ready.reason) || "not ready")}</span></td>
       <td class="n">${(d.members || []).length}</td><td class="n">${fmt(d.epoch)}</td>
       <td class="n">${fmt(sum("ownedKeys"))}</td><td class="n">${fmt(sum("replicaKeys"))}</td><td class="n">${fmt(sum("l1Entries"))}</td>
       <td class="muted">${ns.map((x) => esc(x.name)).join(", ")}</td></tr>`;
@@ -203,9 +203,9 @@ async function refresh() {
   try {
     const [d, s, c] = await Promise.all([get("./"), get("./stats"), get("./cluster")]);
     $("node").textContent = d.node.id;
-    const ready = d.ready && d.ready.Ready;
+    const ready = d.ready && d.ready.ready;
     $("ready").className = "badge " + (ready ? "ok" : "warn");
-    $("ready").textContent = ready ? "ready" : ((d.ready && d.ready.Reason) || "not ready");
+    $("ready").textContent = ready ? "ready" : ((d.ready && d.ready.reason) || "not ready");
     renderTiles(s); renderCluster(c); renderNamespaces(d.namespaces);
     $("updated").textContent = "updated " + new Date().toLocaleTimeString();
   } catch (e) {

@@ -53,19 +53,19 @@ type readiness struct {
 // alone to finish.
 type ReadyState struct {
 	// Ready reports whether this node should receive traffic.
-	Ready bool
+	Ready bool `json:"ready"`
 	// Reason names the first unmet condition, or "" when ready. It is
 	// intended for a probe's response body and for logs.
-	Reason string
+	Reason string `json:"reason"`
 
 	// Joined reports whether this node has learned any membership.
-	Joined bool
+	Joined bool `json:"joined"`
 	// Settled reports whether the membership view has stopped moving for
 	// longer than the activation delay.
-	Settled bool
+	Settled bool `json:"settled"`
 	// CaughtUp reports whether this node has pulled the replicas it is
 	// responsible for at least once.
-	CaughtUp bool
+	CaughtUp bool `json:"caughtUp"`
 	// ReplicasCurrent reports whether this node has pulled, from every peer
 	// in its view and without a failure, the replicas it ranks for under the
 	// membership view it holds now.
@@ -82,11 +82,11 @@ type ReadyState struct {
 	// returns nil. The replication factor is restored cluster-wide once every
 	// node reports it under the same membership; a single node reporting it
 	// says only that this node has done its part.
-	ReplicasCurrent bool
+	ReplicasCurrent bool `json:"replicasCurrent"`
 	// Draining reports whether shutdown has begun.
-	Draining bool
+	Draining bool `json:"draining"`
 	// Members is the size of the current view.
-	Members int
+	Members int `json:"members"`
 }
 
 // Ready reports whether this node should receive traffic.
