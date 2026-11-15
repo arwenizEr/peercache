@@ -592,7 +592,7 @@ func (n *namespace) Set(ctx context.Context, key string, val []byte, ttl time.Du
 // comes next, because it is the part a synchronous caller is waiting for. The
 // invalidation hint goes last and is never waited on.
 func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl time.Duration) error {
-	if err := n.awaitRestoreBlind(ctx, key); err != nil {
+	if err := n.awaitRestore(ctx, key); err != nil {
 		return err
 	}
 	// Again after the wait: see localUpdate. A blind write cannot read a
@@ -803,7 +803,7 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // how the first version ended up replicating only the writes that happened to
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
-	if err := n.awaitRestoreBlind(ctx, key); err != nil {
+	if err := n.awaitRestore(ctx, key); err != nil {
 		return err
 	}
 	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
@@ -1181,18 +1181,6 @@ func (n *namespace) awaitRestore(ctx context.Context, key string) error {
 			n.name, key, ErrActivationPending)
 	}
 	return err
-}
-
-// awaitRestoreBlind is awaitRestore for a write that does not read: Set and
-// Delete. Its outcome does not depend on what the key held, and its order
-// outranks any record a later restore brings back, so a partition that could
-// not be restored need not refuse it — decision 0029's availability during a
-// store outage, kept where it is safe.
-func (n *namespace) awaitRestoreBlind(ctx context.Context, key string) error {
-	if err := n.awaitRestore(ctx, key); err != nil && !errors.Is(err, ErrActivationPending) {
-		return err
-	}
-	return nil
 }
 
 // l1Lifetime is how long a copy may live in the non-owned tier: the

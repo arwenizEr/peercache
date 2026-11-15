@@ -1792,12 +1792,18 @@ Two defects, in series:
   again, and reads only what is new, until a pass finds nothing gone (at most
   sixteen). An object vanishes only after its records are durable in a snapshot
   or a partition segment (decision 0030), which the next listing shows.
-- With a partition's restore failed, a read or read-modify-write of a key
-  memory does not hold is refused with `ErrActivationPending`; a key memory
-  holds is answered from it, and a blind Set or Delete is still taken, since it
-  depends on nothing the key held and outranks whatever a restore later reads.
-  Decision 0029's availability is kept where it is safe and given up where it
-  was a guess.
+- With a partition's restore failed, any operation on a key memory does not
+  hold is refused with `ErrActivationPending`; a key memory holds is served
+  from it. Decision 0029's availability is kept where it is safe and given up
+  where it was a guess.
+- Blind writes were first let through, on the reasoning that a Set reads
+  nothing and outranks whatever a later restore reads. The second half is
+  false: the Set's order comes from a clock that, the restore having failed,
+  has observed none of storage's records and may be behind them; the next
+  restore lays the stored value over the Set. The test caught it under -race
+  — the Set's order equal to the stored record's, its log's name the same, the
+  record overwritten — so blind writes are refused too, and log names now
+  carry a random suffix so that two logs can never share one.
 
 `TestARestoreOutlastsASplitterDeletingItsLogs` failed before (the restore
 failed and a stored key read back not found);

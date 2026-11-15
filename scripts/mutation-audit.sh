@@ -2973,10 +2973,16 @@ mutate "an unrestored partition answers absent keys from memory" \
 		}' \
   '		return nil' \
   'TestAnUnavailableStoreDegradesToMemory$' ./tests
-mutate "an unrestored partition refuses blind writes" \
+mutate "an unrestored partition takes blind writes" \
   namespace.go \
-  '	if err := n.awaitRestore(ctx, key); err != nil && !errors.Is(err, ErrActivationPending) {' \
-  '	if err := n.awaitRestore(ctx, key); err != nil {' \
+  '	if err := n.awaitRestore(ctx, key); err != nil {
+		return err
+	}
+	// Again after the wait' \
+  '	if err := n.awaitRestore(ctx, key); err != nil && !errors.Is(err, ErrActivationPending) {
+		return err
+	}
+	// Again after the wait' \
   'TestAnUnavailableStoreDegradesToMemory$' ./tests
 
 # --- an owner checks again before it applies (open question 58) ---
