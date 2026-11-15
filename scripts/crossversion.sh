@@ -55,7 +55,9 @@ build prev "$work/prev-tree"
 build head "$root"
 
 # cluster NAME DRAINER BUILD...: one node per BUILD, node n0 first; DRAINER
-# is the id of the node that drains.
+# is the id of the node that drains. STORE, when set, is the directory the
+# durable namespace persists to; VERIFY, when set, makes every node a restore
+# node reading back what the comma-separated ids in it persisted.
 cluster() {
   local name=$1 drainer=$2
   shift 2
@@ -70,6 +72,7 @@ cluster() {
     "$work/node-${builds[$i]}$exe" -id "n$i" -label "${builds[$i]}" \
       -gossip $((base + 2 * i)) -data $((base + 2 * i + 1)) -seed "$seed" \
       -peers "$ids" -drainer "$drainer" -dir "$(native "$dir")" \
+      ${STORE:+-store "$(native "$STORE")"} ${VERIFY:+-verify-writers "$VERIFY"} \
       >"$dir/n$i.log" 2>&1 &
     pids+=($!)
   done
@@ -82,8 +85,14 @@ cluster() {
 }
 
 status=0
-cluster "previous-release-drains" n0 prev head head || status=1
-cluster "this-tree-drains" n0 head prev prev || status=1
+mkdir -p "$work/store-a" "$work/store-b"
+STORE="$work/store-a" cluster "previous-release-drains" n0 prev head head || status=1
+STORE="$work/store-b" cluster "this-tree-drains" n0 head prev prev || status=1
+
+# Cold starts over what the mixed clusters persisted, by one release alone:
+# each release reads storage both releases wrote.
+VERIFY=n0,n1,n2 STORE="$work/store-a" cluster "previous-release-restores" none prev prev prev || status=1
+VERIFY=n0,n1,n2 STORE="$work/store-b" cluster "this-tree-restores" none head head head || status=1
 
 echo
 if [ $status -ne 0 ]; then
