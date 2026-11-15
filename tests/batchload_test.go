@@ -7,10 +7,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/core"
+	"github.com/arwenizEr/peercache/internal/testkit"
 	"github.com/arwenizEr/peercache/internal/wire"
 	"github.com/arwenizEr/peercache/transport"
 )
@@ -320,5 +323,98 @@ func TestABatchLoadRemembersAndSkipsAbsences(t *testing.T) {
 	}
 	if got := c.Stats().NegativeHits; got != 1 {
 		t.Fatalf("NegativeHits = %d, want 1: the second batch skipped gone", got)
+	}
+}
+
+// misroutingTransport answers a caller's next batch load as if ownership had
+// moved in flight: one key the owner returned is reported misrouted instead.
+type misroutingTransport struct {
+	core.Transport
+	armed atomic.Bool
+	moved atomic.Value // string: the key reported misrouted
+}
+
+func (t *misroutingTransport) Dial(node core.Node) (core.PeerClient, error) {
+	inner, err := t.Transport.Dial(node)
+	if err != nil {
+		return nil, err
+	}
+	return &misroutingClient{PeerClient: inner, parent: t}, nil
+}
+
+// Ready forwards readiness; see countingTransport.Ready for why it must.
+func (t *misroutingTransport) Ready() <-chan struct{} {
+	if r, ok := t.Transport.(interface{ Ready() <-chan struct{} }); ok {
+		return r.Ready()
+	}
+	closed := make(chan struct{})
+	close(closed)
+	return closed
+}
+
+type misroutingClient struct {
+	core.PeerClient
+	parent *misroutingTransport
+}
+
+func (c *misroutingClient) Invoke(ctx context.Context, method string, req []byte) ([]byte, error) {
+	out, err := c.PeerClient.Invoke(ctx, method, req)
+	if err != nil || method != transport.MethodBatchGet || !c.parent.armed.CompareAndSwap(true, false) {
+		return out, err
+	}
+	var resp wire.BatchGetResponse
+	if err := wire.Decode(out, &resp); err != nil || len(resp.Entries) == 0 {
+		return out, err
+	}
+	moved := resp.Entries[0].Key
+	c.parent.moved.Store(moved)
+	resp.Entries = resp.Entries[1:]
+	resp.Misrouted = append(resp.Misrouted, moved)
+	return wire.Encode(&resp)
+}
+
+// TestACallerAsksAgainForMisroutedKeys is the other half of
+// TestAMisroutedLoadNamesTheKeys: keys an owner names as not its own must be
+// asked for again, one at a time, wherever they live now — not dropped from
+// the result as if they did not exist.
+func TestACallerAsksAgainForMisroutedKeys(t *testing.T) {
+	var caller *misroutingTransport
+	f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1,
+		withWrappers(func(id string, tr core.Transport) core.Transport {
+			if caller == nil {
+				caller = &misroutingTransport{Transport: tr}
+				return caller
+			}
+			return tr
+		}, nil))
+	r := newBatchRecorder()
+	openBatch(f, r)
+	f.settle(t)
+	via := f.ids[0]
+
+	var remote []string
+	for _, k := range batchKeys(40) {
+		if f.ownerOf(t, k) != via {
+			remote = append(remote, k)
+		}
+	}
+	if len(remote) == 0 {
+		t.Fatal("no key owned elsewhere")
+	}
+	caller.armed.Store(true)
+	got, err := f.caches[via].Namespace("rows").BatchGetOrLoad(context.Background(), remote)
+	if err != nil {
+		t.Fatalf("BatchGetOrLoad: %v", err)
+	}
+	moved, _ := caller.moved.Load().(string)
+	if moved == "" {
+		t.Fatal("no batch load was answered; the test proved nothing")
+	}
+	if _, ok := got[moved]; !ok {
+		t.Fatalf("%s, reported misrouted, is missing from the result; it was dropped rather than "+
+			"asked for again", moved)
+	}
+	if len(got) != len(remote) {
+		t.Fatalf("%d of %d keys returned", len(got), len(remote))
 	}
 }

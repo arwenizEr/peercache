@@ -559,3 +559,27 @@ func TestReplicaReadsNeedReplicasAndAnL1(t *testing.T) {
 		t.Fatalf("Get on a valid replica-read namespace = %v, want ErrNotFound", err)
 	}
 }
+
+// TestAReplicaReadCopyDoesNotOutliveItsKey is TestANonOwnedCopyDoesNotOutliveItsKey
+// for a read a replica answered. The replica reports the key's remaining
+// lifetime with the copy, and the reader's L1 entry must end with the key, not
+// one L1 TTL after the replica received it.
+func TestAReplicaReadCopyDoesNotOutliveItsKey(t *testing.T) {
+	r := newReplicaFabric(t, replicaFabricConfig{nodes: 5, rf: 2, sync: true})
+	p := r.findPick(t, remoteReader)
+
+	const ttl = replicaTTL / 4
+	if err := r.caches[p.owner].Namespace("hot").Set(context.Background(), p.key, []byte("v"), ttl); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	r.writes++
+	if d := r.read("hot", p.reader, p.key); d.err != nil || string(d.val) != "v" || d.served[p.replica] != 1 {
+		t.Fatalf("first read = %q, %v, served by the replica %d times; the test needs the replica to answer",
+			d.val, d.err, d.served[p.replica])
+	}
+	r.clk.Advance(ttl)
+	if d := r.read("hot", p.reader, p.key); !errors.Is(d.err, peercache.ErrNotFound) {
+		t.Fatalf("read once the key expired = %q, %v; the reader's copy, taken from a replica, "+
+			"outlived its key", d.val, d.err)
+	}
+}

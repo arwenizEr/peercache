@@ -27,9 +27,17 @@ func (n *namespace) BatchGetOrLoad(ctx context.Context, keys []string) (map[stri
 	}
 
 	out := make(map[string][]byte, len(keys))
+	return out, n.batchGetOrLoadInto(ctx, keys, out, true)
+}
+
+// batchGetOrLoadInto is BatchGetOrLoad's body, writing into out. reask says
+// whether keys an owner names as not its own are asked for again; it is true
+// for the caller's request and false for that one retry, so a key that keeps
+// moving is reported rather than chased.
+func (n *namespace) batchGetOrLoadInto(ctx context.Context, keys []string, out map[string][]byte, reask bool) error {
 	byOwner, unresolved, err := n.cache.route.groupKeysByOwner(n, keys)
 	if err != nil {
-		return out, err
+		return err
 	}
 	var failures error
 	if len(unresolved) > 0 {
@@ -38,7 +46,7 @@ func (n *namespace) BatchGetOrLoad(ctx context.Context, keys []string) (map[stri
 	}
 	for id, batch := range byOwner {
 		if err := ctx.Err(); err != nil {
-			return out, errors.Join(failures, err)
+			return errors.Join(failures, err)
 		}
 		if id == localBucket {
 			if err := n.localBatchGetOrLoad(ctx, batch.keys, out); err != nil {
@@ -46,11 +54,11 @@ func (n *namespace) BatchGetOrLoad(ctx context.Context, keys []string) (map[stri
 			}
 			continue
 		}
-		if err := n.remoteBatchGetOrLoad(ctx, batch, out); err != nil {
+		if err := n.remoteBatchGetOrLoad(ctx, batch, out, reask); err != nil {
 			failures = errors.Join(failures, err)
 		}
 	}
-	return out, failures
+	return failures
 }
 
 // localBatchGetOrLoad answers the keys this node owns: what the store holds,
@@ -194,7 +202,7 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 // owner reports it does not own — ownership moved while the request was in
 // flight — are asked for again one at a time, wherever they live now, so a
 // moved key is not mistaken for one that does not exist.
-func (n *namespace) remoteBatchGetOrLoad(ctx context.Context, batch *ownerBatch, out map[string][]byte) error {
+func (n *namespace) remoteBatchGetOrLoad(ctx context.Context, batch *ownerBatch, out map[string][]byte, reask bool) error {
 	wanted := batch.keys
 	if n.l1 != nil {
 		wanted = wanted[:0:0]
@@ -219,16 +227,14 @@ func (n *namespace) remoteBatchGetOrLoad(ctx context.Context, batch *ownerBatch,
 			n.l1.Put(e.Key, e.Value, e.Stamp, l1Lifetime(n.opts.L1TTL, time.Duration(e.TTLRemainingNanos)))
 		}
 	}
-	var failures error
-	for _, key := range misrouted {
-		val, err := n.GetOrLoad(ctx, key)
-		switch {
-		case err == nil:
-			out[key] = val
-		case errors.Is(err, ErrNotFound):
-		default:
-			failures = errors.Join(failures, err)
-		}
+	if len(misrouted) == 0 {
+		return nil
 	}
-	return failures
+	if !reask {
+		return fmt.Errorf("peercache: %d key(s) moved again while being loaded: %w", len(misrouted), ErrNotOwner)
+	}
+	// Asked for again as a batch, not one key at a time through GetOrLoad:
+	// a namespace with only a batch loader has no per-key loader, and every
+	// moved key failed the whole call with ErrNoLoader.
+	return n.batchGetOrLoadInto(ctx, misrouted, out, false)
 }
