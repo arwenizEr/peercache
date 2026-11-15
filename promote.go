@@ -3,7 +3,6 @@ package peercache
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -237,15 +236,13 @@ func (p *promoter) reconcile() {
 // restore moves promoted replicas into the namespace's owned store, continuing
 // the previous owner's version sequence.
 func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
-	now := p.cache.opts.Clock.Now().UnixNano()
 	for key, e := range taken {
-		left, live := e.Remaining(now)
-		if !live {
-			// Expired on the owner's schedule while held here. Restoring it
-			// would bring back a key every other holder has already let go of.
-			continue
-		}
-		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {
+		// The deadline as it is, never re-derived from a remainder: the
+		// clock moves while this loop runs, and a remainder taken at its
+		// start and applied later added the difference to the key's life
+		// (F12). A key already past it was let go of by every other
+		// holder and is not restored.
+		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {
 			p.promoted.Add(1)
 			// The old owner may have died before flushing this write. The
 			// record is idempotent under the merge, so writing it again
@@ -254,9 +251,9 @@ func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
 				ns.persister.record(key, e.Value, e.ExpiresAt, e.Order, false)
 			}
 		}
-		// A refused Restore means a newer value was written here while the
-		// drain ran. The replica copy is correctly discarded; it is older by
-		// definition.
+		// A refused restore means the key had expired, or a newer value
+		// was written here while the drain ran. Either way the replica copy
+		// is correctly discarded.
 	}
 }
 

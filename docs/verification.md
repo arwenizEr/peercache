@@ -656,6 +656,7 @@ caught   hot-key counts never decay                                         -- T
 caught   a new key does not inherit the replaced count                      -- TestAKeyThatTurnsHotLateIsFound
 caught   estimates are not scaled by the sample rate                        -- TestTheHottestKeyIsReportedFirst
 caught   hot-key tracking accepts any bound                                 -- TestHotKeysAreOffByDefaultAndBounded
+caught   a restore past its deadline installs the key                       -- TestRestoreAtInstallsTheDeadlineAsGiven
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
 caught   a replica delete leaves its digest behind                          -- TestTheReplicaDigestFollowsEveryWritePath

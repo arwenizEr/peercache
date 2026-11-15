@@ -1711,3 +1711,29 @@ tombstone). The passes that follow then treat them as any replica: kept where
 this node still ranks, handed to the nodes that do where it does not, dropped
 below RF 2. Catch-up's replica pass still serves them to a returning owner, so
 what the old behaviour was kept for still works.
+
+## 54. A promoted key outlived its TTL by the length of the promotion — found by CI, resolved
+
+**Found** when CI ran again after being disabled from 2026-11-12 to 11-15:
+`TestADrainedKeyKeepsItsRemainingTTL` failed on the runner, a drained key
+still served after its 10 s TTL. Locally it failed 1 run in 40 at `-cpu 2`.
+Traced: `promoter.restore` read the clock once, computed each replica's
+remaining lifetime against it, and passed that remainder to `Store.Restore`,
+which turned it back into a deadline against its own, later, reading. The
+clock had moved 6 s between the two (the test advances it while the
+membership change is reconciled), and the key's deadline moved with it. In
+production the shift is the time the loop takes to reach a key — small per
+key, and largest for the last keys of a large promotion — but a TTL must
+never be extended by a move.
+
+**Picked:** promotion passes the deadline itself (`Store.RestoreAt`), which
+refuses one already passed. Remainders stay only where they cross the wire,
+converted at the moment of receipt. `TestRestoreAtInstallsTheDeadlineAsGiven`
+pins the primitive; the integration test, 400 runs at `-cpu 2` with no
+failure after the fix (5 in 200 before), is the evidence for the path. It
+cannot be made deterministic from outside: the window is between two clock
+reads inside one goroutine.
+
+Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
+on the first receiver only; the one adopted key had landed on the second.
+A test bug; it now checks each receiver whose counter moved.
