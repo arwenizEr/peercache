@@ -234,7 +234,10 @@ func TestAsyncLossWindowOverGRPC(t *testing.T) {
 	// Warm the connection pool: the first fan-out to each peer pays for a
 	// handshake, which is a one-off and not part of the steady-state window.
 	for i := 0; i < 200; i++ {
-		if err := ns.Set(ctx, fmt.Sprintf("warm/%d", i), []byte("v"), 0); err != nil {
+		// Retried while a connection finishes its handshake: see
+		// setWhileConnecting. CI failed one with "error reading server
+		// preface: EOF".
+		if err := setWhileConnecting(ctx, ns, fmt.Sprintf("warm/%d", i), []byte("v")); err != nil {
 			t.Fatalf("warm-up: %v", err)
 		}
 	}
