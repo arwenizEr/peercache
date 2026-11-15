@@ -1738,6 +1738,41 @@ Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
 on the first receiver only; the one adopted key had landed on the second.
 A test bug; it now checks each receiver whose counter moved.
 
+## 56. Local callers skipped the activation delay, and a drained node kept serving — found on kind, resolved
+
+**Found** re-running the volume experiment of question 55 with every fix from
+it: no OOM kill, no lost order across 2.1 million, and every one of the 14 stock
+counters a single restarted pod (shop-3) owned wrong — and only those. A
+fake-network test of a rolling restart with counters decremented through every
+node (`TestARollingRestartAppliesEachDecrementOnce`) lost decrements at once,
+and a probe found both paths:
+
+- the router decided "this key is local" by ownership alone. The activation
+  delay and the catch-up gate are checked in the peer handler, so a peer's
+  request to a node that had just acquired a key waited, but the node's own
+  caller did not: its Increment ran on an owned store the key's replica copy had
+  not been promoted into yet, counted from zero, and the promotion then refused
+  the copy as older. Acknowledged, and the history before it gone;
+- a drained node's own view still names it the owner of the keys it handed on.
+  Its callers' writes, and peers' that had not noticed the departure, were
+  applied to a store nobody would read again.
+
+**Picked:** the router refuses a local placement the peer handler would refuse
+(`mayServeLocally`): `ErrNotOwner` while draining, the activation delay's
+`ErrActivationPending` otherwise; the peer handler refuses while draining too.
+Both are answered before anything is applied, so every caller already retries
+them. This makes the delay what decision 5 says it is — a window of refusal for
+the keys that moved — for every caller rather than for remote ones only. The
+cost is that window, now visible to local callers as well: the M6 criterion's
+test client retried twenty times without letting time pass, and passed only
+because its attempts through the new owner skipped the delay; it now backs off
+250 ms between attempts and still sees no failure (70 retries, down from 240).
+
+**Not yet explained:** on kind the wrong counters were *below* what was
+acknowledged — decrements applied more often than acknowledged — while this
+path loses decrements. Re-run on kind with the fix to see whether it was the
+same cause by another route.
+
 ## 55. Under memory pressure a pod exceeds its budget and acknowledged orders are lost — found on kind, open
 
 **Found** running v0.2.0's M16 scenarios on accumulated data (docs/m16-results.md,

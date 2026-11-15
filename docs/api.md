@@ -1349,6 +1349,12 @@ acquired, for this long, and returns `ErrActivationPending` for them meanwhile.
 Groups it already held are unaffected — the deferral is confined to the part of
 the keyspace that actually moved.
 
+It holds for every caller, this node's own included. Until 0.2.1 a caller on
+the new owner itself skipped it: an `Increment` there ran before the replica
+copy was promoted, counted from nothing, and the promotion then discarded the
+copy as older (open question 56). A caller that retries for longer than the
+delay, as the rolling-upgrade criterion's client does, sees no failure.
+
 The default is 3 seconds. It is a guess about how long the previous owner takes
 to notice it lost the group, and it narrows the double-activation window without
 closing it: membership is gossip based and eventually consistent, so there is no
@@ -1632,7 +1638,7 @@ Test with `errors.Is`. Errors wrap their cause with `%w`.
 | `ErrClosed` | The cache has been closed. | no |
 | `ErrGroupOverloaded` | Mailbox full; rejected rather than queued. | yes, after backoff |
 | `ErrStaleEpoch` | Ownership was resolved under a view this node has already replaced. | yes, after re-resolving |
-| `ErrNotOwner` | This node does not own the key's group. | yes, after re-resolving |
+| `ErrNotOwner` | This node does not own the key's group, or is draining and has handed it on. | yes, after re-resolving |
 | `ErrActivationPending` | This node owns the group but acquired it within `WithActivationDelay`. | yes, here, shortly |
 | `ErrNoLoader` | `GetOrLoad` without `WithLoader`. | no |
 | `ErrLoaderPanic` | A registered loader panicked. | no — it is a bug |

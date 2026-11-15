@@ -151,7 +151,23 @@ func TestDeactivationPreservesPendingTimers(t *testing.T) {
 
 	// A group with a pending timer is exempt from idle deactivation:
 	// deactivating would stop its clock timer and nothing would ever wake it.
-	fc.Advance(time.Minute * 2)
+	//
+	// In steps, checking between them. The turn loop re-arms its idle timer
+	// after sending the Call's reply, so one advance made the moment the
+	// reply arrived could fire the old timer inside the advance and then be
+	// re-armed from its end, with nothing left to advance it: CI under -race
+	// waited out waitFor so. Eight steps of half the idle timeout stay well
+	// inside the group's ten-minute timer.
+	held := func() bool {
+		stats := rt.Stats()
+		return stats.TimerHeldOpen > 0 || stats.Active == 0
+	}
+	for step := 0; step < 8 && !held(); step++ {
+		fc.Advance(30 * time.Second)
+		for i := 0; i < 10_000 && !held(); i++ {
+			runtime.Gosched()
+		}
+	}
 
 	// Wait for a *positive* signal that the exemption fired.
 	//
