@@ -222,9 +222,16 @@ $("check").onclick = async () => {
     } else if (!(c.outOfStep || []).length) {
       $("replicas").innerHTML = `<span class="ok badge">all in step</span> every owner's keys match its replicas' copies`;
     } else {
-      let html = `<span class="bad badge">${c.outOfStep.length} partition(s) out of step</span> read again to tell replication in flight from loss<div class="scroll"><table><tr><th>Namespace</th><th class="n">Partition</th><th class="n">Owned</th><th class="n">Want copies</th><th class="n">Held</th><th>Per node (owned / held)</th></tr>`;
+      const faults = c.outOfStep.filter((p) => !p.loaded || p.heldCopies > p.wantCopies).length;
+      const loadedOnly = c.outOfStep.length - faults;
+      let html = faults
+        ? `<span class="bad badge">${faults} partition(s) out of step</span> read again to tell replication in flight from loss`
+        : `<span class="ok badge">no fault</span>`;
+      if (loadedOnly) html += ` <span class="warn badge">${loadedOnly} short only by loaded keys</span> <span class="muted">loaded values live on their owner alone; expected</span>`;
+      html += `<div class="scroll"><table><tr><th>Namespace</th><th class="n">Partition</th><th class="n">Owned</th><th class="n">Want copies</th><th class="n">Held</th><th>Per node (owned / held)</th></tr>`;
       for (const p of c.outOfStep) {
-        html += `<tr><td class="mono">${esc(p.namespace)}</td><td class="n">${p.partition}</td><td class="n">${fmt(p.owned)}</td><td class="n">${fmt(p.wantCopies)}</td><td class="n">${fmt(p.heldCopies)}</td>
+        const expected = p.loaded && p.heldCopies <= p.wantCopies;
+        html += `<tr${expected ? ' class="muted"' : ""}><td class="mono">${esc(p.namespace)}${p.loaded ? ' <span class="warn badge">loader</span>' : ""}</td><td class="n">${p.partition}</td><td class="n">${fmt(p.owned)}</td><td class="n">${fmt(p.wantCopies)}</td><td class="n">${fmt(p.heldCopies)}</td>
           <td class="mono">${p.nodes.map((n) => `${esc(n.node)} ${fmt(n.owned)}/${fmt(n.held)}`).join(" · ")}</td></tr>`;
       }
       $("replicas").innerHTML = html + `</table></div>`;

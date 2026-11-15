@@ -650,6 +650,7 @@ caught   a batch get from the earlier release cannot be read                -- T
 caught   a batch load asks for keys remembered as absent                    -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a batch load does not remember the keys it omitted                 -- TestABatchLoadRemembersAndSkipsAbsences
 caught   a demoted owner keeps its keys in the owned store                  -- TestADemotedOwnerDoesNotResurrectAnOverwrittenValue
+caught   a namespace with a loader is not marked                            -- TestLoadedKeysAreMarkedNotMissing
 caught   an owner's operations are not counted                              -- TestTheHottestKeyIsReportedFirst
 caught   hot-key counts never decay                                         -- TestHotKeysDecay
 caught   a new key does not inherit the replaced count                      -- TestAKeyThatTurnsHotLateIsFound
@@ -1188,6 +1189,12 @@ Raising the bound is not weakening the gate: a timeout here exists to turn a han
 900s does that as well as 300s did. What 300s had additionally become was an
 undeclared performance budget, and an undeclared budget that fails closed is a
 gate people learn to ignore.
+
+**2026-11-15: raised to 1500s.** A single `-count=1` race pass of `tests` took
+816s on a branch and timed out once at 900s with `TestSimulation` four minutes
+in under load; the margin had gone to 1.1x. The rate is the one this section
+warned of: 527s at the end of M8, 560–770s across the post-v0.1 features, 816s
+now.
 
 ### The audit's own guard had a hole, and an M8 entry fell through it
 
