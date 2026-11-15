@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # By hand: `gh workflow run CI --ref <branch>`, e.g. after the workflow was
+  # disabled and pushes went unchecked.
+  workflow_dispatch:
 
 # A stale run tells you nothing useful once a newer commit exists.
 concurrency:
