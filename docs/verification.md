@@ -657,6 +657,10 @@ caught   a new key does not inherit the replaced count                      -- T
 caught   estimates are not scaled by the sample rate                        -- TestTheHottestKeyIsReportedFirst
 caught   hot-key tracking accepts any bound                                 -- TestHotKeysAreOffByDefaultAndBounded
 caught   a restore past its deadline installs the key                       -- TestRestoreAtInstallsTheDeadlineAsGiven
+caught   a restore holds the flush lock while it reads                      -- TestAFlushIsNotHeldUpByARestore
+caught   a restore ignores what was flushed while it read                   -- TestADeleteFlushedDuringARestoreIsNotUndone
+caught   a flush during a restore keeps nothing for it                      -- TestADeleteFlushedDuringARestoreIsNotUndone
+caught   a restore ignores the batch being flushed                          -- TestADeleteBeingFlushedDuringARestoreIsNotUndone
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
 caught   a replica delete leaves its digest behind                          -- TestTheReplicaDigestFollowsEveryWritePath

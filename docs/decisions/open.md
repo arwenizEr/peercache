@@ -1770,6 +1770,15 @@ So three suspected defects, feeding each other, none yet reproduced in a test:
   are client writes or restored keys being replicated again is not known; if
   client writes, replicas did not hold them either.
 
-**Next:** B first, as a test — a restore blocked in the store must not stop
-flushes — since it alone turns a crash into a loss far beyond the window. Then
-C, then A.
+**B, resolved.** A restore no longer takes the flush lock. What the lock
+protected — a record a flush moves out of pending while storage is read, seen
+in neither place by the restore — is now kept for it: the batch a flush is
+writing (`inflight`) and every batch flushed while a restore runs
+(`flushedDuring`) are laid over storage with pending. Restores still run one at
+a time (`restoreMu`), as before, so a restore holds no more memory than it did.
+`TestAFlushIsNotHeldUpByARestore` failed before (no flush while a restore read);
+`TestADeleteFlushedDuringARestoreIsNotUndone` and
+`TestADeleteBeingFlushedDuringARestoreIsNotUndone` pin the hazard, each caught
+by an audit entry that removes its half of the overlay.
+
+**Next:** C, then A.
