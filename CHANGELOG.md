@@ -16,8 +16,21 @@ change the public API.
   `New` now warns when a budget is set and the process has no memory limit.
   The shop's manifest sets `GOMEMLIMIT`.
 
+### Changed
+
+- With a persistent namespace's partition unable to restore from storage, a
+  read or read-modify-write of a key this node does not hold in memory now
+  returns `ErrActivationPending` instead of being answered from memory as
+  absent. Keys memory holds are still served, and Set and Delete still taken.
+  Open question 57.
+
 ### Fixed
 
+- A restore failed whenever a log it had listed was split and deleted before it
+  read it, which on a busy cluster was most of the time; a returning owner
+  then served its partition from empty memory and counted stock from zero. A
+  restore now lists again and reads only what is new until nothing has
+  vanished. Failed restores are logged. Open question 57.
 - Acknowledged read-modify-write operations were lost around ownership
   changes. A caller on a key's new owner skipped the activation delay that
   peers' requests wait out: its `Increment`, `SetIfAbsent` or compare-and-set

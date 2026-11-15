@@ -108,6 +108,7 @@ func run(cfg config) error {
 		peercache.WithTransport(tr),
 		peercache.WithListener(l),
 		peercache.WithMemoryBudget(512<<20),
+		peercache.WithLogger(stderrLogger{}),
 		// The shop calls CatchUp before it is ready (catchUpLoop), so peers'
 		// writes to keys it owns can wait for it: without this, kill -9 lost
 		// 1 to 3 stock decrements on 5 of 50 counters (docs/api.md,
@@ -615,6 +616,14 @@ func fail(w http.ResponseWriter, err error) {
 // logf writes one timestamped line to stderr, which is where a pod's log is
 // collected. The demo is an application, so it logs as one would; the library
 // it embeds takes a Logger and logs nothing by itself.
+// stderrLogger is the library's Logger, written where the shop's own lines go.
+type stderrLogger struct{}
+
+func (stderrLogger) Debug(string, ...any)        {}
+func (stderrLogger) Info(msg string, kv ...any)  { logf("peercache: %s %v", msg, kv) }
+func (stderrLogger) Warn(msg string, kv ...any)  { logf("peercache WARN: %s %v", msg, kv) }
+func (stderrLogger) Error(msg string, kv ...any) { logf("peercache ERROR: %s %v", msg, kv) }
+
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{time.Now().UTC().Format(time.RFC3339Nano)}, args...)...)
 }

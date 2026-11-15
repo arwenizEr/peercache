@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -180,5 +181,75 @@ func TestANonPositiveFlushIntervalIsRefused(t *testing.T) {
 		if _, err := ns.Get(context.Background(), "k"); !errors.Is(err, peercache.ErrInvalidOption) {
 			t.Fatalf("WithFlushInterval(%v): Get = %v, want ErrInvalidOption", d, err)
 		}
+	}
+}
+
+// staleListStore answers the first stale Lists of each prefix with the names
+// it had before, as a store being split under a reader's feet does: the logs
+// listed are gone by the time they are read.
+type staleListStore struct {
+	persist.BlobStore
+	mu        sync.Mutex
+	before    []string
+	remaining map[string]int
+}
+
+func (s *staleListStore) List(ctx context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	n := s.remaining[prefix]
+	if n > 0 {
+		s.remaining[prefix] = n - 1
+	}
+	s.mu.Unlock()
+	if n == 0 {
+		return s.BlobStore.List(ctx, prefix)
+	}
+	var out []string
+	for _, name := range s.before {
+		if strings.HasPrefix(name, prefix) {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+// TestARestoreOutlastsASplitterDeletingItsLogs: a restore lists the logs, and
+// by the time it reads one the splitter has moved it into partition segments
+// and deleted it. The records are not lost — listing again finds them in the
+// segments — so the restore must list again rather than fail. On kind it
+// failed, three tries at a time, dozens of times a minute, and a failed restore
+// left a restarted owner serving what it held, which was nothing (open
+// question 57).
+func TestARestoreOutlastsASplitterDeletingItsLogs(t *testing.T) {
+	inner := persist.Memory()
+	ctx := context.Background()
+	c, fc := newCache(t)
+	ns := c.Namespace("orders", peercache.WithPersistence(inner))
+	for i := 0; i < 20; i++ {
+		_ = ns.Set(ctx, fmt.Sprintf("k%d", i), []byte("v"), 0)
+	}
+	flushed(t, c, fc, 1)
+	before, err := inner.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	split(t, c, fc)
+	if err := c.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// More stale listings in a row than a restore once tried.
+	store := &staleListStore{BlobStore: inner, before: before, remaining: map[string]int{}}
+	for _, name := range before {
+		store.remaining[name[:strings.LastIndex(name, "/")+1]] = 5
+	}
+	c2, _ := newCache(t)
+	ns2 := c2.Namespace("orders", peercache.WithPersistence(store))
+	if v, err := ns2.Get(ctx, "k7"); err != nil || string(v) != "v" {
+		t.Fatalf("Get(k7) while the splitter deleted the logs being read = %q, %v; the restore "+
+			"must list again and find the records in the partition segments", v, err)
+	}
+	if got := c2.Stats().PersistRestoreFailures; got != 0 {
+		t.Fatalf("PersistRestoreFailures = %d; a log that moved is not a failure", got)
 	}
 }

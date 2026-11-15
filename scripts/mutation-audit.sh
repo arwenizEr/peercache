@@ -2945,6 +2945,40 @@ mutate "a drained node applies a peer's write" \
   '' \
   'TestADrainedNodeRefusesAPeerThatMissedTheDeparture$' ./tests
 
+# --- a restore outlasts the splitter, and a failed one does not guess (open question 57) ---
+
+mutate "a restore gives up on a log that moved" \
+  persistence.go \
+  '			f, err := p.load(ctx, name)
+			if gone(err) {
+				vanished = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			kept := f.Records[:0]' \
+  '			f, err := p.load(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			kept := f.Records[:0]' \
+  'TestARestoreOutlastsASplitterDeletingItsLogs$' ./tests
+mutate "an unrestored partition answers absent keys from memory" \
+  namespace.go \
+  '		if n.store.Exists(key) {
+			return nil // memory holds it: degraded, not wrong
+		}' \
+  '		return nil' \
+  'TestAnUnavailableStoreDegradesToMemory$' ./tests
+mutate "an unrestored partition refuses blind writes" \
+  namespace.go \
+  '	if err := n.awaitRestore(ctx, key); err != nil && !errors.Is(err, ErrActivationPending) {' \
+  '	if err := n.awaitRestore(ctx, key); err != nil {' \
+  'TestAnUnavailableStoreDegradesToMemory$' ./tests
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \

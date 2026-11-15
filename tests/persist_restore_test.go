@@ -158,11 +158,27 @@ func TestAnUnavailableStoreDegradesToMemory(t *testing.T) {
 	c, fc := newCache(t)
 	ns := c.Namespace("orders", peercache.WithPersistence(store))
 
-	if _, err := ns.Get(ctx, "k"); !errors.Is(err, peercache.ErrNotFound) {
-		t.Fatalf("Get with the store down = %v; want memory's answer, a miss", err)
+	// A key memory does not hold cannot be answered: it may be in the
+	// storage that is down. "Not found" would be a guess, and an Increment
+	// counting from zero one the restore could never correct (open
+	// question 57). Ask again.
+	if _, err := ns.Get(ctx, "k"); !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Get with the store down = %v; want ErrActivationPending, not a guess", err)
 	}
 	if got := c.Stats().PersistRestoreFailures; got != 1 {
 		t.Fatalf("PersistRestoreFailures = %d, want 1", got)
+	}
+	if _, err := ns.Increment(ctx, "k", 1, 0); !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Increment with the store down = %v; it would count from nothing", err)
+	}
+	// A blind write does not depend on what the key held, and outranks
+	// whatever a later restore reads: degraded, the namespace still takes it,
+	// and memory answers for it.
+	if err := ns.Set(ctx, "fresh", []byte("new"), 0); err != nil {
+		t.Fatalf("Set with the store down: %v; a blind write is still taken", err)
+	}
+	if v, err := ns.Get(ctx, "fresh"); err != nil || string(v) != "new" {
+		t.Fatalf("Get of a key memory holds, with the store down = %q, %v", v, err)
 	}
 
 	store.failing.Store(false)
@@ -195,8 +211,8 @@ func TestACorruptSegmentFailsTheRestore(t *testing.T) {
 
 	c, _ := newCache(t)
 	ns := c.Namespace("orders", peercache.WithPersistence(corruptingStore{inner}))
-	if _, err := ns.Get(ctx, "k"); !errors.Is(err, peercache.ErrNotFound) {
-		t.Fatalf("Get = %v", err)
+	if _, err := ns.Get(ctx, "k"); !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Get = %v; with the restore failed, a key memory does not hold is not answered", err)
 	}
 	if got := c.Stats().PersistRestoreFailures; got != 1 {
 		t.Fatalf("PersistRestoreFailures = %d; a corrupt segment must fail the restore", got)
