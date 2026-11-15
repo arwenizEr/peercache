@@ -595,6 +595,12 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	if err := n.awaitRestoreBlind(ctx, key); err != nil {
 		return err
 	}
+	// Again after the wait: see localUpdate. A blind write cannot read a
+	// wrong base, but applied after the key has left it would sit in an owned
+	// store that is no longer the key's, outside every rule.
+	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
+		return err
+	}
 	written := n.store.Put(key, n.encode(val), ttl)
 	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
@@ -789,6 +795,9 @@ func (n *namespace) Delete(ctx context.Context, key string) error {
 // start on their owner.
 func (n *namespace) localDelete(ctx context.Context, key string) error {
 	if err := n.awaitRestoreBlind(ctx, key); err != nil {
+		return err
+	}
+	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
 		return err
 	}
 	_, order := n.store.Remove(key)

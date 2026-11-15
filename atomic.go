@@ -154,7 +154,20 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 	}
 	var encoded []byte
 	var plainLen int
+	groupKey := n.groupKeyFor(key)
 	res, err := n.store.Update(key, func(stored []byte, ok bool) (store.Mutation, bool, error) {
+		// Ownership is checked again here, under the key's shard lock,
+		// because the check the caller passed came before awaitRestore,
+		// which can wait seconds. Demotion takes the key out of this store
+		// under the same lock, so the two are ordered: either this update
+		// runs first and the key leaves with its new value, or the key has
+		// left and this refuses. Without it an Increment that waited out a
+		// restore while the key moved back to its owner ran on the store the
+		// key had just left, counted from nothing, and replicated that to the
+		// owner with a newer order than the real count (open question 58).
+		if err := n.cache.stillOwner(groupKey); err != nil {
+			return store.Mutation{}, false, err
+		}
 		var cur []byte
 		if ok {
 			// Compared and parsed decoded: two framings of one value need
