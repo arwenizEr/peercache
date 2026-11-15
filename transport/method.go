@@ -33,9 +33,13 @@ const (
 	MethodDescribe   = "/peercache.v1.Peer/Describe"
 )
 
-// Methods is every method this transport serves, in the order they appear in
-// proto/peercache.proto.
-var Methods = []string{
+// Methods returns every method this transport serves, in the order they appear
+// in proto/peercache.proto. Each call returns a fresh slice: this was once an
+// exported variable, and a caller appending to it before New changed what the
+// server registered.
+func Methods() []string { return append([]string(nil), methods...) }
+
+var methods = []string{
 	MethodGet,
 	MethodReplicaGet,
 	MethodLoad,

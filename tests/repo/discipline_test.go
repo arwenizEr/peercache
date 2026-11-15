@@ -1409,3 +1409,44 @@ func TestNightlySoakFitsItsTimeouts(t *testing.T) {
 			minutes, stepTimeout)
 	}
 }
+
+// TestNoExportedMutableGlobals: a public package exports no variable but its
+// error sentinels. An exported variable can be assigned by any importer, and
+// two were: transport.Methods, which a caller appending to before New changed
+// what the server registered, and peercachetest.Epoch, whose assignment
+// compiled and did nothing. Values a caller may read are constants or
+// functions.
+func TestNoExportedMutableGlobals(t *testing.T) {
+	fset := token.NewFileSet()
+	walkGoFiles(t, func(path, content string) {
+		if strings.HasSuffix(path, "_test.go") {
+			return
+		}
+		for _, skip := range []string{"internal/", "examples/", "tests/", "scripts/"} {
+			if strings.HasPrefix(path, skip) || strings.Contains(path, "/"+skip) {
+				return
+			}
+		}
+		f, err := parser.ParseFile(fset, path, content, 0)
+		if err != nil {
+			t.Errorf("parsing %s: %v", path, err)
+			return
+		}
+		if f.Name.Name == "main" {
+			return
+		}
+		for _, decl := range f.Decls {
+			g, ok := decl.(*ast.GenDecl)
+			if !ok || g.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range g.Specs {
+				for _, name := range spec.(*ast.ValueSpec).Names {
+					if name.IsExported() && !strings.HasPrefix(name.Name, "Err") {
+						t.Errorf("%s exports variable %s; export a constant or a function instead", path, name.Name)
+					}
+				}
+			}
+		}
+	})
+}

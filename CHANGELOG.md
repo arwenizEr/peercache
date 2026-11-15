@@ -7,6 +7,14 @@ change the public API.
 
 ## [Unreleased]
 
+### Changed
+
+- `transport.Methods` and `peercachetest.Epoch` are functions, `Methods()` and
+  `Epoch()`, instead of exported variables: an importer could assign to them,
+  and appending to `transport.Methods` before `transport.New` changed what the
+  server registered. A repository test now keeps public packages from
+  exporting any variable but an error sentinel.
+
 ## [0.2.2] - 2026-11-15
 
 ### Fixed
