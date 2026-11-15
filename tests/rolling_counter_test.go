@@ -195,15 +195,18 @@ func TestANewOwnerCountsFromItsPromotedCopy(t *testing.T) {
 	if err := f.caches[f.ids[0]].Drain(ctx); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
+	// The departure is applied at once, the ownership table on the guard's
+	// own goroutine: wait for a survivor to see itself as the owner.
 	successor := ""
-	for _, id := range f.ids[1:] {
-		if d, err := f.caches[id].DescribeKey("stock", key); err == nil && d.Owner == id {
-			successor = id
+	waitFor(t, "a survivor to see itself as the key's owner", func() bool {
+		for _, id := range f.ids[1:] {
+			if d, err := f.caches[id].DescribeKey("stock", key); err == nil && d.Owner == id {
+				successor = id
+				return true
+			}
 		}
-	}
-	if successor == "" {
-		t.Fatal("no survivor sees itself as the key's owner after the drain")
-	}
+		return false
+	})
 	if v, err := open(successor).Increment(ctx, key, -1, 0); !errors.Is(err, peercache.ErrActivationPending) {
 		t.Fatalf("Increment through the new owner inside the activation delay = %d, %v; "+
 			"want ErrActivationPending", v, err)
