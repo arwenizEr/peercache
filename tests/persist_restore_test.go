@@ -71,6 +71,12 @@ func TestAColdStartRestoresWhatWasFlushed(t *testing.T) {
 	if got := c.Stats().PersistRestored; got < 2 {
 		t.Fatalf("PersistRestored = %d, want at least the two live keys", got)
 	}
+	// Reads cannot tell: the store hides an expired entry from Get. What
+	// they cannot see is the entry held, and replicated, all the same.
+	if got := c.Stats().OwnedKeys; got != 3 {
+		t.Fatalf("OwnedKeys = %d, want 3 (kept, rewritten, count); a restore installed "+
+			"a key that had expired or been deleted", got)
+	}
 }
 
 // TestARestoredKeysNextWriteOutranksItsHistory: the restoring node's clock is
