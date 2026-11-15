@@ -7,6 +7,12 @@ change the public API.
 
 ## [Unreleased]
 
+### Changed
+
+- `ReadyState`'s JSON field names are camelCase (`ready`, `reason`,
+  `caughtUp`, …) like the rest of `Description`'s, instead of Go's field names.
+  The debug handler's `/` and `/cluster` responses change accordingly.
+
 ## [0.2.2] - 2026-11-15
 
 ### Fixed
