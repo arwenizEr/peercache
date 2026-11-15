@@ -81,6 +81,9 @@ var realTimeFiles = []string{
 	// by definition. They wait with tickers and timers, never time.Sleep.
 	"examples/shop/main.go",
 	"examples/shop/cmd/shopload/main.go",
+	// One node of the cross-release cluster (decision 0041): real gossip and
+	// real gRPC between separate processes, waited on with tickers.
+	"tests/crossversion/main.go",
 }
 
 // exemptFromClockRule reports whether path may use the time package directly.

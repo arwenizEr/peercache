@@ -132,6 +132,29 @@ jobs:
       - name: test -race
         run: go test ./... -race -count=1 -timeout 30m
 
+  # A rolling upgrade runs two releases at once. This builds the latest tag
+  # and this change, runs them as one cluster on localhost over real gossip
+  # and gRPC, and fails if either cannot read what the other sends
+  # (docs/decisions/0041-cross-release-ci.md). Full history, for the tags.
+  crossversion:
+    name: beside the previous release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: node program vets
+        run: cd tests/crossversion && go vet ./...
+
+      - name: previous release and this change, one cluster
+        run: bash scripts/crossversion.sh
+
   bench:
     name: bench
     runs-on: ubuntu-latest

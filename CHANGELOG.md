@@ -9,6 +9,11 @@ change the public API.
 
 ### Added
 
+- A cross-release CI job: `scripts/crossversion.sh` runs this tree beside the
+  previous release tag over real gossip and gRPC — keys, batches, group calls
+  and a drain in both directions — so a wire change that breaks a rolling
+  upgrade fails the pull request. Adjacent releases are what is supported.
+  Decision 0041.
 - `WithHotKeyTracking(n)`: owners estimate their n most accessed keys (sampled
   Space-Saving, halved every minute) and report them by name in `Describe` and
   on the dashboard. Opt-in per namespace because it names keys, the one

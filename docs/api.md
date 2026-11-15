@@ -1115,6 +1115,19 @@ At RF≥2 the hand-off is mostly a latency optimisation — replication and
 promotion already cover the data. At RF=1 it is the only thing between a
 graceful shutdown and losing that node's entire share.
 
+### Mixed releases during a rolling upgrade
+
+A rolling upgrade runs two releases in one cluster. Adjacent releases
+interoperate: every change runs in CI beside the previous release tag, over
+real gossip and gRPC, writing and reading each other's keys, batches and
+group calls and draining across releases (`scripts/crossversion.sh`, decision
+0041). Two releases apart is not promised; upgrade one release at a time.
+
+What a mixed cluster cannot do is use what the earlier release lacks: a
+function only the new binary registers fails with `ErrFuncNotRegistered` on an
+old owner, an RPC an old peer does not know with `ErrNotImplemented`, and a
+batch load is answered by an old owner as a plain `BatchGet`.
+
 ---
 
 ### `WithMemoryBudget` — shedding instead of being OOM-killed
