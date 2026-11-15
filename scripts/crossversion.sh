@@ -8,9 +8,11 @@
 # previous-ref defaults to the latest tag before HEAD. The node program
 # is tests/crossversion, built once against each tree; it writes keys, a batch
 # and group state, reads every other node's, then one node drains and the rest
-# read everything again. Two clusters run: one where the previous release is
-# the minority and drains, one where this tree is the minority and drains, so
-# each release both sends and receives the hand-off stream.
+# read everything again. Two mixed clusters run: one where the previous
+# release is the minority and drains, one where this tree is the minority and
+# drains, so each release both sends and receives the hand-off stream. Each
+# also persists a namespace to a directory of its own; two more clusters then
+# start cold over those, one per release alone, and read back what both wrote.
 #
 # internal/wire's compat tests pin one message at a time against a hand-copied
 # earlier shape; this checks the whole conversation against the real earlier
