@@ -2,6 +2,7 @@ package peercache
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -453,7 +454,20 @@ func logPrefix(namespace string) string {
 // logName names one flush's log object by the largest order it holds and its
 // writer. A writer's orders never repeat, so neither do its log names.
 func logName(namespace string, maxOrder uint64, writer string) string {
-	return fmt.Sprintf("%sseg-%016x-%s.bin", logPrefix(namespace), maxOrder, hex.EncodeToString([]byte(writer)))
+	return fmt.Sprintf("%sseg-%016x-%s-%s.bin", logPrefix(namespace), maxOrder, hex.EncodeToString([]byte(writer)), nameNonce())
+}
+
+// nameNonce makes a log name unique even when its order and writer are not.
+// They usually are: a writer's orders never repeat. But a node restarted under
+// the same name, whose clock has not yet observed its predecessor's last
+// order, can issue it again, and the second log would replace the first in
+// storage with every record the first held gone. Two caches in one test did.
+func nameNonce() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "0"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // restoreRetry is how long after a failed restore a partition is tried again.
@@ -539,6 +553,13 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 // because the write it made outranks the record it would restore. On kind a
 // restarted owner whose restore failed served a stock counter from zero and
 // lost every decrement before (open question 57). See namespace.awaitRestore.
+//
+// That holds for a blind write too. A Set looks as if it cannot be wrong — it
+// reads nothing — but its order comes from this node's clock, which after a
+// failed restore has observed none of the records storage holds, and can be
+// behind them: the next restore would then lay the stored value over the Set
+// and lose it. A test caught exactly that, the new write's order equal to the
+// record's, so the write is refused like the rest.
 var errPartitionUnrestored = errors.New("peercache: partition not restored from storage")
 
 // restorePartition runs one restore of part and publishes its outcome.

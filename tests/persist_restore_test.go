@@ -171,14 +171,11 @@ func TestAnUnavailableStoreDegradesToMemory(t *testing.T) {
 	if _, err := ns.Increment(ctx, "k", 1, 0); !errors.Is(err, peercache.ErrActivationPending) {
 		t.Fatalf("Increment with the store down = %v; it would count from nothing", err)
 	}
-	// A blind write does not depend on what the key held, and outranks
-	// whatever a later restore reads: degraded, the namespace still takes it,
-	// and memory answers for it.
-	if err := ns.Set(ctx, "fresh", []byte("new"), 0); err != nil {
-		t.Fatalf("Set with the store down: %v; a blind write is still taken", err)
-	}
-	if v, err := ns.Get(ctx, "fresh"); err != nil || string(v) != "new" {
-		t.Fatalf("Get of a key memory holds, with the store down = %q, %v", v, err)
+	// Nor a blind write: its order comes from a clock that has seen none of
+	// storage's records and may be behind them, and the next restore would
+	// lay the stored value over it.
+	if err := ns.Set(ctx, "k", []byte("new"), 0); !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Set with the store down = %v; a restore could undo it", err)
 	}
 
 	store.failing.Store(false)
