@@ -2906,6 +2906,17 @@ mutate "a restore ignores the batch being flushed" \
 ' \
   '' \
   'TestADeleteBeingFlushedDuringARestoreIsNotUndone$' ./tests
+mutate "a compaction holds up the flusher" \
+  persistence.go \
+  '			p.compactOwned(ctx)
+			cancel()
+		case <-split.C():' \
+  '			p.flushMu.Lock()
+			p.compactOwned(ctx)
+			p.flushMu.Unlock()
+			cancel()
+		case <-split.C():' \
+  'TestAFlushIsNotHeldUpByACompaction$' ./tests
 
 mutate "a budget without a memory limit is not warned about"   peercache.go   '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {'   '	if false {'   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
