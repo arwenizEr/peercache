@@ -645,7 +645,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		if n.underFactor(len(targets)) {
 			return n.refuseUnderFactor(len(targets))
 		}
-		n.countDegraded(len(targets))
+		n.countDegraded(len(targets), degradedByView)
 		return nil
 	}
 	if err := n.cache.replicator.replicate(ctx, n.opts.SyncReplication, replicaWork{
@@ -666,7 +666,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		// M16's real-world run showed an application unable to tell an
 		// applied Increment from a refused one, and so decrementing stock
 		// twice on a retry (docs/decisions/open.md question 37, option 2).
-		n.countDegraded(0)
+		n.countDegraded(0, degradedByFailure)
 		return fmt.Errorf("%w: %w", ErrUnderReplicated, err)
 	}
 	// The copies that could be placed are placed before refusing, so a
@@ -675,7 +675,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 	if n.underFactor(len(targets)) {
 		return n.refuseUnderFactor(len(targets))
 	}
-	n.countDegraded(len(targets))
+	n.countDegraded(len(targets), degradedByView)
 	return nil
 }
 
@@ -727,7 +727,16 @@ func (n *namespace) refuseUnderFactor(placed int) error {
 // `fanOut` return an error, so the write is not acknowledged at all. The only
 // way to be acknowledged below the factor is for the targets to be missing from
 // the ranking in the first place, which is exactly the shrunken-view case.
-func (n *namespace) countDegraded(placed int) {
+// Why a synchronous write was held below its factor, for the one log line
+// countDegraded writes. On kind the line blamed a small membership view for
+// every one, including writes whose replicas a rolling restart had made
+// briefly unreachable while the view held all five members.
+const (
+	degradedByView    = "this node's membership view is too small to place the copies its namespace asks for"
+	degradedByFailure = "replicas in this node's view did not take the copy; it is held on this node until they are written again or catch up"
+)
+
+func (n *namespace) countDegraded(placed int, why string) {
 	if !n.opts.SyncReplication || n.opts.ReplicationFactor < 2 {
 		return
 	}
@@ -746,7 +755,7 @@ func (n *namespace) countDegraded(placed int) {
 			"replication_factor", n.opts.ReplicationFactor,
 			"copies", 1+placed,
 			"members", n.cache.memberCount(),
-			"detail", "this node's membership view is too small to place the copies its namespace asks for; see Stats().DegradedWrites and peercache_degraded_writes_total")
+			"detail", why+"; see Stats().DegradedWrites and peercache_degraded_writes_total")
 	}
 }
 
