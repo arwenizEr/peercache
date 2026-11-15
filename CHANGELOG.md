@@ -7,6 +7,13 @@ change the public API.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+Validated on a five-pod kind cluster under kill, rolling-restart and partition
+scenarios (`docs/m16-results.md`), and run beside 0.1.0 over real gRPC. It
+removes two exported symbols (see Removed); a minor version may do that
+before 1.0.
+
 ### Added
 
 - A cross-release CI job: `scripts/crossversion.sh` runs this tree beside the
@@ -278,5 +285,6 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/arwenizEr/peercache/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arwenizEr/peercache/releases/tag/v0.1.0
