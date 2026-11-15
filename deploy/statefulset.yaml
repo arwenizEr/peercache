@@ -165,8 +165,9 @@ spec:
           # inherits when a peer fails — a pod sized for its own share alone is
           # OOM-killed by its first failover.
           #
-          # Set WithMemoryBudget to about three quarters of the memory limit
-          # so the node sheds before it is OOM-killed. See deploy/README.md.
+          # Set GOMEMLIMIT to about nine tenths of the memory limit and
+          # WithMemoryBudget to about half of it, so the node sheds, and the
+          # runtime collects, before it is OOM-killed. See deploy/README.md.
           #
           # resources:
           #   requests: {memory: 2Gi, cpu: 500m}

@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/arwenizEr/peercache"
+	"github.com/arwenizEr/peercache/internal/clock"
 	"github.com/arwenizEr/peercache/internal/testkit"
 )
 
@@ -528,5 +532,64 @@ func TestAFailoverCascadeStaysWithinBudget(t *testing.T) {
 	if shedReplicas+shedOwned == 0 {
 		t.Fatal("the working set was twice what two survivors' budgets hold and nothing was " +
 			"shed; the cascade this test is about was not constructed")
+	}
+}
+
+// warnings records the messages a cache logs at Warn.
+type warnings struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (w *warnings) Debug(string, ...any) {}
+func (w *warnings) Info(string, ...any)  {}
+func (w *warnings) Error(string, ...any) {}
+func (w *warnings) Warn(msg string, _ ...any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.msgs = append(w.msgs, msg)
+}
+
+func (w *warnings) said(msg string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range w.msgs {
+		if m == msg {
+			return true
+		}
+	}
+	return false
+}
+
+// TestABudgetWithoutAMemoryLimitWarns: the budget bounds the data tiers, not
+// the process, and without GOMEMLIMIT the heap may reach twice its live size
+// before a collection. On kind that OOM-killed a pod budgeted at half its
+// limit (open question 55). New says so; with a limit set, it says nothing.
+func TestABudgetWithoutAMemoryLimitWarns(t *testing.T) {
+	limit := debug.SetMemoryLimit(-1)
+	defer debug.SetMemoryLimit(limit)
+	const msg = "memory budget set without a Go memory limit"
+	open := func(opts ...peercache.Option) *warnings {
+		w := &warnings{}
+		c, err := peercache.New(append([]peercache.Option{
+			peercache.WithNodeID("n0"), peercache.WithClock(clock.NewFake(clock.Epoch)), peercache.WithLogger(w),
+		}, opts...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Close(context.Background())
+		return w
+	}
+
+	debug.SetMemoryLimit(math.MaxInt64)
+	if w := open(peercache.WithMemoryBudget(64 << 20)); !w.said(msg) {
+		t.Fatal("a budget with no memory limit was not warned about")
+	}
+	if w := open(); w.said(msg) {
+		t.Fatal("warned about a memory limit with no budget set")
+	}
+	debug.SetMemoryLimit(1 << 30)
+	if w := open(peercache.WithMemoryBudget(64 << 20)); w.said(msg) {
+		t.Fatal("warned although a memory limit is set")
 	}
 }

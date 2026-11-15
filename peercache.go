@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -272,6 +274,16 @@ func New(opts ...Option) (Cache, error) {
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
 	c.pressure = newPressure(c, resolved.MemoryBudget)
+	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {
+		// Said, not fixed: the memory limit is the process's to set, and a
+		// library that set it would override the application's choice.
+		resolved.Logger.Warn("memory budget set without a Go memory limit",
+			"budget", resolved.MemoryBudget,
+			"detail", "the budget counts the data tiers, not the heap around them, and without "+
+				"GOMEMLIMIT the heap may reach twice its live size before a collection; on kind a "+
+				"pod budgeted at 512 MiB passed its 1 GiB limit. Set GOMEMLIMIT to about nine tenths "+
+				"of the container limit and the budget to about half of it; see WithMemoryBudget")
+	}
 	c.probation = probation
 	if resolved.LatencyHistograms {
 		c.remoteLatency = &metrics.Histogram{}

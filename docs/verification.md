@@ -662,6 +662,7 @@ caught   a restore ignores what was flushed while it read                   -- T
 caught   a flush during a restore keeps nothing for it                      -- TestADeleteFlushedDuringARestoreIsNotUndone
 caught   a restore ignores the batch being flushed                          -- TestADeleteBeingFlushedDuringARestoreIsNotUndone
 caught   a compaction holds up the flusher                                  -- TestAFlushIsNotHeldUpByACompaction
+caught   a budget without a memory limit is not warned about            -- TestABudgetWithoutAMemoryLimitWarns
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
 caught   a replica delete leaves its digest behind                          -- TestTheReplicaDigestFollowsEveryWritePath

@@ -190,9 +190,16 @@ func WithGroupIdleTimeout(d time.Duration) Option {
 // It counts the owned stores, the replica store and the L1 tier, at their keys'
 // and values' sizes plus a per-entry overhead estimated on the high side. It
 // does not count activated groups, which [WithMaxActiveGroups] bounds, or
-// buffers in flight. Set it below the container's memory limit with room for
-// those and for the Go runtime: a budget near the limit is an OOM kill with
-// extra steps.
+// anything around the stores: decoded keys still referenced, RPC buffers,
+// restore and catch-up pages, map growth. Measured on kind at a million
+// orders, the heap in use was about 1.55 times what the budget counted.
+//
+// It bounds the data, not the process. The Go runtime decides when to collect,
+// and without a memory limit it lets the heap grow to twice its live size
+// first. Run with GOMEMLIMIT at about nine tenths of the container's memory
+// limit and set the budget to about half of it; a pod budgeted at 512 MiB
+// with a 1 GiB limit and no GOMEMLIMIT was OOM-killed. [New] logs a warning
+// when a budget is set and the process has no memory limit.
 //
 // Over budget, the node sheds to nine tenths of it, cheapest tier first: the L1
 // tier whole, then replicas, then owned data. Shedding a replica lowers that

@@ -1133,17 +1133,26 @@ batch load is answered by an old owner as a plain `BatchGet`.
 ### `WithMemoryBudget` — shedding instead of being OOM-killed
 
 ```go
+// A 4 GiB container, run with GOMEMLIMIT=3600MiB.
 cache, err := peercache.New(
     peercache.WithNodeID(podName),
-    peercache.WithMemoryBudget(3 << 30), // under a 4 GiB container limit
+    peercache.WithMemoryBudget(2 << 30), // half the container limit
 )
 ```
 
 Caps the bytes the owned stores, the replica store and the L1 tier may hold:
 keys and values, plus a per-entry overhead estimated on the high side. Activated
-groups are not counted — `WithMaxActiveGroups` bounds those — and neither are
-the Go runtime or buffers in flight, so leave room for them below the container
-limit. Off by default.
+groups are not counted — `WithMaxActiveGroups` bounds those — and neither is
+anything around the stores: decoded keys still referenced, RPC buffers, restore
+and catch-up pages, map growth. Off by default.
+
+It bounds the data, not the process. On kind at a million orders the heap in
+use was about 1.55 times what the budget counted, and without a memory limit
+the Go runtime lets the heap reach twice its live size before collecting: a
+pod budgeted at 512 MiB under a 1 GiB limit, without `GOMEMLIMIT`, was
+OOM-killed (open question 55). Run with `GOMEMLIMIT` at about nine tenths of
+the container limit and the budget at about half of it. `New` logs a warning
+when a budget is set and the process has no memory limit.
 
 Over budget, the node sheds down to nine tenths of it, cheapest first:
 
