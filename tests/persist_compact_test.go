@@ -272,3 +272,34 @@ func TestAFailedSnapshotDeletesNothing(t *testing.T) {
 		t.Fatalf("%d segments left after a failed snapshot, want all %d", len(segs), compactAfter)
 	}
 }
+
+// TestAFlushIsNotHeldUpByACompaction: a compaction reading a partition must
+// not stop this node's flushes. They shared a goroutine, and on kind, with a
+// million orders, every compaction tick held flushes off long enough for
+// pending records to rise tenfold (open question 55) — acknowledged writes a
+// crash in that window loses, beyond the documented one flush interval.
+func TestAFlushIsNotHeldUpByACompaction(t *testing.T) {
+	store := newHeldStore()
+	c, fc := newCache(t)
+	ns := c.Namespace("orders", peercache.WithPersistence(store))
+	writeFlushed(t, c, fc, ns, "k", compactAfter)
+
+	// The compaction stops reading the partition's segments.
+	store.hold()
+	defer store.open()
+	toCompactionTick(fc)
+	waitFor(t, "the compaction to be reading storage", func() bool { return store.waiting.Load() > 0 })
+
+	if err := ns.Set(context.Background(), "k", []byte("during"), 0); err != nil {
+		t.Fatalf("Set while a compaction reads: %v", err)
+	}
+	before := c.Stats()
+	if before.PersistPending == 0 {
+		t.Fatal("the write is not pending; the test would prove nothing")
+	}
+	fc.Advance(flushInterval)
+	waitFor(t, "a flush while a compaction is reading storage", func() bool {
+		s := c.Stats()
+		return s.PersistFlushes > before.PersistFlushes && s.PersistPending == 0
+	})
+}
