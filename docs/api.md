@@ -1386,6 +1386,20 @@ built on the same pieces. The package's tests are its examples
 
 ## Observability
 
+### Hot keys — `WithHotKeyTracking`
+
+```go
+catalog := cache.Namespace("catalog", peercache.WithHotKeyTracking(20))
+```
+
+Each owner estimates the keys it serves most — its own operations and its
+peers' forwarded ones — and reports the top n in `Describe` and on the
+dashboard, merged across the cluster. Sampled one access in 16 into a fixed set
+of counters (Space-Saving), halved every minute so the list is about now; a
+cached read costs ~6 ns more. **It names keys**, the one thing the rest of the
+debug handler never does, so enable it only on namespaces whose keys may be
+read by whoever reaches the debug port. Decision 0040.
+
 ### The dashboard
 
 Mount the debug handler (`admin.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))`)

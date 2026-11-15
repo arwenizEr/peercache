@@ -55,9 +55,21 @@ type NamespaceDescription struct {
 	// Absences is the number of keys this node remembers its loader found
 	// missing, in a namespace opened with WithNegativeCaching.
 	Absences int `json:"absences,omitempty"`
+	// HotKeys is this node's estimate of the keys it serves most, highest
+	// first, in a namespace opened with WithHotKeyTracking — and only then:
+	// it names keys, which nothing else here does.
+	HotKeys []HotKey `json:"hotKeys,omitempty"`
 
 	// Persistence is set only for a namespace opened with WithPersistence.
 	Persistence *PersistenceDescription `json:"persistence,omitempty"`
+}
+
+// HotKey is one key a node serves often: an estimate of its accesses over
+// roughly the last minute or two, sampled one in 16, so a count is good to
+// about that granularity.
+type HotKey struct {
+	Key      string `json:"key"`
+	Accesses uint64 `json:"accesses"`
 }
 
 // PersistenceDescription is one persistent namespace's write-behind state.
@@ -139,6 +151,11 @@ func (c *cache) describeNamespace(ns *namespace) NamespaceDescription {
 	if ns.store != nil {
 		nd.OwnedKeys = ns.store.Stats().Entries
 		nd.Absences = ns.store.Absences()
+	}
+	if ns.hot != nil {
+		for _, k := range ns.hot.Top() {
+			nd.HotKeys = append(nd.HotKeys, HotKey{Key: k.Key, Accesses: k.Estimate})
+		}
 	}
 	if ns.l1 != nil {
 		nd.L1Entries = int64(ns.l1.Len())

@@ -67,6 +67,37 @@ func BenchmarkNamespaceGet(b *testing.B) {
 	}
 }
 
+// BenchmarkNamespaceGetHotKeys is a cached read in a namespace with
+// WithHotKeyTracking(20), over 1,024 keys: the cost of counting accesses,
+// which one read in 16 pays with a lock and the rest with an atomic add.
+// BenchmarkNamespaceGetSmallPlain is the same without tracking.
+func BenchmarkNamespaceGetHotKeys(b *testing.B) {
+	benchGetTracked(b, peercache.WithHotKeyTracking(20))
+}
+
+// BenchmarkNamespaceGetSmallPlain is BenchmarkNamespaceGetHotKeys without the
+// option, for comparison in one sitting.
+func BenchmarkNamespaceGetSmallPlain(b *testing.B) {
+	benchGetTracked(b)
+}
+
+func benchGetTracked(b *testing.B, opts ...peercache.NamespaceOption) {
+	c := benchCache(b)
+	ns := c.Namespace("bench", opts...)
+	ctx := context.Background()
+	ks := benchKeys(1024)
+	for _, k := range ks {
+		_ = ns.Set(ctx, k, make([]byte, 64), 0)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ns.Get(ctx, ks[i%len(ks)]); err != nil {
+			b.Fatalf("Get: %v", err)
+		}
+	}
+}
+
 // BenchmarkNamespaceGetSmall isolates the per-operation overhead from the
 // memory-hierarchy cost: at this size the whole working set is in cache, so
 // what remains is the code path itself.

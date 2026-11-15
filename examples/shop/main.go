@@ -281,6 +281,9 @@ func newShop(cache peercache.Cache, store persist.BlobStore) (*shop, error) {
 			peercache.WithReplicationFactor(3),
 			peercache.WithReplicaReads(),
 			peercache.WithL1TTL(2*time.Second),
+			// Product IDs are not personal data, so the dashboard may name
+			// the hot ones (docs/decisions/0040-hot-keys.md).
+			peercache.WithHotKeyTracking(10),
 			peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
 				return []byte(`{"id":"` + key + `","price":100}`), 0, nil
 			})),
