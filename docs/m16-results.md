@@ -23,6 +23,44 @@ reads), MinIO, 32 load-generator workers.
 - **Forks:** `peercache_split_brain_detections_total`, summed over the pods at
   the check. A pod the scenario restarted reports only what it counted since.
 
+## Run of 2026-11-15 (v0.2.1 candidate, fb059b7), fresh data
+
+The first run in which every scenario, the partition included, holds every
+invariant: no order lost, no stock count wrong, no fork.
+
+| Scenario | Disruption | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
+|---|---|---|---|---|---|---|
+| steady | none, 60 s | 122,606 | 0 | 0 | 50 / 0 / 0 | 0 |
+| kill9 | SIGKILL one pod mid-load | 185,339 | 0 | 50 | 44 / 6 / 0 | 0 |
+| rolling | `rollout restart` of all five pods under load | 202,425 | 0 | 185 | 42 / 8 / 0 | 0 |
+| partition | one worker (two pods) cut off for 60 s, then healed | 107,644 | 0 | 59 | 43 / 7 / 0 | 0 |
+| coldstart | SIGKILL every pod at once | 42,631 | 0 | 0 | 50 / 0 / 0 | 0 |
+| minio | object store unreachable for 60 s | 278,546 | 0 | 0 | 50 / 0 / 0 | 0 |
+| minio, then cold start | every pod restarted after the outage, restored from MinIO | 278,546 | 0 | — | 50 / 0 / 0 | — |
+
+Steady: a catalog update visible on all five pods at p50 3 ms, max 6 ms; a rate
+limit of 6,000 admitted exactly 6,000. The host was shared with other work for
+part of the day (CPU near 90%), so throughput is not comparable between runs;
+the invariants are.
+
+### How it got here from v0.2.0
+
+v0.2.0 passed this suite on fresh data. Run again on the data two days of runs
+had left, and then repeatedly through rolling restarts, it lost acknowledged
+writes by four routes, each found on kind and each fixed with a test that
+failed before:
+
+| | Found as | Cause | Open question |
+|---|---|---|---|
+| F13 | OOM kill during a rolling restart over ~600k orders a pod; ~54,000 orders lost | a restore held the flush lock, compaction ran on the flusher's goroutine — pending records piled up past the one-second window; and the memory budget does not bound the heap (now: GOMEMLIMIT guidance and a warning) | 55 |
+| F14 | every counter one restarted pod owned off by thousands | local callers skipped the activation delay; a drained node kept serving | 56 |
+| F15 | a counter reset to its initial stock as its owner returned | restores failing on logs the splitter deleted; a failed restore answered absent keys from memory | 57 |
+| F16 | the same, about one rolling restart in six | a write that waited for a restore was applied after its key had moved, and replicated to the new owner with a newer order | 58 |
+
+F15 and F16 were found by sampling every counter through a rolling restart and,
+for F16, a temporary build logging every store write of the affected keys with
+its caller. After F16, six traced rolling restarts in a row held every count.
+
 ## Run of 2026-11-15 (v0.2.0, 4d8e4d2), fresh data
 
 MinIO emptied and every pod restarted before the run, as on 2026-11-14.

@@ -7,6 +7,17 @@ change the public API.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-15
+
+Fixes for four ways v0.2.0 could lose acknowledged writes, all found on the
+kind cluster — over accumulated data, through rolling restarts, and with a
+pod OOM-killed — and each covered by a test that failed before. With them,
+every M16 scenario holds every invariant, the partition included
+(`docs/m16-results.md`). Two behaviour changes: the activation delay now holds
+for a node's own callers as well as its peers', and a persistent partition
+that could not be restored refuses operations on keys this node does not hold
+rather than answering them from memory.
+
 ### Changed
 
 - `WithMemoryBudget`'s guidance: about half the container limit, with
@@ -341,6 +352,7 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/arwenizEr/peercache/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arwenizEr/peercache/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arwenizEr/peercache/releases/tag/v0.1.0
