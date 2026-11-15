@@ -1746,10 +1746,30 @@ rolling restart OOM-killed one pod five times (1 GiB limit, 512 MiB budget) and
 54,000 acknowledged orders then read back 404. The same scenarios on fresh data
 lose nothing.
 
-**Not yet known:** whether the loss needs the OOM (a crashloop taking a second
-holder down alongside the restarting one) or follows from shedding under the
-budget itself; and what the budget does not count — restore, catch-up pages,
-the replica store, or allocation churn the budget cannot see.
+**What Prometheus recorded** for the lossy rolling run (shop-4, the pod that
+was OOM-killed, 08:10-08:15 UTC):
 
-**Next:** reproduce on kind with a controlled volume, one variable at a time;
-then each half as a named test. Nothing is decided until it is reproduced.
+- nothing was shed — no L1, replica or owned shedding on any pod. The budget
+  counted at most 306 MB on shop-4 while the process passed 1 GiB, so what
+  killed it is memory the budget does not see;
+- shop-4 restored from storage at up to 75,000 keys/s after each restart;
+- in the same minutes its flushes fell from ~60 a minute to 1-7, and pending
+  records rose to 58,167 — then the OOM kill took them. 54,000 orders were
+  lost. The documented window is one flush interval (1 s); this was the length
+  of a restore;
+- it counted up to ~11,000 degraded writes a second: acknowledged with fewer
+  copies than RF 3 asked for.
+
+So three suspected defects, feeding each other, none yet reproduced in a test:
+
+- **A.** A restore's memory is unbounded and outside the budget.
+- **B.** A restore holds the flush lock while it reads (persistence.go says
+  so), so pending records — acknowledged writes — accumulate for the length of
+  the restore, and a crash in it loses them all.
+- **C.** Writes during the restore were acknowledged degraded. Whether those
+  are client writes or restored keys being replicated again is not known; if
+  client writes, replicas did not hold them either.
+
+**Next:** B first, as a test — a restore blocked in the store must not stop
+flushes — since it alone turns a crash into a loss far beyond the window. Then
+C, then A.
