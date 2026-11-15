@@ -1121,7 +1121,9 @@ A rolling upgrade runs two releases in one cluster. Adjacent releases
 interoperate: every change runs in CI beside the previous release tag, over
 real gossip and gRPC, writing and reading each other's keys, batches and
 group calls and draining across releases (`scripts/crossversion.sh`, decision
-0041). Two releases apart is not promised; upgrade one release at a time.
+0041). The same run checks persisted storage: a cold start of either release
+reads back what a cluster of both wrote. Two releases apart is not promised;
+upgrade one release at a time.
 
 What a mixed cluster cannot do is use what the earlier release lacks: a
 function only the new binary registers fails with `ErrFuncNotRegistered` on an

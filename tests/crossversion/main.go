@@ -31,6 +31,7 @@ import (
 
 	"github.com/arwenizEr/peercache"
 	"github.com/arwenizEr/peercache/membership"
+	"github.com/arwenizEr/peercache/persist"
 	"github.com/arwenizEr/peercache/transport"
 )
 
@@ -45,6 +46,11 @@ type config struct {
 	dir     string
 	keys    int
 	timeout time.Duration
+	// store is a directory every node persists the "durable" namespace to;
+	// empty for none. writers, when set, makes this a restore node: it writes
+	// nothing and checks that what those nodes persisted reads back.
+	store   string
+	writers []string
 }
 
 func main() {
@@ -60,8 +66,14 @@ func main() {
 	flag.StringVar(&cfg.dir, "dir", "", "shared directory for marker files")
 	flag.IntVar(&cfg.keys, "keys", 200, "keys each node writes")
 	flag.DurationVar(&cfg.timeout, "timeout", 90*time.Second, "how long any one phase may take")
+	flag.StringVar(&cfg.store, "store", "", "directory the durable namespace persists to")
+	var writers string
+	flag.StringVar(&writers, "verify-writers", "", "comma-separated ids whose persisted keys to read back, writing nothing")
 	flag.Parse()
 	cfg.peers = strings.Split(peers, ",")
+	if writers != "" {
+		cfg.writers = strings.Split(writers, ",")
+	}
 	if err := run(cfg); err != nil {
 		_ = mark(cfg, "failed")
 		fmt.Fprintf(os.Stderr, "%s (%s): FAIL: %v\n", cfg.id, cfg.label, err)
@@ -121,6 +133,17 @@ func run(cfg config) error {
 		return err
 	}
 	kv := cache.Namespace("kv", peercache.WithReplicationFactor(2))
+	// Persisted by every node of whichever release to one directory, then
+	// read back by a cluster of the other: the storage format crosses
+	// releases as the wire does.
+	var durable peercache.Namespace
+	if cfg.store != "" {
+		bs, err := persist.Dir(cfg.store)
+		if err != nil {
+			return fmt.Errorf("persist.Dir: %w", err)
+		}
+		durable = cache.Namespace("durable", peercache.WithReplicationFactor(2), peercache.WithPersistence(bs))
+	}
 
 	if cfg.seed != "" {
 		if err := poll(ctx, cfg.timeout, "joining "+cfg.seed, func() (bool, error) {
@@ -138,6 +161,21 @@ func run(cfg config) error {
 	if err := waitAll(ctx, cfg, "joined", cfg.peers); err != nil {
 		return err
 	}
+	if len(cfg.writers) > 0 {
+		if durable == nil {
+			return errors.New("-verify-writers needs -store")
+		}
+		if err := within(ctx, cfg.timeout, func(ctx context.Context) error {
+			return checkKeys(ctx, cfg, durable, cfg.writers)
+		}); err != nil {
+			return fmt.Errorf("reading what %v persisted: %w", cfg.writers, err)
+		}
+		fmt.Printf("%s (%s): read every key %v persisted\n", cfg.id, cfg.label, cfg.writers)
+		if err := mark(cfg, "checked"); err != nil {
+			return err
+		}
+		return waitAll(ctx, cfg, "checked", cfg.peers)
+	}
 
 	// Writes: plain keys, a batch, and a group call per key group.
 	if err := within(ctx, cfg.timeout, func(ctx context.Context) error {
@@ -154,6 +192,13 @@ func run(cfg config) error {
 		}
 		if err := kv.BatchSet(ctx, batch, 0); err != nil {
 			return fmt.Errorf("BatchSet: %w", err)
+		}
+		if durable != nil {
+			for i := 0; i < cfg.keys; i++ {
+				if err := durable.Set(ctx, key(cfg.id, i), value(cfg.id, i), 0); err != nil {
+					return fmt.Errorf("durable set %s: %w", key(cfg.id, i), err)
+				}
+			}
 		}
 		return nil
 	}); err != nil {
