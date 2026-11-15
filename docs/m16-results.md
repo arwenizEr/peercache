@@ -23,6 +23,52 @@ reads), MinIO, 32 load-generator workers.
 - **Forks:** `peercache_split_brain_detections_total`, summed over the pods at
   the check. A pod the scenario restarted reports only what it counted since.
 
+## Run of 2026-11-15 (v0.2.0, 4d8e4d2), fresh data
+
+MinIO emptied and every pod restarted before the run, as on 2026-11-14.
+
+| Scenario | Disruption | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
+|---|---|---|---|---|---|---|
+| steady | none, 60 s | 136,750 | 0 | 0 | 50 / 0 / 0 | 0 |
+| kill9 | SIGKILL one pod mid-load | 165,545 | 0 | 45 | 46 / 4 / 0 | 0 |
+| rolling | `rollout restart` of all five pods under load | 310,204 | 0 | 126 | 24 / 26 / 0 | 0 |
+| partition | one worker (two pods) cut off for 60 s, then healed | 199,831 | 0 | 123 | 38 / 12 / 0 | 0 |
+| coldstart | SIGKILL every pod at once | 65,906 | 0 | 0 | 50 / 0 / 0 | 0 |
+| minio | object store unreachable for 60 s | 252,401 | 0 | 0 | 50 / 0 / 0 | 0 |
+| minio, then cold start | every pod restarted after the outage, restored from MinIO | 252,401 | 0 | — | 50 / 0 / 0 | — |
+
+Steady: a catalog update visible on all five pods at p50 15 ms, max 15 ms over
+30 updates; a rate limit of 6,000 admitted exactly 6,000. The partition counted
+no forks and no wrong stock this time (33 and 1 on 2026-11-14): the window is
+the same, this run's writes simply did not race inside it.
+
+## The same release on accumulated data — F13, open
+
+Run first, on the cluster as two days of runs had left it: `orders` has no TTL
+and is persisted, so every run's orders were still there — 603,073 owned on
+shop-0 alone. Each pod has a 1 GiB limit and `WithMemoryBudget(512 MiB)`.
+
+| Scenario | Acknowledged | Lost | Stock wrong |
+|---|---|---|---|
+| steady, kill9, minio | 16,459 / 17,940 / 192,734 | 0 | 0 |
+| rolling | 60,045 | 35 | 7 |
+| partition | 98,195 | 6,134 | 9 |
+| coldstart (after the partition) | 39,902 | 7,896 | 15 |
+| rolling, run again alone | 376,163 | **54,000** | **50** |
+| coldstart, run again alone | 95,062 | 0 | 0 |
+
+In the second rolling run shop-4 was **OOMKilled** five times and the rollout
+took 10 minutes instead of one. Lost orders read back 404. Two defects, not yet
+separated (open question 55):
+
+- the memory budget does not bound the process: a pod budgeted at 512 MiB
+  exceeded 1 GiB;
+- acknowledged orders were lost while pods crashed one at a time, with RF 3,
+  synchronous replication and persistence — which should survive that.
+
+Fresh data passes everything, so these are not regressions since 595bda3 in the
+failures that run covers; they are what that run's volume never reached.
+
 ## Run of 2026-11-14 (main at 595bda3)
 
 | Scenario | Disruption | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
