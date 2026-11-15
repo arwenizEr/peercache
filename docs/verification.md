@@ -667,7 +667,7 @@ caught   a drained node applies its own callers' writes                     -- T
 caught   a local caller skips the activation delay                          -- TestANewOwnerCountsFromItsPromotedCopy
 caught   a restore gives up on a log that moved                             -- TestARestoreOutlastsASplitterDeletingItsLogs
 caught   an unrestored partition answers absent keys from memory            -- TestAnUnavailableStoreDegradesToMemory
-caught   an unrestored partition refuses blind writes                       -- TestAnUnavailableStoreDegradesToMemory
+caught   an unrestored partition takes blind writes                         -- TestAnUnavailableStoreDegradesToMemory
 caught   a read-modify-write is applied after its key moved                 -- TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves
 caught   a Set is applied after its key moved                               -- TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves
 caught   a drained node applies a peer's write                              -- TestADrainedNodeRefusesAPeerThatMissedTheDeparture

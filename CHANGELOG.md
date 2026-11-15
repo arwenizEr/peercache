@@ -19,10 +19,11 @@ change the public API.
 ### Changed
 
 - With a persistent namespace's partition unable to restore from storage, a
-  read or read-modify-write of a key this node does not hold in memory now
-  returns `ErrActivationPending` instead of being answered from memory as
-  absent. Keys memory holds are still served, and Set and Delete still taken.
-  Open question 57.
+  read or write of a key this node does not hold in memory now returns
+  `ErrActivationPending` instead of being answered from memory as absent.
+  Keys memory holds are still served. Log objects' names carry a random
+  suffix, so a writer whose clock repeats an order cannot replace an earlier
+  log. Open question 57.
 
 ### Fixed
 
