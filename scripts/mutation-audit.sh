@@ -2866,6 +2866,13 @@ mutate "hot-key tracking accepts any bound" \
   '	if o.HotKeys < 0 {' \
   'TestHotKeysAreOffByDefaultAndBounded$' ./tests
 
+# --- a promoted key keeps its deadline (F12) ---
+
+mutate "a restore past its deadline installs the key"   internal/store/store.go   '	if expiresAt != 0 && s.clk.Now().UnixNano() >= expiresAt {
+		return false
+	}
+	return s.restore(key, val, expiresAt, version, order)'   '	return s.restore(key, val, expiresAt, version, order)'   'TestRestoreAtInstallsTheDeadlineAsGiven$' ./internal/store
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

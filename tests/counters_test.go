@@ -439,12 +439,18 @@ func TestKeysAdoptedIsCounted(t *testing.T) {
 	}
 
 	// The counter that did move must reach the scrape output. Which one moved
-	// is the race above; that at least one did is not.
-	if adopted > 0 {
-		assertMetric(t, f.caches[receivers[0]], "peercache_keys_adopted_total")
-		return
+	// is the race above; that at least one did is not. Nor is which receiver
+	// it moved on: asking receivers[0] alone failed CI when the one adopted
+	// key had landed on receivers[1].
+	for _, id := range receivers {
+		s := f.caches[id].Stats()
+		if s.KeysAdopted > 0 {
+			assertMetric(t, f.caches[id], "peercache_keys_adopted_total")
+		}
+		if s.KeysPromoted > 0 {
+			assertMetric(t, f.caches[id], "peercache_keys_promoted_total")
+		}
 	}
-	assertMetric(t, f.caches[receivers[0]], "peercache_keys_promoted_total")
 }
 
 // TestReplicasEvictedIsCounted covers the counter for replicas a node stops
