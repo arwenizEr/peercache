@@ -2918,6 +2918,33 @@ mutate "a compaction holds up the flusher" \
 		case <-split.C():' \
   'TestAFlushIsNotHeldUpByACompaction$' ./tests
 
+# --- local callers are held to what peers are (open question 56) ---
+
+mutate "a drained node applies its own callers' writes" \
+  remote.go \
+  '	if c.readiness.draining.Load() {
+		return fmt.Errorf("peercache: this node is draining and %q has passed to its successor: %w",
+			groupKey, ErrNotOwner)
+	}
+	return c.guard.CanActivateAt(groupKey, epoch)' \
+  '	return c.guard.CanActivateAt(groupKey, epoch)' \
+  'TestADrainedNodeAppliesNoWrite$' ./tests
+mutate "a local caller skips the activation delay" \
+  remote.go \
+  '	return c.guard.CanActivateAt(groupKey, epoch)
+}' \
+  '	return nil
+}' \
+  'TestANewOwnerCountsFromItsPromotedCopy$' ./tests
+mutate "a drained node applies a peer's write" \
+  handler.go \
+  '	if h.cache.readiness.draining.Load() {
+		return fmt.Errorf("peercache: this node is draining and %q has passed to its successor: %w",
+			groupKey, core.ErrNotOwner)
+	}' \
+  '' \
+  'TestADrainedNodeAppliesNoWrite$' ./tests
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \

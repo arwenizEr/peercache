@@ -769,6 +769,13 @@ func (h *peerHandler) assertOwned(namespace, key string) error {
 	if ok && ns.err == nil {
 		groupKey = ns.groupKeyFor(key)
 	}
+	// A draining node has handed its keys on, and its own view may still name
+	// it their owner: a peer that has not yet noticed the departure would have
+	// its write applied where nobody reads it again. See mayServeLocally.
+	if h.cache.readiness.draining.Load() {
+		return fmt.Errorf("peercache: this node is draining and %q has passed to its successor: %w",
+			groupKey, core.ErrNotOwner)
+	}
 	if err := h.cache.guard.CanActivate(groupKey); err != nil {
 		return err
 	}

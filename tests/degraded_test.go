@@ -291,10 +291,13 @@ func TestRequireReplicationFactorRefusesAnIsolatedWrite(t *testing.T) {
 	t.Cleanup(func() { f.net.Heal() })
 
 	f.clk.Advance(4 * testkit.DefaultFailureTimeout)
-	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	waitForCache(t, "the isolated node to see a cluster of one", func() bool {
 		return f.caches[isolated].Stats().Members == 1
 	})
+	// After the view has shrunk, not before it: the delay runs from the
+	// membership change, and a write through the node itself now waits it
+	// out like a peer's would (open question 56).
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 
 	const key = "strict/only-copy"
 	err := openNS(isolated).Set(ctx, key, []byte("held"), 0)

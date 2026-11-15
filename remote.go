@@ -42,11 +42,38 @@ func (r *router) locate(groupKey string) (placement, error) {
 	if err != nil {
 		return placement{}, err
 	}
+	local := owner.ID == r.cache.self().ID
+	if local {
+		if err := r.cache.mayServeLocally(groupKey, epoch); err != nil {
+			return placement{}, err
+		}
+	}
 	return placement{
 		owner: owner,
 		epoch: uint64(epoch),
-		local: owner.ID == r.cache.self().ID,
+		local: local,
 	}, nil
+}
+
+// mayServeLocally holds this node's own callers to what its peers are held to
+// when they forward a key it owns: the activation delay after a membership
+// change, and nothing at all once it is draining.
+//
+// The local path skipped both. On a node that had just become a key's owner,
+// a local Increment ran at once, on an owned store its replica copy had not yet
+// been promoted into: it counted from nothing, and the promotion that followed
+// discarded the replica as older. On a node that had drained, its view still
+// named itself owner of the keys it had handed off, so a local write was
+// applied to a store nobody would read again. Both were acknowledged; on kind,
+// over a rolling restart, they took every counter one pod owned off by
+// thousands (open question 56). Each is a refusal, answered before anything is
+// applied, so a caller may simply ask again.
+func (c *cache) mayServeLocally(groupKey string, epoch core.Epoch) error {
+	if c.readiness.draining.Load() {
+		return fmt.Errorf("peercache: this node is draining and %q has passed to its successor: %w",
+			groupKey, ErrNotOwner)
+	}
+	return c.guard.CanActivateAt(groupKey, epoch)
 }
 
 // invoke sends one request to a peer and returns its response body.

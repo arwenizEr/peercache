@@ -663,6 +663,8 @@ caught   a flush during a restore keeps nothing for it                      -- T
 caught   a restore ignores the batch being flushed                          -- TestADeleteBeingFlushedDuringARestoreIsNotUndone
 caught   a compaction holds up the flusher                                  -- TestAFlushIsNotHeldUpByACompaction
 caught   a budget without a memory limit is not warned about            -- TestABudgetWithoutAMemoryLimitWarns
+caught   a drained node applies its own callers' writes                     -- TestADrainedNodeAppliesNoWrite
+caught   a local caller skips the activation delay                          -- TestANewOwnerCountsFromItsPromotedCopy
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
 caught   a replica delete leaves its digest behind                          -- TestTheReplicaDigestFollowsEveryWritePath

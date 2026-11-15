@@ -284,11 +284,22 @@ func writeCountingRetries(t *testing.T, f *fabric, ns func(string) peercache.Nam
 		if !isRetryable(err) {
 			return i, err
 		}
-		// Let the cluster make progress between attempts.
+		// Let the cluster make progress between attempts, and let time
+		// pass as it does for a real client's backoff. A key that has just
+		// changed owner is refused for the activation delay whichever node
+		// is asked; twenty attempts that took no time at all would never see
+		// it end. They used to pass anyway, because a write through the new
+		// owner itself skipped the delay — which is how a local Increment
+		// counted from a replica not yet promoted (open question 56).
 		f.settle(t)
+		f.clk.Advance(retryBackoff)
 	}
 	return attempts, lastErr
 }
+
+// retryBackoff is the pause between a test client's attempts: 20 of them span
+// five seconds, more than the activation delay.
+const retryBackoff = 250 * time.Millisecond
 
 // readWithRetry is the same for reads.
 func readWithRetry(t *testing.T, f *fabric, via, key string) ([]byte, error) {

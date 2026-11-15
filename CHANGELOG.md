@@ -18,6 +18,16 @@ change the public API.
 
 ### Fixed
 
+- Acknowledged read-modify-write operations were lost around ownership
+  changes. A caller on a key's new owner skipped the activation delay that
+  peers' requests wait out: its `Increment`, `SetIfAbsent` or compare-and-set
+  ran before the replica copy was promoted, on an owned store without it, and
+  the promotion then discarded the copy as older. And a drained node, whose
+  own view still named it the owner of keys it had handed on, applied its own
+  callers' and unaware peers' writes where nobody would read them. On kind,
+  every stock counter one pod owned ended thousands of decrements off over a
+  rolling restart. Local callers now wait out the activation delay, and a
+  draining node refuses writes and reads with `ErrNotOwner`. Open question 56.
 - A persistent namespace stopped flushing while it restored a partition from
   storage: the restore held the flush lock for its whole read, and after every
   membership change every partition restores again. Acknowledged writes piled
