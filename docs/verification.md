@@ -665,6 +665,9 @@ caught   a compaction holds up the flusher                                  -- T
 caught   a budget without a memory limit is not warned about            -- TestABudgetWithoutAMemoryLimitWarns
 caught   a drained node applies its own callers' writes                     -- TestADrainedNodeAppliesNoWrite
 caught   a local caller skips the activation delay                          -- TestANewOwnerCountsFromItsPromotedCopy
+caught   a restore gives up on a log that moved                             -- TestARestoreOutlastsASplitterDeletingItsLogs
+caught   an unrestored partition answers absent keys from memory            -- TestAnUnavailableStoreDegradesToMemory
+caught   an unrestored partition refuses blind writes                       -- TestAnUnavailableStoreDegradesToMemory
 caught   a drained node applies a peer's write                              -- TestADrainedNodeRefusesAPeerThatMissedTheDeparture
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath

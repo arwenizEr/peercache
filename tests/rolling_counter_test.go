@@ -245,3 +245,118 @@ func TestADrainedNodeRefusesAPeerThatMissedTheDeparture(t *testing.T) {
 			"node applied it to a key it has handed on", v, err)
 	}
 }
+
+// TestACatchUpBeforePeersAdmitTheNodeIsNotComplete: a restarted node that
+// catches up before its peers have admitted it is sent nothing — each peer
+// sends only what the asker owns by the peer's own ranking, and in that
+// ranking the asker is not yet a member. The catch-up must not count as
+// complete: the node would then serve, from what storage held when it went
+// down, keys whose writes since are on the node that owned them meanwhile.
+func TestACatchUpBeforePeersAdmitTheNodeIsNotComplete(t *testing.T) {
+	f, open, key := fourNodeStock(t)
+	ctx := context.Background()
+	victim := f.ids[0]
+	var acked int64
+	dec := func(via string) {
+		if _, err := open(via).Increment(ctx, key, -1, 0); err == nil {
+			acked++
+		}
+	}
+	for _, id := range f.ids {
+		dec(id)
+	}
+	if err := f.caches[victim].Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	f.hardKill(t, victim)
+	f.clk.Advance(2 * f.mcfg.FailureTimeout)
+	f.convergeTo(t, len(f.ids)-1)
+	f.settle(t)
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+	// Written while the victim is away, on its successor.
+	for i := 0; i < 5; i++ {
+		for _, id := range f.live() {
+			dec(id)
+		}
+	}
+
+	f.revive(t, victim)
+	open(victim)
+	// Caught up at once: its own view may be complete, its peers' are not.
+	_ = f.caches[victim].CatchUp(ctx)
+	f.clk.Advance(2 * f.mcfg.JoinDelay)
+	f.converge(t)
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+	// If that catch-up counted, the gate is open: catch up again only if the
+	// node says it is not caught up, as the shop's loop does.
+	if !f.caches[victim].Ready().CaughtUp {
+		if err := f.caches[victim].CatchUp(ctx); err != nil {
+			t.Fatalf("CatchUp: %v", err)
+		}
+		f.clk.Advance(2 * ownership.DefaultActivationDelay)
+		f.settle(t)
+	}
+	for _, id := range f.live() {
+		dec(id)
+	}
+	b, err := readWithRetryFrom(t, f, open, victim, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	n, _ := strconv.ParseInt(b, 10, 64)
+	if -n != acked {
+		t.Fatalf("%s counts %d applied decrements, %d were acknowledged: the restarted owner "+
+			"served from a catch-up that received nothing", key, -n, acked)
+	}
+}
+
+// TestAPodBackWithinItsSuccessorsDelayCountsOn: on kind a drained pod's
+// replacement is serving about seven seconds later, inside or just past its
+// successor's activation delay. The key passes to the successor and back with
+// writes arriving throughout; every acknowledged decrement must survive both
+// moves.
+func TestAPodBackWithinItsSuccessorsDelayCountsOn(t *testing.T) {
+	for _, back := range []time.Duration{500 * time.Millisecond, 2 * time.Second, 4 * time.Second, 7 * time.Second} {
+		t.Run(back.String(), func(t *testing.T) {
+			f, open, key := fourNodeStock(t)
+			ctx := context.Background()
+			victim := f.ids[0]
+			l := &counterLedger{acked: map[string]int64{}, uncertain: map[string]int64{}}
+			step := func(d time.Duration) {
+				for elapsed := time.Duration(0); elapsed < d; elapsed += 250 * time.Millisecond {
+					for _, id := range f.live() {
+						l.decrement(ctx, open(id), key)
+					}
+					f.clk.Advance(250 * time.Millisecond)
+					f.settle(t)
+				}
+			}
+			step(time.Second)
+			if err := f.caches[victim].Drain(ctx); err != nil {
+				t.Fatalf("Drain: %v", err)
+			}
+			f.hardKill(t, victim)
+			f.convergeTo(t, len(f.ids)-1)
+			step(back)
+			f.revive(t, victim)
+			open(victim)
+			step(f.mcfg.JoinDelay * 2)
+			f.converge(t)
+			if err := f.caches[victim].CatchUp(ctx); err != nil {
+				t.Fatalf("CatchUp: %v", err)
+			}
+			step(8 * time.Second)
+
+			b, err := readWithRetryFrom(t, f, open, victim, key)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			n, _ := strconv.ParseInt(b, 10, 64)
+			if -n < l.acked[key] || -n > l.acked[key]+l.uncertain[key] {
+				t.Fatalf("%s applied %d, acknowledged %d, uncertain %d", key, -n, l.acked[key], l.uncertain[key])
+			}
+		})
+	}
+}

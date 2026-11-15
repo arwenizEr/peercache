@@ -508,9 +508,10 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 		}
 		if st.running == nil {
 			if st.failedAt != 0 && p.clk.Now().UnixNano()-st.failedAt < int64(restoreRetry) {
-				// Failed recently: serve from memory, retry later.
+				// Failed recently: memory answers until the retry, for
+				// what memory holds. See errPartitionUnrestored.
 				p.rmu.Unlock()
-				return nil
+				return errPartitionUnrestored
 			}
 			st.running = make(chan struct{})
 			p.rwg.Add(1)
@@ -526,6 +527,19 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 		}
 	}
 }
+
+// errPartitionUnrestored reports that a key's partition could not be restored
+// from storage and is answered from memory until the next attempt.
+//
+// Memory is the right answer for a key memory holds: this node wrote or was
+// sent it. It is the wrong one for a key memory does not hold. The restore is
+// what brings back keys this node has just come to own; until it succeeds,
+// an absent key may exist, and "not found" — or an Increment counting from
+// zero, a SetIfAbsent succeeding — is a lie the next restore cannot correct,
+// because the write it made outranks the record it would restore. On kind a
+// restarted owner whose restore failed served a stock counter from zero and
+// lost every decrement before (open question 57). See namespace.awaitRestore.
+var errPartitionUnrestored = errors.New("peercache: partition not restored from storage")
 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
@@ -548,6 +562,13 @@ func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
 	st.running = nil
 	p.rmu.Unlock()
 	close(done)
+	if err != nil && p.rctx.Err() == nil {
+		// Counted, and said: a partition that failed to restore is served
+		// from memory until it is retried, and which error it was decides
+		// whether that is an outage or a race to fix.
+		p.ns.cache.opts.Logger.Warn("persistent namespace: restoring a partition failed",
+			"namespace", p.ns.name, "partition", part, "error", err)
+	}
 }
 
 // restore merges one partition's stored records into the owned store: the
@@ -659,10 +680,6 @@ type scanned struct {
 // neither folds nor deletes them, the splitter does.
 func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 	prefix := partitionPrefix(p.ns.name, part)
-	names, err := p.store.List(ctx, prefix)
-	if err != nil {
-		return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
-	}
 	sc := &scanned{newest: map[string]*segment.Record{}}
 	merge := func(f *segment.File) {
 		for i := range f.Records {
@@ -675,54 +692,103 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 			}
 		}
 	}
+	// An object listed and then gone has been folded or split: its records
+	// are in a snapshot or a partition segment made before it was deleted
+	// (decision 0030), which listing again shows. So a missing object is
+	// skipped and the listing repeated, reading only what it shows anew,
+	// until a pass finds nothing gone. Starting the whole read over instead
+	// re-read every log each time; on kind a restore reading a hundred logs
+	// while a splitter deleted them every ten seconds failed its three tries
+	// over and over (open question 57).
+	loaded := map[string]bool{}
 	covered := map[string]bool{}
-	for _, name := range names {
-		if !strings.HasPrefix(name[len(prefix):], "snap-") {
-			continue
-		}
-		f, err := p.load(ctx, name)
-		if err != nil {
+	gone := func(err error) bool { return errors.Is(err, ErrNotFound) }
+	for pass := 0; ; pass++ {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for _, c := range f.Covered {
-			covered[c] = true
-		}
-		merge(f)
-		sc.merged = append(sc.merged, name)
-	}
-	for _, name := range names {
-		if covered[name] || !strings.HasPrefix(name[len(prefix):], "seg-") {
-			continue
-		}
-		f, err := p.load(ctx, name)
+		vanished := false
+		names, err := p.store.List(ctx, prefix)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("peercache: listing %s: %w", prefix, err)
 		}
-		merge(f)
-		sc.merged = append(sc.merged, name)
-		sc.segments++
-	}
-
-	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
-	if err != nil {
-		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
-	}
-	for _, name := range logs {
-		f, err := p.load(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		kept := f.Records[:0]
-		for _, r := range f.Records {
-			if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
-				kept = append(kept, r)
+		for _, name := range names {
+			if loaded[name] || !strings.HasPrefix(name[len(prefix):], "snap-") {
+				continue
 			}
+			f, err := p.load(ctx, name)
+			if gone(err) {
+				vanished = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			for _, c := range f.Covered {
+				covered[c] = true
+			}
+			merge(f)
+			sc.merged = append(sc.merged, name)
 		}
-		f.Records = kept
-		merge(f)
+		for _, name := range names {
+			if loaded[name] || covered[name] || !strings.HasPrefix(name[len(prefix):], "seg-") {
+				continue
+			}
+			f, err := p.load(ctx, name)
+			if gone(err) {
+				vanished = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			merge(f)
+			sc.merged = append(sc.merged, name)
+			sc.segments++
+		}
+
+		logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+		if err != nil {
+			return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+		}
+		for _, name := range logs {
+			if loaded[name] {
+				continue
+			}
+			f, err := p.load(ctx, name)
+			if gone(err) {
+				vanished = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			kept := f.Records[:0]
+			for _, r := range f.Records {
+				if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
+					kept = append(kept, r)
+				}
+			}
+			f.Records = kept
+			merge(f)
+		}
+		if !vanished {
+			return sc, nil
+		}
+		if pass+1 >= scanPasses {
+			return nil, fmt.Errorf("peercache: partition %d: objects kept vanishing over %d listings: %w",
+				part, scanPasses, ErrNotFound)
+		}
 	}
-	return sc, nil
 }
+
+// scanPasses bounds how many times a scan lists again after objects vanished
+// under it. Each pass reads only what is new, so it is cheap; the bound is for
+// a store that lists objects it cannot return.
+const scanPasses = 16
 
 func (p *persister) load(ctx context.Context, name string) (*segment.File, error) {
 	data, err := p.store.Get(ctx, name)

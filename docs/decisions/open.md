@@ -1738,6 +1738,46 @@ Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
 on the first receiver only; the one adopted key had landed on the second.
 A test bug; it now checks each receiver whose counter moved.
 
+## 57. A failed restore let a returning owner count from nothing — found on kind, resolved
+
+**Found** after question 56's fix: v0.2.0's M16 rolling scenario still ended 5
+stock counters hundreds of decrements high. Sampling every counter through a
+rolling restart caught one reset to almost its initial stock the moment its
+owner's replacement started serving; pod logs (the shop now wires the library's
+Logger, and a failed restore is now logged) showed why: restores failing on
+every pod, dozens a minute, all `reading <ns>/log/seg-…: not found`.
+
+Two defects, in series:
+
+- **A restore read every unsplit log and started over when one vanished.** The
+  splitter deletes logs once their partition segments are durable, every ten
+  seconds; a restore reading a hundred logs found one gone, started its whole
+  read again, and after three tries failed — over and over.
+- **A failed restore served the partition from memory.** Decision 0029 chose
+  that so a store outage degrades rather than stops a namespace. For keys memory
+  holds it is right. For keys memory does not hold — exactly the keys a restore
+  exists to bring back to a node that has just come to own them — "not found",
+  an Increment from zero or a SetIfAbsent that succeeds is a guess the next
+  restore cannot correct, since the write made on it outranks the record.
+
+**Picked:**
+
+- A scan skips an object that vanished between listing and reading, lists
+  again, and reads only what is new, until a pass finds nothing gone (at most
+  sixteen). An object vanishes only after its records are durable in a snapshot
+  or a partition segment (decision 0030), which the next listing shows.
+- With a partition's restore failed, a read or read-modify-write of a key
+  memory does not hold is refused with `ErrActivationPending`; a key memory
+  holds is answered from it, and a blind Set or Delete is still taken, since it
+  depends on nothing the key held and outranks whatever a restore later reads.
+  Decision 0029's availability is kept where it is safe and given up where it
+  was a guess.
+
+`TestARestoreOutlastsASplitterDeletingItsLogs` failed before (the restore
+failed and a stored key read back not found);
+`TestAnUnavailableStoreDegradesToMemory` now asserts the refusal, and that a
+blind write and a held key are still served.
+
 ## 56. Local callers skipped the activation delay, and a drained node kept serving — found on kind, resolved
 
 **Found** re-running the volume experiment of question 55 with every fix from
