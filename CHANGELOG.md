@@ -7,6 +7,14 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- `BatchGetOrLoad` on a namespace with only `WithBatchLoader` failed the whole
+  call with `ErrNoLoader` when an owner reported a key as no longer its own:
+  the moved keys were asked for again one at a time through `GetOrLoad`, which
+  needs a per-key loader. They are now asked for again as one batch, once; a
+  key that moves again is reported with `ErrNotOwner`.
+
 ## [0.2.1] - 2026-11-15
 
 Fixes for four ways v0.2.0 could lose acknowledged writes, all found on the

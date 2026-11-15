@@ -670,6 +670,8 @@ caught   an unrestored partition answers absent keys from memory            -- T
 caught   an unrestored partition takes blind writes                         -- TestAnUnavailableStoreDegradesToMemory
 caught   a read-modify-write is applied after its key moved                 -- TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves
 caught   a Set is applied after its key moved                               -- TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves
+caught   a replica-read copy outlives its key                               -- TestAReplicaReadCopyDoesNotOutliveItsKey
+caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
 caught   a drained node applies a peer's write                              -- TestADrainedNodeRefusesAPeerThatMissedTheDeparture
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath

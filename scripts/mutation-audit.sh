@@ -3003,6 +3003,19 @@ mutate "a Set is applied after its key moved" \
   '	written := n.store.Put(key, n.encode(val), ttl)' \
   'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
 
+# --- two read paths that had no test of their own ---
+
+mutate "a replica-read copy outlives its key" \
+  namespace.go \
+  '			n.l1.Put(key, val, stamp, l1Lifetime(remaining, left))' \
+  '			n.l1.Put(key, val, stamp, l1Lifetime(remaining, 0*left))' \
+  'TestAReplicaReadCopyDoesNotOutliveItsKey$' ./tests
+mutate "a batch load drops keys that moved" \
+  batchload.go \
+  '	return n.batchGetOrLoadInto(ctx, misrouted, out, false)' \
+  '	return nil' \
+  'TestACallerAsksAgainForMisroutedKeys$' ./tests
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \
