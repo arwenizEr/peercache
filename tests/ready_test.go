@@ -123,8 +123,28 @@ func TestANodeIsNotReadyWhileMembershipMoves(t *testing.T) {
 	// Now move the membership. Every survivor's view changes, so none of
 	// them has settled.
 	f.hardKill(t, f.ids[2])
-	f.clk.Advance(2 * testkit.DefaultFailureTimeout)
-	f.convergeTo(t, 2)
+	// In small steps, stopping as soon as the survivors see the change. One
+	// advance of twice the failure timeout ran past the activation delay
+	// whenever the departure Close announces was processed before it, so
+	// both survivors had settled again by the check; on a CI runner under
+	// -race that ordering was common enough to fail.
+	converged := func() bool {
+		for _, id := range survivors {
+			if f.caches[id].Stats().Members != 2 {
+				return false
+			}
+		}
+		return true
+	}
+	for step := 0; !converged(); step++ {
+		if step > 200 {
+			t.Fatal("the survivors never saw the member leave")
+		}
+		f.clk.Advance(100 * time.Millisecond)
+		for i := 0; i < 10_000 && !converged(); i++ {
+			runtime.Gosched()
+		}
+	}
 
 	unsettled := 0
 	for _, id := range survivors {
