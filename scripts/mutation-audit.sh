@@ -2979,6 +2979,24 @@ mutate "an unrestored partition refuses blind writes" \
   '	if err := n.awaitRestore(ctx, key); err != nil {' \
   'TestAnUnavailableStoreDegradesToMemory$' ./tests
 
+# --- an owner checks again before it applies (open question 58) ---
+
+mutate "a read-modify-write is applied after its key moved" \
+  atomic.go \
+  '		if err := n.cache.stillOwner(groupKey); err != nil {
+			return store.Mutation{}, false, err
+		}' \
+  '		_ = groupKey' \
+  'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
+mutate "a Set is applied after its key moved" \
+  namespace.go \
+  '	// outside every rule.
+	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
+		return err
+	}' \
+  '	// outside every rule.' \
+  'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \

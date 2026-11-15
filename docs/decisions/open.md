@@ -1738,6 +1738,32 @@ Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
 on the first receiver only; the one adopted key had landed on the second.
 A test bug; it now checks each receiver whose counter moved.
 
+## 58. A write that waited out a restore was applied after its key moved — found on kind, resolved
+
+**Found** after question 57: with no restore failing, a rolling restart still
+reset, about one run in six, a stock counter the first restarted pod owned. A
+temporary build logging every store write of the traced keys, with its caller,
+showed the sequence on the interim owner, shop-1:
+
+1. promoted the key's replica copy, `-142`, when shop-3 drained;
+2. accepted a peer's Increment — the ownership check passed;
+3. the Increment waited in `awaitRestore` for the key's partition;
+4. shop-3's replacement joined; shop-1's reconciliation demoted the key out of
+   its owned store;
+5. the restore finished (skipping the key, no longer owned) and the Increment
+   ran — on a store without the key: `-1`, with a newer order than `-142`;
+6. it replicated `-1` to the returning owner, which adopted it; every later
+   restore and promotion of `-142` was refused as older.
+
+**Picked:** an owner checks again just before applying. A read-modify-write
+checks inside the store's update, under the shard lock demotion also takes, so
+the two are ordered: the update runs first and the key leaves with its new
+value, or the key has left and the update refuses. Set and Delete check again
+after the wait. Each refusal is `ErrNotOwner` or the activation delay's
+`ErrActivationPending`, answered before anything is applied.
+`TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves` reproduces the
+sequence exactly and failed before, for Increment and for Set.
+
 ## 57. A failed restore let a returning owner count from nothing — found on kind, resolved
 
 **Found** after question 56's fix: v0.2.0's M16 rolling scenario still ended 5

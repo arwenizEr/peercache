@@ -26,6 +26,13 @@ change the public API.
 
 ### Fixed
 
+- A write to a persistent namespace that waited for its key's partition to
+  restore was applied even if the key had changed owner meanwhile, on the store
+  the key had just left: an Increment counted from nothing and replicated to
+  the new owner with a newer order than the real count. On kind about one
+  rolling restart in six reset a stock counter. An owner now checks ownership
+  again just before applying — a read-modify-write under the shard lock
+  demotion takes. Open question 58.
 - A restore failed whenever a log it had listed was split and deleted before it
   read it, which on a busy cluster was most of the time; a returning owner
   then served its partition from empty memory and counted stock from zero. A

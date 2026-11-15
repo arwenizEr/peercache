@@ -68,6 +68,17 @@ func (r *router) locate(groupKey string) (placement, error) {
 // over a rolling restart, they took every counter one pod owned off by
 // thousands (open question 56). Each is a refusal, answered before anything is
 // applied, so a caller may simply ask again.
+// stillOwner reports whether this node may still apply a write to groupKey: it
+// is not draining and its current view lets it activate the group. It is what
+// an owner checks again after waiting, so that a write accepted under one view
+// is not applied under the next. See localUpdate.
+func (c *cache) stillOwner(groupKey string) error {
+	if c.guard == nil {
+		return nil
+	}
+	return c.mayServeLocally(groupKey, c.guard.Table().Epoch())
+}
+
 func (c *cache) mayServeLocally(groupKey string, epoch core.Epoch) error {
 	if c.readiness.draining.Load() {
 		return fmt.Errorf("peercache: this node is draining and %q has passed to its successor: %w",

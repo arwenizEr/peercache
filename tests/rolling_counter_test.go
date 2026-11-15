@@ -360,3 +360,116 @@ func TestAPodBackWithinItsSuccessorsDelayCountsOn(t *testing.T) {
 		})
 	}
 }
+
+// TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves: a write to a
+// persistent namespace passes its ownership check, then waits for the key's
+// partition to restore. If the key changes owner meanwhile, this node demotes
+// it, and the write must not then run on the store the key has just left. It
+// did: an Increment counted from nothing, outranked the real count by order,
+// and replicated to the new owner, which took it. On kind a stock counter
+// lost every decrement before (open question 58).
+func TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves(t *testing.T) {
+	for name, write := range map[string]func(peercache.Namespace, string) error{
+		"Increment": func(ns peercache.Namespace, key string) error {
+			_, err := ns.Increment(context.Background(), key, -1, 0)
+			return err
+		},
+		"Set": func(ns peercache.Namespace, key string) error {
+			return ns.Set(context.Background(), key, []byte("-1"), 0)
+		},
+	} {
+		t.Run(name, func(t *testing.T) { writeWaitingOnARestore(t, write) })
+	}
+}
+
+func writeWaitingOnARestore(t *testing.T, write func(peercache.Namespace, string) error) {
+	f := newFabricFull(t, 4, false, testkit.MembershipConfig{
+		FailureTimeout: 300 * time.Millisecond,
+		JoinDelay:      200 * time.Millisecond,
+	}, ownership.DefaultActivationDelay, withCacheOptions(peercache.WithCatchUpGate()))
+	store := newHeldStore()
+	ctx := context.Background()
+	open := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("stock",
+			peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication(),
+			peercache.WithPersistence(store))
+	}
+	for _, id := range f.ids {
+		open(id)
+		if err := f.caches[id].CatchUp(ctx); err != nil {
+			t.Fatalf("CatchUp(%s): %v", id, err)
+		}
+	}
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+
+	// A key owned by ids[0] whose next holder is ids[1].
+	owner, interim := f.ids[0], ""
+	key := ""
+	for i := 0; key == "" && i < 500; i++ {
+		k := fmt.Sprintf("item/%d", i)
+		if f.ownerOf(t, k) != owner {
+			continue
+		}
+		d, err := f.caches[owner].DescribeKey("stock", k)
+		if err == nil && len(d.Holders) > 1 {
+			key, interim = k, d.Holders[1]
+		}
+	}
+	if key == "" {
+		t.Fatal("no key owned by the first node")
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := open(owner).Increment(ctx, key, -1, 0); err != nil {
+			t.Fatalf("Increment: %v", err)
+		}
+	}
+	flushAll(t, f)
+
+	// The owner leaves; the interim owner takes the key over.
+	if err := f.caches[owner].Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	f.hardKill(t, owner)
+	f.convergeTo(t, len(f.ids)-1)
+	f.settle(t)
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+
+	// A write through the interim owner stops in its partition's restore.
+	store.hold()
+	defer store.open()
+	got := make(chan error, 1)
+	go func() {
+		got <- write(open(interim), key)
+	}()
+	waitFor(t, "the write to be waiting on a restore", func() bool { return store.waiting.Load() > 0 })
+
+	// The owner is back, and the interim owner hands the key back.
+	f.revive(t, owner)
+	open(owner)
+	f.clk.Advance(2 * f.mcfg.JoinDelay)
+	f.converge(t)
+	f.settle(t)
+	store.open()
+	if err := <-got; err == nil {
+		t.Fatal("the interim owner applied a write after the key had moved back to its owner")
+	} else if !errors.Is(err, peercache.ErrNotOwner) && !errors.Is(err, peercache.ErrStaleEpoch) &&
+		!errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("the refused write returned %v; want a refusal a caller retries", err)
+	}
+
+	if err := f.caches[owner].CatchUp(ctx); err != nil {
+		t.Fatalf("CatchUp: %v", err)
+	}
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
+	f.settle(t)
+	v, err := open(owner).Increment(ctx, key, -1, 0)
+	if err != nil {
+		t.Fatalf("Increment after the return: %v", err)
+	}
+	if v != -11 {
+		t.Fatalf("the owner counted to %d after its return, want -11: a write made on the "+
+			"interim owner after the key moved replaced the count", v)
+	}
+}
