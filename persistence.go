@@ -107,11 +107,32 @@ type persister struct {
 	// the shedding that made room. Bounded by the owned keys shed.
 	shed map[string]struct{}
 
+	// inflight is the batch a flush has taken from pending and not yet
+	// finished writing; flushedDuring holds the batches flushes wrote while
+	// at least one restore was running (restoring counts them). Under mu.
+	//
+	// They exist so that a restore need not hold the flush lock while it
+	// reads storage. A restore overlays what this node wrote but storage
+	// may not show yet: before, that was pending alone, and keeping a flush
+	// from moving a record out of pending meant holding flushMu across the
+	// whole read. On kind that stopped flushes for the length of every
+	// restore after every membership change - 58,000 acknowledged records
+	// pending on one pod when it was OOM-killed (open question 55). Now a
+	// record taken from pending after a restore began is, when the restore
+	// overlays, in pending, in inflight, or in flushedDuring.
+	inflight      map[string]segment.Record
+	flushedDuring []map[string]segment.Record
+	restoring     int
+
 	kick chan struct{}
 	done chan struct{}
 	wg   sync.WaitGroup
 	// flushMu serialises flushes: the ticker's, a kick's and Close's.
 	flushMu sync.Mutex
+	// restoreMu serialises restores, so that at most one partition's records
+	// are held in memory at a time, as when they shared flushMu. A flush
+	// never takes it.
+	restoreMu sync.Mutex
 
 	flushes  atomic.Int64
 	written  atomic.Int64
@@ -126,9 +147,7 @@ type persister struct {
 	rmu   sync.Mutex
 	parts [persistPartitions]partitionState
 	// Restores run on their own goroutines, under rctx. Close cancels it and
-	// waits on rwg: a restore left running outlived the cache, and since it
-	// holds the flush lock while it reads, one stuck on a dead store would
-	// also have held up Close's final flush.
+	// waits on rwg: a restore left running outlived the cache.
 	rctx            context.Context
 	rcancel         context.CancelFunc
 	rwg             sync.WaitGroup
@@ -285,6 +304,7 @@ func (p *persister) flush(ctx context.Context) error {
 		p.pending, p.pendingHigh = make(map[string]segment.Record, len(batch)), 0
 	}
 	p.bytes = 0
+	p.inflight = batch
 	p.mu.Unlock()
 
 	records := p.recBuf[:0]
@@ -301,8 +321,13 @@ func (p *persister) flush(ctx context.Context) error {
 	// the namespace. A batch under a quarter of the map's high-water mark
 	// lets it go instead. Measured on Machine A, recycling took a persistent
 	// Set from 705 to 421 bytes and 4 to 3 allocations.
+	kept := false // handed to flushedDuring, so not ours to recycle
 	defer func() {
 		clear(records) // drop the values the slice still points at
+		if kept {
+			p.recBuf = records[:0]
+			return
+		}
 		if len(batch)*4 < batchHigh {
 			p.spare, p.spareHigh, p.recBuf = nil, 0, nil
 			return
@@ -322,6 +347,13 @@ func (p *persister) flush(ctx context.Context) error {
 		p.restorePending(records)
 		return fmt.Errorf("peercache: persisting %s: %w", name, err)
 	}
+	p.mu.Lock()
+	if p.restoring > 0 {
+		p.flushedDuring = append(p.flushedDuring, batch)
+		kept = true
+	}
+	p.inflight = nil
+	p.mu.Unlock()
 	p.written.Add(int64(len(records)))
 	return nil
 }
@@ -331,6 +363,9 @@ func (p *persister) flush(ctx context.Context) error {
 func (p *persister) restorePending(records []segment.Record) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// In the same critical section as the records going back: a restore
+	// overlaying in between would otherwise find them in neither place.
+	p.inflight = nil
 	for i := range records {
 		r := records[i]
 		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
@@ -347,8 +382,8 @@ func (p *persister) restorePending(records []segment.Record) {
 func (p *persister) Close(ctx context.Context) error {
 	close(p.done)
 	p.wg.Wait()
-	// Restores before the final flush, and cancelled rather than awaited:
-	// one reading a store that no longer answers holds the flush lock.
+	// Restores before the final flush, and cancelled rather than left to
+	// finish: one reading a store that no longer answers would never end.
 	p.rmu.Lock()
 	p.rclosed = true
 	p.rmu.Unlock()
@@ -499,11 +534,12 @@ func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
 // newest snapshot, every segment it does not name, newest record per key, kept
 // only for keys this node owns and not expired.
 func (p *persister) restore(ctx context.Context, part int) error {
-	// Held across the read and the overlay of pending records: a flush in
-	// between would move a record out of pending and into storage after we
-	// read storage, and the restore would see it in neither place.
-	p.flushMu.Lock()
-	defer p.flushMu.Unlock()
+	p.restoreMu.Lock()
+	defer p.restoreMu.Unlock()
+	// Registered before the read: a flush that moves a record out of pending
+	// while storage is read keeps it for the overlay below.
+	mark := p.beginRestore()
+	defer p.endRestore()
 	// A compactor can delete a segment between our List and our Get. The
 	// snapshot that covers it is then newer than the one we chose, so
 	// listing again finds it; three tries covers a compaction per try.
@@ -517,11 +553,44 @@ func (p *persister) restore(ctx context.Context, part int) error {
 		if err != nil {
 			return err
 		}
-		// A record still pending here is newer than storage for its key
-		// whenever it exists: this node wrote it and has not flushed it.
-		p.mu.Lock()
-		for key, r := range p.pending {
-			if persistPartition(p.ns.groupKeyFor(key)) != part {
+		p.overlay(newest, mark, func(key string) bool {
+			return persistPartition(p.ns.groupKeyFor(key)) == part
+		})
+		p.apply(newest)
+		return nil
+	}
+	return err
+}
+
+// beginRestore registers a restore with the flusher and returns its mark:
+// the batches flushed from here on are kept for its overlay.
+func (p *persister) beginRestore() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.restoring++
+	return len(p.flushedDuring)
+}
+
+// endRestore lets the flusher forget what it kept once no restore needs it.
+func (p *persister) endRestore() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.restoring--
+	if p.restoring == 0 {
+		p.flushedDuring = nil
+	}
+}
+
+// overlay puts into newest, for the keys want selects, every record this
+// node wrote that the storage read may have missed: still pending, being
+// flushed, or flushed since mark. Where one exists it is newer than storage
+// for its key, since this node wrote it; the newest of them wins.
+func (p *persister) overlay(newest map[string]*segment.Record, mark int, want func(string) bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	add := func(m map[string]segment.Record) {
+		for key, r := range m {
+			if !want(key) {
 				continue
 			}
 			if cur, ok := newest[key]; !ok || r.Newer(cur) {
@@ -529,11 +598,12 @@ func (p *persister) restore(ctx context.Context, part int) error {
 				newest[key] = &r
 			}
 		}
-		p.mu.Unlock()
-		p.apply(newest)
-		return nil
 	}
-	return err
+	for _, b := range p.flushedDuring[mark:] {
+		add(b)
+	}
+	add(p.inflight)
+	add(p.pending)
 }
 
 // read collects the newest record per key of one partition.
@@ -701,10 +771,10 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		return nil
 	}
 
-	// See restore for why a flush must not run between the read and the
-	// look at pending.
-	p.flushMu.Lock()
-	defer p.flushMu.Unlock()
+	p.restoreMu.Lock()
+	defer p.restoreMu.Unlock()
+	mark := p.beginRestore()
+	defer p.endRestore()
 	newest, err := p.read(ctx, persistPartition(p.ns.groupKeyFor(key)))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -716,11 +786,10 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 
 	p.mu.Lock()
 	delete(p.shed, key)
-	r := newest[key]
-	if pending, ok := p.pending[key]; ok && (r == nil || pending.Newer(r)) {
-		r = &pending
-	}
 	p.mu.Unlock()
+	// The newest write may not have been flushed when the key was shed.
+	p.overlay(newest, mark, func(k string) bool { return k == key })
+	r := newest[key]
 
 	if r != nil {
 		p.apply(map[string]*segment.Record{key: r})

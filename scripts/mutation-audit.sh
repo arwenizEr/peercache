@@ -2873,6 +2873,37 @@ mutate "a restore past its deadline installs the key"   internal/store/store.go 
 	}
 	return s.restore(key, val, expiresAt, version, order)'   '	return s.restore(key, val, expiresAt, version, order)'   'TestRestoreAtInstallsTheDeadlineAsGiven$' ./internal/store
 
+# --- a restore does not hold up flushes (F13, open question 55) ---
+
+mutate "a restore holds the flush lock while it reads" \
+  persistence.go \
+  '	p.restoreMu.Lock()
+	defer p.restoreMu.Unlock()
+	// Registered before the read' \
+  '	p.flushMu.Lock()
+	defer p.flushMu.Unlock()
+	// Registered before the read' \
+  'TestAFlushIsNotHeldUpByARestore$' ./tests
+mutate "a restore ignores what was flushed while it read" \
+  persistence.go \
+  '	for _, b := range p.flushedDuring[mark:] {
+		add(b)
+	}' \
+  '	_ = mark' \
+  'TestADeleteFlushedDuringARestoreIsNotUndone$' ./tests
+mutate "a flush during a restore keeps nothing for it" \
+  persistence.go \
+  '		p.flushedDuring = append(p.flushedDuring, batch)
+		kept = true' \
+  '		_ = batch' \
+  'TestADeleteFlushedDuringARestoreIsNotUndone$' ./tests
+mutate "a restore ignores the batch being flushed" \
+  persistence.go \
+  '	add(p.inflight)
+' \
+  '' \
+  'TestADeleteBeingFlushedDuringARestoreIsNotUndone$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

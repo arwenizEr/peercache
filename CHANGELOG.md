@@ -7,6 +7,18 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A persistent namespace stopped flushing while it restored a partition from
+  storage: the restore held the flush lock for its whole read, and after every
+  membership change every partition restores again. Acknowledged writes piled
+  up unflushed for the length of the restores, and a crash in them lost all
+  of them — on kind, about 54,000 orders when a pod was OOM-killed during a
+  rolling restart over ~600,000 orders a pod. The loss window is one flush
+  interval again: a restore no longer takes the flush lock, and lays over
+  storage what is pending, what a flush is writing and what flushes wrote
+  while it read. Open question 55.
+
 ## [0.2.0] - 2026-11-15
 
 Validated on a five-pod kind cluster under kill, rolling-restart and partition
