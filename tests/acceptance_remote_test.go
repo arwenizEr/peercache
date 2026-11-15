@@ -209,7 +209,7 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 	for i := 0; i < keys; i++ {
 		k := fmt.Sprintf("bench/%d", i)
 		all = append(all, k)
-		if err := reader.Set(ctx, k, value, 0); err != nil {
+		if err := setWhileConnecting(ctx, reader, k, value); err != nil {
 			t.Fatalf("Set(%s): %v", k, err)
 		}
 	}
@@ -406,4 +406,20 @@ func TestRemoteGetThroughputAndLatency(t *testing.T) {
 			"the transport regressed badly or this machine is too loaded to measure on",
 			rps, m4ThroughputFloor, m4TargetRPS)
 	}
+}
+
+// setWhileConnecting is Set for the seeding of a freshly started gRPC cluster.
+// Gossip converging says every node is known, not that every connection to it
+// has completed its handshake: CI once failed the seed's first write to a peer
+// with "error reading server preface: EOF". Seeding is not what is measured,
+// so a write to a node not yet reachable is tried again, briefly.
+func setWhileConnecting(ctx context.Context, ns peercache.Namespace, key string, value []byte) error {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		if err = ns.Set(ctx, key, value, 0); err == nil || !errors.Is(err, peercache.ErrNodeUnreachable) {
+			return err
+		}
+		<-time.After(50 * time.Millisecond)
+	}
+	return err
 }
