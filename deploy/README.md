@@ -154,8 +154,14 @@ holds, and makes reads of that share report not-found until it dies again;
 with a probation longer than it survives, its restarts move nothing.
 `peercache_members_on_probation` shows it waiting.
 
-Then set `WithMemoryBudget` below that limit, at about three quarters of it, and
-`GOMEMLIMIT` between the two. The budget is what makes a failover cascade stop:
+Then set `GOMEMLIMIT` to about nine tenths of that limit and `WithMemoryBudget`
+to about half of it. The budget counts the data tiers, not the heap around them:
+on kind, at a million orders, the heap in use was about 1.55 times what it
+counted, and without `GOMEMLIMIT` the Go runtime lets the heap reach twice its
+live size before collecting. A pod budgeted at three quarters of its limit, or
+at half of it with no `GOMEMLIMIT`, is OOM-killed under the load the budget was
+meant to absorb (`docs/decisions/open.md`, question 55). The budget is what
+makes a failover cascade stop:
 a survivor over its budget sheds L1, then replicas, then owned data, instead of
 being killed and passing its share to the next. `peercache_memory_used_bytes`
 against `peercache_memory_budget_bytes` is the margin; a rising

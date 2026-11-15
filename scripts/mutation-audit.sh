@@ -2907,6 +2907,8 @@ mutate "a restore ignores the batch being flushed" \
   '' \
   'TestADeleteBeingFlushedDuringARestoreIsNotUndone$' ./tests
 
+mutate "a budget without a memory limit is not warned about"   peercache.go   '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {'   '	if false {'   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
 if [ "$filtered" -ne 0 ]; then

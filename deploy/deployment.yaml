@@ -150,10 +150,13 @@ spec:
                 port: http
 
           # Size for the steady state plus the replicas inherited when a peer
-          # fails, and set the application's WithMemoryBudget to about three
-          # quarters of the memory limit so the node sheds before it is
-          # killed. See deploy/README.md.
+          # fails. Set GOMEMLIMIT to about nine tenths of the memory limit and
+          # the application's WithMemoryBudget to about half of it, so the node
+          # sheds, and the runtime collects, before it is killed. See
+          # deploy/README.md.
           #
           # resources:
           #   requests: {memory: 2Gi, cpu: 500m}
           #   limits:   {memory: 4Gi}
+          # env:
+          #   - {name: GOMEMLIMIT, value: 3600MiB}

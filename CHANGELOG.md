@@ -7,6 +7,15 @@ change the public API.
 
 ## [Unreleased]
 
+### Changed
+
+- `WithMemoryBudget`'s guidance: about half the container limit, with
+  `GOMEMLIMIT` at about nine tenths of it — not three quarters. The budget
+  counts the data tiers; on kind the heap in use was about 1.55 times that, and
+  without a memory limit the runtime lets the heap reach twice its live size.
+  `New` now warns when a budget is set and the process has no memory limit.
+  The shop's manifest sets `GOMEMLIMIT`.
+
 ### Fixed
 
 - A persistent namespace stopped flushing while it restored a partition from
