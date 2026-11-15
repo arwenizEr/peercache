@@ -219,3 +219,26 @@ func TestANewOwnerCountsFromItsPromotedCopy(t *testing.T) {
 			"was promoted", v)
 	}
 }
+
+// TestADrainedNodeRefusesAPeerThatMissedTheDeparture: a peer that did not
+// hear a node's departure still routes its keys to it. The drained node must
+// refuse the write rather than apply it to keys it has handed on.
+func TestADrainedNodeRefusesAPeerThatMissedTheDeparture(t *testing.T) {
+	f, open, key := fourNodeStock(t)
+	ctx := context.Background()
+	drained, unaware := f.ids[0], f.ids[1]
+	// The unaware peer cannot hear the departure announcement.
+	f.net.Partition([]string{drained}, []string{unaware})
+	if err := f.caches[drained].Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	f.net.Heal()
+	if d, err := f.caches[unaware].DescribeKey("stock", key); err != nil || d.Owner != drained {
+		t.Fatalf("the unaware peer sees owner %q (%v); the test needs it to still route to %s", d.Owner, err, drained)
+	}
+	if v, err := open(unaware).Increment(ctx, key, -1, 0); !errors.Is(err, peercache.ErrNotOwner) &&
+		!errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Increment from a peer that missed the departure = %d, %v; the drained "+
+			"node applied it to a key it has handed on", v, err)
+	}
+}
