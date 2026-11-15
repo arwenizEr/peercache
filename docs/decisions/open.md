@@ -1781,4 +1781,31 @@ a time (`restoreMu`), as before, so a restore holds no more memory than it did.
 `TestADeleteBeingFlushedDuringARestoreIsNotUndone` pin the hazard, each caught
 by an audit entry that removes its half of the overlay.
 
-**Next:** C, then A.
+**D, found and resolved on the way.** Re-run on kind after B (a million
+orders: stock caps the shop at that), the rolling restart lost no order — but
+pending records still peaked at 29,000 on a restarting pod, and, with no
+restart at all, rose from ~150 to ~1,500 at every compaction tick, once a
+minute, with flushes falling from ~120 to ~85 a minute. Compaction and log
+splitting ran on the flusher's goroutine. They now have their own; it is
+safe for the reason concurrent compactors on different nodes are.
+`TestAFlushIsNotHeldUpByACompaction` failed before.
+
+That run also lost acknowledged stock decrements on 4 of 50 items beyond the
+uncertain checkouts, with shop-2 OOM-killed once. Not yet explained; next after
+A.
+
+**A, measured.** Heap profile of a steady pod at a million orders: 363 MB in
+use, 234 MB of it counted by the budget — the replica store 200 MB, the owned
+store 71 MB, msgpack-decoded key strings 43 MB, the rest gRPC and buffers. The
+per-entry overheads are counted; what is not is everything around the stores.
+With GOGC at its default the heap may reach twice the live set before a
+collection, so a 512 MiB budget at its limit wants well over 1 GiB. A library
+cannot bound its process by counting; the runtime can, with GOMEMLIMIT.
+
+**C** — writes acknowledged degraded during restores: the run after B counted
+none. It was likely the starved pod's gossip failing, its view shrinking to
+itself (question 37's window), which A's memory pressure caused.
+
+**Next:** A — `GOMEMLIMIT` in the deployment guidance and the shop's manifest,
+and the budget's documentation saying what it does and does not bound. Then
+the stock decrements.

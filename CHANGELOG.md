@@ -18,6 +18,10 @@ change the public API.
   interval again: a restore no longer takes the flush lock, and lays over
   storage what is pending, what a flush is writing and what flushes wrote
   while it read. Open question 55.
+- Compaction and log splitting ran on the flusher's goroutine, so each held
+  flushes off while it read storage. On kind with a million orders, pending
+  records rose tenfold at every compaction tick, once a minute. They now run
+  on a goroutine of their own.
 
 ## [0.2.0] - 2026-11-15
 
