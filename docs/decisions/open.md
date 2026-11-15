@@ -1737,3 +1737,19 @@ reads inside one goroutine.
 Also from that CI run: `TestKeysAdoptedIsCounted` checked the adopted metric
 on the first receiver only; the one adopted key had landed on the second.
 A test bug; it now checks each receiver whose counter moved.
+
+## 55. Under memory pressure a pod exceeds its budget and acknowledged orders are lost — found on kind, open
+
+**Found** running v0.2.0's M16 scenarios on accumulated data (docs/m16-results.md,
+"The same release on accumulated data"): with ~600k owned orders a pod, a
+rolling restart OOM-killed one pod five times (1 GiB limit, 512 MiB budget) and
+54,000 acknowledged orders then read back 404. The same scenarios on fresh data
+lose nothing.
+
+**Not yet known:** whether the loss needs the OOM (a crashloop taking a second
+holder down alongside the restarting one) or follows from shedding under the
+budget itself; and what the budget does not count — restore, catch-up pages,
+the replica store, or allocation churn the budget cannot see.
+
+**Next:** reproduce on kind with a controlled volume, one variable at a time;
+then each half as a named test. Nothing is decided until it is reproduced.
