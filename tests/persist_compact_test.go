@@ -40,8 +40,7 @@ func partitionOf(t *testing.T, key string) string {
 	store := persist.Memory()
 	c, fc := newCache(t)
 	ns := c.Namespace("orders", peercache.WithPersistence(store))
-	_ = ns.Set(context.Background(), key, []byte("x"), 0)
-	flushed(t, c, fc, 1)
+	writeThenFlush(t, c, fc, func() { _ = ns.Set(context.Background(), key, []byte("x"), 0) })
 	split(t, c, fc)
 	names, _ := store.List(context.Background(), "")
 	if len(names) != 1 || strings.Contains(names[0], "/log/") {
@@ -88,12 +87,31 @@ func objectsUnder(t *testing.T, store persist.BlobStore, prefix string) (snaps, 
 func writeFlushed(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Duration) }, ns peercache.Namespace, key string, times int) {
 	t.Helper()
 	for i := 0; i < times; i++ {
-		if err := ns.Set(context.Background(), key, []byte(fmt.Sprintf("%s-%d", key, i)), 0); err != nil {
-			t.Fatal(err)
-		}
-		flushed(t, c, fc, 1)
+		writeThenFlush(t, c, fc, func() {
+			if err := ns.Set(context.Background(), key, []byte(fmt.Sprintf("%s-%d", key, i)), 0); err != nil {
+				t.Fatal(err)
+			}
+		})
 		split(t, c, fc)
 	}
+}
+
+// writeThenFlush runs write and waits until it has been flushed.
+//
+// The flush count is read before the write, not after. A split's advance
+// also fires the flush ticker, and the flusher, which no longer waits behind
+// splits, may take that tick only once write has run — flushing it before a
+// count read afterwards, so that the next tick finds nothing pending, counts
+// nothing, and the wait never ends.
+func writeThenFlush(t *testing.T, c peercache.Cache, fc interface{ Advance(time.Duration) }, write func()) {
+	t.Helper()
+	before := c.Stats().PersistFlushes
+	write()
+	fc.Advance(flushInterval)
+	waitFor(t, "a flush", func() bool {
+		s := c.Stats()
+		return s.PersistFlushes > before && s.PersistPending == 0
+	})
 }
 
 func compacted(t *testing.T, c peercache.Cache, fc *clock.Fake) {
@@ -160,8 +178,7 @@ func TestATombstoneIsKeptForItsGrace(t *testing.T) {
 		c, fc := newCache(t)
 		ns := c.Namespace("orders", peercache.WithPersistence(store))
 		writeFlushed(t, c, fc, ns, "k", compactAfter)
-		_ = ns.Delete(context.Background(), "k")
-		flushed(t, c, fc, 1)
+		writeThenFlush(t, c, fc, func() { _ = ns.Delete(context.Background(), "k") })
 		split(t, c, fc)
 		compacted(t, c, fc)
 		if r, ok := snapshotRecord(t, store, prefix, "k"); !ok || !r.Tombstone {
@@ -290,16 +307,19 @@ func TestAFlushIsNotHeldUpByACompaction(t *testing.T) {
 	toCompactionTick(fc)
 	waitFor(t, "the compaction to be reading storage", func() bool { return store.waiting.Load() > 0 })
 
+	// Counted in records written rather than by looking for the write in
+	// pending: the advance that fired the compaction fired the flush ticker
+	// too, and the flusher may take that tick after the write.
+	written := c.Stats().PersistRecordsWritten
 	if err := ns.Set(context.Background(), "k", []byte("during"), 0); err != nil {
 		t.Fatalf("Set while a compaction reads: %v", err)
-	}
-	before := c.Stats()
-	if before.PersistPending == 0 {
-		t.Fatal("the write is not pending; the test would prove nothing")
 	}
 	fc.Advance(flushInterval)
 	waitFor(t, "a flush while a compaction is reading storage", func() bool {
 		s := c.Stats()
-		return s.PersistFlushes > before.PersistFlushes && s.PersistPending == 0
+		return s.PersistRecordsWritten > written && s.PersistPending == 0
 	})
+	if store.waiting.Load() == 0 {
+		t.Fatal("the compaction finished first; the test proved nothing")
+	}
 }
