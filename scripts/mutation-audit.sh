@@ -2943,7 +2943,7 @@ mutate "a drained node applies a peer's write" \
 			groupKey, core.ErrNotOwner)
 	}' \
   '' \
-  'TestADrainedNodeAppliesNoWrite$' ./tests
+  'TestADrainedNodeRefusesAPeerThatMissedTheDeparture$' ./tests
 
 # --- the memory budget says what it does not bound (open question 55) ---
 
