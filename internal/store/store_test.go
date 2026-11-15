@@ -622,6 +622,43 @@ func TestRestoreRefusesAnOlderVersion(t *testing.T) {
 	}
 }
 
+// TestRestoreAtInstallsTheDeadlineAsGiven: a promotion hands over the
+// owner's deadline, and the key must expire at that instant however long
+// after reading it the promotion got round to this key (F12). A deadline
+// already passed installs nothing.
+func TestRestoreAtInstallsTheDeadlineAsGiven(t *testing.T) {
+	s, fc := newStore(t)
+	deadline := fc.Now().Add(10 * time.Second).UnixNano()
+
+	fc.Advance(6 * time.Second) // the promotion loop reaching this key
+	if !s.RestoreAt("k", []byte("v"), deadline, 1, 1) {
+		t.Fatal("RestoreAt refused a key inside its deadline")
+	}
+	fc.Advance(4*time.Second - time.Nanosecond)
+	if _, _, ok := s.Get("k"); !ok {
+		t.Fatal("the key expired before the deadline it was given")
+	}
+	fc.Advance(time.Nanosecond)
+	if v, _, ok := s.Get("k"); ok {
+		t.Fatalf("the key is served (%q) at the deadline it was given: its life was "+
+			"extended by the time between reading the deadline and restoring it", v)
+	}
+
+	if s.RestoreAt("late", []byte("v"), deadline, 1, 1) {
+		t.Fatal("RestoreAt installed a key whose deadline had passed")
+	}
+	if _, _, ok := s.Get("late"); ok {
+		t.Fatal("a key past its deadline is resident")
+	}
+	if !s.RestoreAt("forever", []byte("v"), 0, 1, 1) {
+		t.Fatal("RestoreAt refused a key with no deadline")
+	}
+	fc.Advance(24 * time.Hour)
+	if _, _, ok := s.Get("forever"); !ok {
+		t.Fatal("a key restored with no deadline expired")
+	}
+}
+
 // TestSnapshotPagesInKeyOrder is what stops a catch-up on a large namespace
 // building one message proportional to the keyspace.
 //

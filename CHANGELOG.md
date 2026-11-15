@@ -140,6 +140,13 @@ change the public API.
 
 ### Fixed
 
+- A promoted key lived longer than its TTL by however long the promotion had
+  taken to reach it: the remaining lifetime was taken against one reading of
+  the clock and turned back into a deadline against a later one. Promotion now
+  installs the owner's deadline as it is (`Store.RestoreAt`). Found when CI,
+  re-enabled after three days off, failed `TestADrainedKeyKeepsItsRemainingTTL`
+  on a 4-vCPU runner (locally 1 run in 40 at `-cpu 2`).
+
 - A node that lost a key's ownership kept the value in its owned store, outside
   replication, hand-off and eviction; when ownership came back to it after the
   newer holders died it served the overwritten value. Reconciliation now

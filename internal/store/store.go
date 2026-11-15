@@ -555,7 +555,26 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, orde
 	if ttl > 0 {
 		expiresAt = deadlineNanos(s.clk.Now(), ttl)
 	}
+	return s.restore(key, val, expiresAt, version, order)
+}
 
+// RestoreAt is [Store.Restore] with the deadline itself rather than the time
+// left until it: expiresAt in Unix nanoseconds, zero for none. A deadline
+// already passed installs nothing and reports false.
+//
+// A caller that holds a deadline must pass it as one. Converting it to a
+// remainder against one reading of the clock and back against a later one
+// adds whatever passed in between to the key's life: a promotion that read
+// the clock once and then restored its keys extended every one of them by
+// the time the loop had taken to reach it.
+func (s *Store) RestoreAt(key string, val []byte, expiresAt int64, version, order uint64) bool {
+	if expiresAt != 0 && s.clk.Now().UnixNano() >= expiresAt {
+		return false
+	}
+	return s.restore(key, val, expiresAt, version, order)
+}
+
+func (s *Store) restore(key string, val []byte, expiresAt int64, version, order uint64) bool {
 	stored := make([]byte, len(val))
 	copy(stored, val)
 
