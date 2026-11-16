@@ -502,6 +502,11 @@ func WithHotKeyTracking(n int) NamespaceOption {
 // read of a key owned elsewhere then costs a round trip and nothing is ever
 // served stale — which is the right trade for a namespace whose values must
 // never lag, and the wrong one for almost everything else.
+//
+// The default is 5 seconds. Zero is rejected at construction with
+// [ErrInvalidOption]: it would read as "no bound", which is the one thing this
+// option exists to rule out. A copy is also never kept past its key's own
+// remaining TTL.
 func WithL1TTL(d time.Duration) NamespaceOption {
 	return func(o *core.NamespaceOptions) { o.L1TTL = d }
 }
