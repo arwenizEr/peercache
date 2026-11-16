@@ -459,6 +459,11 @@ func TestAReadReachesTheOwner(t *testing.T) {
 func TestAWriteReachesTheOwner(t *testing.T) {
 	f := newFabric(t, 3)
 	ctx := context.Background()
+	// Every node opens the namespace, as an application does: a peer
+	// request for one a node has not opened is refused.
+	for _, id := range f.ids {
+		f.caches[id].Namespace("data")
+	}
 
 	const key = "orders/99"
 	owner := f.ownerOf(t, key)
@@ -524,6 +529,11 @@ func TestADeleteReachesTheOwner(t *testing.T) {
 func TestAMissIsAMissEverywhere(t *testing.T) {
 	f := newFabric(t, 3)
 	ctx := context.Background()
+	// Every node opens the namespace, as an application does: a peer
+	// request for one a node has not opened is refused.
+	for _, id := range f.ids {
+		f.caches[id].Namespace("data")
+	}
 
 	const key = "never/written"
 	owner := f.ownerOf(t, key)

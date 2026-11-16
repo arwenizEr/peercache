@@ -435,7 +435,8 @@ The creation still happens; refusing it would break routed writes to a node
 during legitimate startup ordering. What changed is that it is now *visible*:
 `Stats().ImplicitNamespaces` counts it and each occurrence logs the namespace
 and the replication factor it is stuck with.
-`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` asserts both the
+`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` (since replaced by
+`TestAPeerRequestForAnUnopenedNamespaceIsRefused`, see open question 32) asserted both the
 shortfall under the misconfiguration and the exact expected count when every
 node is configured.
 
@@ -754,7 +755,8 @@ caught   Settled always says yes                                            -- T
 caught   drain does not hand off its keys                                   -- TestDrainSavesDataWithoutReplication
 caught   drain does not announce its departure                              -- TestDrainStopsPeersRoutingImmediately
 caught   handed-off keys are not adopted by their new owner                 -- TestDrainSavesDataWithoutReplication
-caught   an implicitly created namespace is not counted                     -- TestAnImplicitNamespaceIsCountedAndReplicatesNothing
+caught   a peer request for an unopened namespace is served                 -- TestAPeerRequestForAnUnopenedNamespaceIsRefused
+caught   a refusal for an unopened namespace is not counted                 -- TestAPeerRequestForAnUnopenedNamespaceIsRefused
 caught   the plan counts promotions as moves                                -- TestRemovingANodeMovesOnlyItsShare
 caught   an empty view plans an evacuation                                  -- TestAnEmptyNewViewPlansNothing
 caught   unchanged keys are never counted                                   -- TestNoChangeMeansNoMoves

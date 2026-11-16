@@ -120,6 +120,10 @@ func Collect(s core.Stats) []Metric {
 			"Namespaces created by an incoming peer write rather than by this node's application. " +
 				"Any non-zero value is a misconfiguration: such a namespace runs at replication factor 1 and cannot be reconfigured.",
 			float64(s.ImplicitNamespaces)},
+		{"peercache_unopened_namespace_refusals_total", Counter,
+			"Peer requests refused because they named a namespace this node's application has not opened. " +
+				"Brief while a node starts; a rate that does not fall means this node never opens a namespace its peers use.",
+			float64(s.UnopenedNamespaceRefusals)},
 		{"peercache_degraded_writes_total", Counter,
 			"Synchronous writes acknowledged holding fewer copies than the namespace's replication factor asked for. " +
 				"Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns success. Any non-zero value means a caller was told a write reached RF nodes when it did not.",

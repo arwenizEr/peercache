@@ -75,7 +75,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-63 series in the Prometheus text exposition format, and PeerCache imports no
+64 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -1516,7 +1516,7 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 63 series come out of it.
+format with the content type a scraper expects, and 64 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
@@ -1560,7 +1560,7 @@ its Go name.
 
 ### The metrics that are worth alerting on
 
-Most of the 63 are ordinary levels and rates. These eleven are not — each counts a
+Most of the 64 are ordinary levels and rates. These twelve are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
@@ -1568,7 +1568,8 @@ window was entered.
 |---|---|
 | `peercache_split_brain_detections_total` | A replica saw writes for one key from two nodes under one membership epoch. Two nodes believed they owned it. This is the AP consequence of gossip membership actually happening. |
 | `peercache_stale_epoch_refusals_total` | A caller's view was older than this node's and the operation was refused. Sustained under stable membership means callers disagree about ownership. |
-| `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** It is a silent misconfiguration that looks exactly like a data-loss bug; it once took weeks to diagnose. |
+| `peercache_implicit_namespaces_total` | A routed write created a namespace this node had never opened, so it got default options — replication factor 1. **Alert on this being non-zero.** Since v0.4 nothing on the request paths creates one (see the next row); the series stays, at zero. |
+| `peercache_unopened_namespace_refusals_total` | A peer's request named a namespace this node's application has not opened, and was refused with `ErrActivationPending`, which the peer asks again for. A few while a node starts are normal. **Alert on a rate that does not fall:** this node's application never opens a namespace its peers use, and its share of that namespace cannot be served. Open every namespace, with its options, before joining. |
 | `peercache_degraded_writes_total` | A **synchronous** write was acknowledged holding fewer copies than its namespace's replication factor asked for. **Alert on this being non-zero.** It means a caller was told a write reached RF nodes when it reached fewer, and it is the only signal that distinguishes the two. Replication targets come from this node's own membership view, so a node cut off from the cluster ranks itself the owner of everything, places the one copy it can reach and returns nil. See open question 37. |
 | `peercache_under_replicated_refusals_total` | A synchronous write was refused with `ErrUnderReplicated` in a namespace opened with `WithRequireReplicationFactor`. The caller was told, so nothing is silent — but a sustained rate means a node is cut off or the cluster is smaller than the factor, and every write to that namespace is failing. |
 | `peercache_replications_failed_total` | A replica write did not land. Under async replication the caller was told the write succeeded. |

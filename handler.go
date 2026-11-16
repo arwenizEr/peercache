@@ -769,6 +769,27 @@ func (h *peerHandler) assertOwned(namespace, key string) error {
 	if ok && ns.err == nil {
 		groupKey = ns.groupKeyFor(key)
 	}
+	// A namespace this node's application has not opened has no options
+	// here, and creating it with defaults — as this used to — fixes it at
+	// replication factor 1 with no persistence for good, since options are
+	// fixed at creation. The node would then own keys it neither replicates
+	// nor stores. On kind a pod restarted while its object store was
+	// unreachable, joined before opening its namespaces, and lost its share
+	// of every acknowledged order that way. Refusing is "ask again here
+	// shortly", which every caller already does; the application opening
+	// the namespace ends it. Checked before ownership, because without the
+	// namespace's partitioner this node cannot tell which group the key is in.
+	if !ok {
+		h.cache.unopenedRefusals.Add(1)
+		if _, logged := h.cache.unopenedWarned.LoadOrStore(namespace, struct{}{}); !logged {
+			h.cache.opts.Logger.Warn(
+				"refusing peers' requests for a namespace this node's application has not opened; "+
+					"open every namespace before joining the cluster",
+				"namespace", namespace)
+		}
+		return fmt.Errorf("peercache: namespace %q is not open on this node yet: %w",
+			namespace, core.ErrActivationPending)
+	}
 	// A draining node has handed its keys on, and its own view may still name
 	// it their owner: a peer that has not yet noticed the departure would have
 	// its write applied where nobody reads it again. See mayServeLocally.

@@ -118,9 +118,14 @@ func run(cfg config) error {
 	if err != nil {
 		return err
 	}
-	go joinLoop(gossip, cfg)
-	go catchUpLoop(cache)
-
+	// Namespaces first, then the cluster. A node that joins before opening
+	// them is written to by its peers for namespaces it has no options for;
+	// the library refuses those requests until it opens them, and before
+	// that it created them with defaults: no replication, no persistence. On
+	// kind a pod restarted while MinIO was unreachable, waited for the bucket
+	// here after joining, and lost its share of every acknowledged order
+	// (docs/decisions/open.md question 32). Catch-up also waits: it pulls
+	// only for namespaces that are open.
 	store, err := blobStore(cfg)
 	if err != nil {
 		return err
@@ -129,6 +134,8 @@ func run(cfg config) error {
 	if err != nil {
 		return err
 	}
+	go joinLoop(gossip, cfg)
+	go catchUpLoop(cache)
 
 	mux := http.NewServeMux()
 	s.routes(mux)

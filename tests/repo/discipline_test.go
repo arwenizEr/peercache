@@ -579,6 +579,9 @@ func TestApiDocExampleTableMatchesReality(t *testing.T) {
 // judgement that should be recorded once and then enforced, not re-made by a
 // regex every time somebody writes a sentence.
 var citedButNotDefined = map[string]string{
+	"TestAnImplicitNamespaceIsCountedAndReplicatesNothing": "replaced by " +
+		"TestAPeerRequestForAnUnopenedNamespaceIsRefused when open question 32 " +
+		"was reversed; the history of that question names it as it was",
 	"TestSomething": "a placeholder in the mutation audit's own description",
 	"TestReport": "a -run prefix pattern matching TestReportHitRatio and two " +
 		"others in the internal/l1/eval module; named in prose by " +
