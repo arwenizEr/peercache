@@ -1153,6 +1153,28 @@ one at a time and in order. On kind at about 140,000 orders a minute, the
 single sender's queue overflowed and dropped some 250,000 replica writes a
 minute — writes acknowledged and never copied.
 
+## An idle tick — reconciliation only when something may be out of place
+
+`BenchmarkIdleTick`, Machine A: five nodes on the in-process fabric, an RF=3
+namespace, membership unchanged for longer than the ten-second settling
+window, no traffic. Each op advances the clock one tick and waits for the
+cluster to go quiet; that wait is about 37 ms of every op whatever the change,
+so the difference between the rows is what a tick costs. Three runs of
+`-benchtime 20x`; medians, with the runs.
+
+| Keys | Ticks | Reconciliations per tick | ns/op |
+|---|---|---|---|
+| 10,000 | always reconcile | 5 | 38,120,295 (37,195,755, 38,120,295, 38,582,975) |
+| 10,000 | only when due | 0 | 37,092,010 (36,709,675, 37,092,010, 38,058,595) |
+| 100,000 | always reconcile | 5 | 46,886,315 (45,624,075, 46,886,315, 47,242,480) |
+| 100,000 | only when due | 0 | 38,183,220 (38,058,820, 38,183,220, 38,942,810) |
+
+8.7 ms a tick at 100,000 keys, in proportion to what each node holds: about
+130 ns an entry, ranked twice. Measured directly before the change, a tick took
+0.8 ms at 10,000 keys and 7.8–9.4 ms at 100,000. On kind, at about 400,000 keys
+a pod, the shop ran at about 9,000 orders a minute against 140,000 on an empty
+store.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

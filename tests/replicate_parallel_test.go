@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -28,6 +29,9 @@ type heldReplicas struct {
 
 	inFlight atomic.Int64
 	peak     atomic.Int64
+
+	// refuse, while set, fails every Replicate before it is sent.
+	refuse atomic.Bool
 }
 
 func newHeldReplicas(tr core.Transport) *heldReplicas {
@@ -77,6 +81,9 @@ type heldClient struct {
 func (c *heldClient) Invoke(ctx context.Context, method string, req []byte) ([]byte, error) {
 	if method != transport.MethodReplicate {
 		return c.PeerClient.Invoke(ctx, method, req)
+	}
+	if c.parent.refuse.Load() {
+		return nil, errors.New("replicate refused by the test")
 	}
 	var r wire.ReplicateRequest
 	if err := wire.Decode(req, &r); err != nil {

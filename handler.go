@@ -572,8 +572,20 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	// may already have run and found nothing to promote, and the copy would
 	// sit in the replica store, unreadable, until the next tick. A hand-off
 	// from a draining node is exactly that race.
-	if ns, exists := h.cache.namespaceIfExists(in.Namespace); exists && ns.err == nil && h.ownsKey(ns, in.Key) {
+	ns, exists := h.cache.namespaceIfExists(in.Namespace)
+	switch {
+	case !exists:
+		// Filed for a namespace not yet opened here; opening it marks
+		// the promoter dirty.
+	case ns.err != nil:
+	case h.ownsKey(ns, in.Key):
 		h.cache.promoter.promoteKey(ns, in.Key)
+	case h.cache.guard != nil &&
+		!h.cache.stillReplicaFor(ns.groupKeyFor(in.Key), ns.opts.ReplicationFactor, h.cache.self().ID):
+		// Out of place under this node's view: a sender's older view put
+		// it here. No membership change is coming to move it, so the
+		// next tick must.
+		h.cache.promoter.markDirty()
 	}
 	return wire.Encode(&wire.ReplicateResponse{Conflict: conflict})
 }

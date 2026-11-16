@@ -2483,7 +2483,7 @@ mutate "the catch-up gate lets a forwarded write through" \
 
 mutate "reconciliation drains more orphans than the queue holds" \
   promote.go \
-  'c.replicas.DrainUpTo(name, c.handoff.room(), func' \
+  'c.replicas.DrainUpTo(name, room, func' \
   'c.replicas.DrainUpTo(name, -1, func' \
   'TestAHandOffBacklogLargerThanItsQueueIsNotChurned$' ./tests
 
@@ -3105,6 +3105,26 @@ mutate "partitions restore one at a time" \
 mutate "async fan-out sends one copy at a time"   replicate.go   'const replicaWorkers = 8'   'const replicaWorkers = 1'   'TestAsyncFanOutRunsInParallel$' ./tests
 
 mutate "one key's async copies travel on several senders"   replicate.go   'case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:'   'case r.queues[len(w.value)%len(r.queues)] <- w:'   'TestAsyncFanOutKeepsOneKeysWritesInOrder$' ./tests
+
+# --- an idle tick reconciles nothing; an out-of-place copy marks the next one ---
+
+mutate "an idle tick reconciles in full" \
+  promote.go \
+  'if p.dirty.Swap(false) || settling {' \
+  'if p.dirty.Swap(false) || settling || true {' \
+  'TestAnIdleTickDoesNotReconcile$' ./tests
+
+mutate "a stray replica is left for a membership change that never comes" \
+  handler.go \
+  '		// next tick must.
+		h.cache.promoter.markDirty()' \
+  '		// next tick must.' \
+  'TestAStrayReplicaIsHandedOnOnAQuietCluster$' ./tests
+
+mutate "a hand-off backlog waits for a membership change"   promote.go   '			// tick drains them as it frees up.
+			p.markDirty()'   '			// tick drains them as it frees up.'   'TestAStrayBacklogLargerThanTheHandOffQueueIsHandedOn$' ./tests
+
+mutate "a copy a hand-off puts back waits for a membership change"   handoff.go   '	h.cache.promoter.markDirty()'   ''   'TestACopyAHandOffPutsBackIsTriedAgainOnAQuietCluster$' ./tests
 
 # --- options given to an open namespace are warned about (open question 26) ---
 

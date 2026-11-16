@@ -131,6 +131,8 @@ func (h *handoff) enqueue(w handoffWork) {
 func (h *handoff) restore(w handoffWork) {
 	h.cache.replicas.Put(w.namespace, w.key, w.entry)
 	h.returned.Add(1)
+	// Still out of place, so a later tick tries it again.
+	h.cache.promoter.markDirty()
 }
 
 func (h *handoff) run() {
