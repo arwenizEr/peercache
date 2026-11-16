@@ -928,13 +928,21 @@ mutate "drain does not announce its departure" \
 # from scratch. See
 # docs/verification.md, and TestKeysAdoptedIsCounted for the same race found and
 # fixed on the counter side.
-mutate "an implicitly created namespace is not counted" \
+# Since question 32 was reversed, a peer request for an unopened namespace is
+# refused before anything could create it, so these replace the entry for the
+# implicit-namespace counter.
+mutate "a peer request for an unopened namespace is served" \
   handler.go \
-  'if !existed {
-		h.cache.implicitNamespaces.Add(1)' \
-  'if _ = existed; false {
-		h.cache.implicitNamespaces.Add(1)' \
-  'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' ./tests
+  '	if !ok {
+		h.cache.unopenedRefusals.Add(1)' \
+  '	if false {
+		h.cache.unopenedRefusals.Add(1)' \
+  'TestAPeerRequestForAnUnopenedNamespaceIsRefused$' ./tests
+mutate "a refusal for an unopened namespace is not counted" \
+  handler.go \
+  '		h.cache.unopenedRefusals.Add(1)' \
+  '' \
+  'TestAPeerRequestForAnUnopenedNamespaceIsRefused$' ./tests
 
 mutate "the plan counts promotions as moves" \
   internal/rebalance/plan.go \
@@ -1448,8 +1456,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
+  '64 series come out of it' \
   '63 series come out of it' \
-  '62 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of

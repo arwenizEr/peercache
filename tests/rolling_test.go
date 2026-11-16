@@ -561,59 +561,62 @@ func TestDrainStopsPeersRoutingImmediately(t *testing.T) {
 	}
 }
 
-// TestAnImplicitNamespaceIsCountedAndReplicatesNothing pins the hazard that
-// looked like a data-loss bug for weeks.
+// TestAPeerRequestForAnUnopenedNamespaceIsRefused: a node whose application has
+// not opened a namespace refuses peers' requests for it, rather than creating it
+// with default options.
 //
-// A write routed to its owner creates the namespace there if the application
-// has not opened it — with default options, so replication factor 1. Options
-// are fixed at creation, so that node replicates nothing for that namespace
-// ever after, however it is configured later. Killing it loses its whole share
-// at what the operator believes is RF=3.
+// It used to create it. Options are fixed at creation, so the namespace got
+// replication factor 1 and no persistence for good, whatever the application
+// configured afterwards, and the node then owned keys it neither replicated nor
+// stored. Question 32 counted and logged that, and kept creating, because a
+// node that had not opened the namespace yet was taken to be a legitimate
+// startup order. On kind it was not: a shop pod restarted while MinIO was
+// unreachable, joined the cluster before opening its namespaces, and was
+// written to; its share of every acknowledged order was answered "not found"
+// after the partition healed and was gone after a cold start.
 //
-// The library cannot refuse the write without breaking routing, so it counts
-// and logs instead. This test is what stops that counter being quietly dropped.
-func TestAnImplicitNamespaceIsCountedAndReplicatesNothing(t *testing.T) {
+// The refusal is ErrActivationPending: this node owns the key but cannot
+// serve it yet, which every caller already asks again for. It is counted, so
+// a node whose application never opens the namespace is visible as one.
+func TestAPeerRequestForAnUnopenedNamespaceIsRefused(t *testing.T) {
 	f := newFabric(t, 5)
 	ctx := context.Background()
 
 	// Open the namespace on ONE node only, which is the mistake.
 	writer := f.ids[0]
-	ns := f.caches[writer].Namespace("implicit",
+	ns := f.caches[writer].Namespace("unopened",
 		peercache.WithReplicationFactor(3),
 		peercache.WithSyncReplication())
 
-	const keys = 200
-	for i := 0; i < keys; i++ {
-		if err := ns.Set(ctx, fmt.Sprintf("implicit/%d", i), []byte("v"), 0); err != nil {
-			t.Fatalf("Set: %v", err)
+	key := ""
+	for i := 0; key == ""; i++ {
+		if k := fmt.Sprintf("unopened/%d", i); f.ownerOf(t, k) != writer {
+			key = k
 		}
 	}
+	owner := f.ownerOf(t, key)
+	err := ns.Set(ctx, key, []byte("v"), 0)
+	if !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Set routed to %s, which has not opened the namespace = %v, want "+
+			"ErrActivationPending", owner, err)
+	}
+	st := f.caches[owner].Stats()
+	if st.UnopenedNamespaceRefusals == 0 {
+		t.Fatalf("%s refused a request for a namespace it has not opened without counting it", owner)
+	}
+	if st.ImplicitNamespaces != 0 {
+		t.Fatalf("%s created %d namespaces from peers' requests; it must create none", owner, st.ImplicitNamespaces)
+	}
+	if _, err := ns.Get(ctx, key); !errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Get routed to %s, which has not opened the namespace = %v; a not-found "+
+			"here would be a confident wrong answer", owner, err)
+	}
 
-	// The other owners created the namespace implicitly and replicate
-	// nothing, so the cluster holds far fewer copies than RF=3 implies.
-	var implicit, sent int64
+	// Once every node has opened it, the same write goes through and is held
+	// as widely as the factor says.
+	const keys = 200
 	for _, id := range f.ids {
-		st := f.caches[id].Stats()
-		implicit += st.ImplicitNamespaces
-		sent += st.ReplicationsSent
-	}
-	if implicit == 0 {
-		t.Fatal("no implicit namespace was counted, yet only one node opened it; the " +
-			"misconfiguration that silently disables replication is invisible")
-	}
-	t.Logf("%d nodes created the namespace implicitly; %d replications sent "+
-		"(RF=3 over %d keys would be %d)", implicit, sent, keys, keys*2)
-
-	// The shortfall is the point: this is what "replication factor 3" is
-	// actually delivering under this misconfiguration.
-	if sent >= int64(keys*2) {
-		t.Fatalf("%d replications sent for %d keys at RF=3; the test is not reproducing "+
-			"the misconfiguration", sent, keys)
-	}
-
-	// And with every node configured properly, replication is complete.
-	for _, id := range f.ids {
-		f.caches[id].Namespace("proper",
+		f.caches[id].Namespace("unopened",
 			peercache.WithReplicationFactor(3),
 			peercache.WithSyncReplication())
 	}
@@ -622,9 +625,8 @@ func TestAnImplicitNamespaceIsCountedAndReplicatesNothing(t *testing.T) {
 		before += f.caches[id].Stats().ReplicationsSent
 	}
 	for i := 0; i < keys; i++ {
-		if err := f.caches[writer].Namespace("proper").Set(
-			ctx, fmt.Sprintf("proper/%d", i), []byte("v"), 0); err != nil {
-			t.Fatalf("Set: %v", err)
+		if err := ns.Set(ctx, fmt.Sprintf("unopened/%d", i), []byte("v"), 0); err != nil {
+			t.Fatalf("Set after every node opened the namespace: %v", err)
 		}
 	}
 	after := int64(0)

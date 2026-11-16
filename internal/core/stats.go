@@ -223,7 +223,9 @@ type Stats struct {
 
 	// ImplicitNamespaces counts namespaces this node created in response to
 	// an incoming peer write, rather than because its own application asked
-	// for one.
+	// for one. Since peer requests for an unopened namespace are refused
+	// (UnopenedNamespaceRefusals), nothing on the request paths creates one;
+	// the counter stays, because a metric is never removed before v2.
 	//
 	// Any non-zero value is a misconfiguration worth alerting on. Such a
 	// namespace runs with default options — replication factor 1 — and
@@ -234,6 +236,13 @@ type Stats struct {
 	// The remedy is to open every namespace, with the options you want, on
 	// every node before serving traffic.
 	ImplicitNamespaces int64 `json:"implicitNamespaces"`
+	// UnopenedNamespaceRefusals counts peer requests this node refused with
+	// ErrActivationPending because they named a namespace its application
+	// has not opened. A node that is starting refuses some, briefly, before
+	// it opens its namespaces; a rate that does not fall means this node's
+	// application never opens a namespace its peers use, and its share of
+	// that namespace cannot be served.
+	UnopenedNamespaceRefusals int64 `json:"unopenedNamespaceRefusals"`
 
 	// DegradedWrites counts synchronous writes this node acknowledged while
 	// holding fewer copies than the namespace's replication factor asked for.

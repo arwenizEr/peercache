@@ -434,6 +434,11 @@ type cache struct {
 	// rather than by this node's application. Each one runs with default
 	// options, which means no replication.
 	implicitNamespaces atomic.Int64
+	// unopenedRefusals counts peer requests refused because they named a
+	// namespace this node's application has not opened; unopenedWarned is
+	// the set of names already logged, so each is logged once.
+	unopenedRefusals atomic.Int64
+	unopenedWarned   sync.Map
 
 	// splitBrain counts conflicts this node detected as a replica, as
 	// distinct from the ones its own fan-out was told about.
@@ -715,6 +720,7 @@ func (c *cache) Stats() Stats {
 		stats.KeysHandedOff = c.keysHandedOff.Load()
 		stats.KeysAdopted = c.keysAdopted.Load()
 		stats.ImplicitNamespaces = c.implicitNamespaces.Load()
+		stats.UnopenedNamespaceRefusals = c.unopenedRefusals.Load()
 		rehomed, returned := c.handoff.counters()
 		stats.ReplicasRehomed = rehomed
 		stats.ReplicasRetained = returned

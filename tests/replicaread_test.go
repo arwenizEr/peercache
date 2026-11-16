@@ -121,7 +121,14 @@ func newReplicaFabric(t *testing.T, cfg replicaFabricConfig) *replicaFabric {
 			opts = append(opts, peercache.WithSyncReplication())
 		}
 		for _, name := range []string{"probe", "hot"} {
-			if _, err := f.caches[id].Namespace(name, opts...).Exists(context.Background(), "x"); err != nil &&
+			f.caches[id].Namespace(name, opts...)
+		}
+	}
+	// Every node opens both before any is asked anything: a peer request for
+	// a namespace a node has not opened is refused.
+	for _, id := range f.ids {
+		for _, name := range []string{"probe", "hot"} {
+			if _, err := f.caches[id].Namespace(name).Exists(context.Background(), "x"); err != nil &&
 				!errors.Is(err, peercache.ErrNotFound) {
 				t.Fatalf("opening %s on %s: %v", name, id, err)
 			}

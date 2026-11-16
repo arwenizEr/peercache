@@ -7,6 +7,18 @@ change the public API.
 
 ## [Unreleased]
 
+### Changed
+
+- A peer's request for a namespace this node's application has not opened is
+  refused with `ErrActivationPending`, instead of creating the namespace with
+  default options. Created that way it was fixed at replication factor 1 with
+  no persistence; on kind a pod that joined before opening its namespaces lost
+  its share of every acknowledged order. Refusals are counted
+  (`Stats().UnopenedNamespaceRefusals`,
+  `peercache_unopened_namespace_refusals_total`). Open every namespace before
+  joining; a node that never opens one its peers use refuses its share of it.
+  Open question 32.
+
 ### Added
 
 - `Namespace(name, opts...)` on an already open namespace logs a warning,

@@ -822,7 +822,7 @@ it happens at all.
 
 ---
 
-## 32. An implicitly created namespace silently disables replication — M6, resolved
+## 32. An implicitly created namespace silently disables replication — M6, resolved; reversed before v1
 
 **Symptom, as first seen.** Hard-killing one node of five at replication factor
 3 with synchronous replication left 53 of 300 keys permanently unreachable —
@@ -845,7 +845,7 @@ because they had.
 rather than by the local application, and each one logs a warning naming the
 namespace and the replication factor it is stuck with. Any non-zero value is a
 misconfiguration: the node is running with options its application never chose.
-`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` pins both the shortfall
+`TestAnImplicitNamespaceIsCountedAndReplicatesNothing` pinned both the shortfall
 and the correct behaviour when every node is configured.
 
 The creation itself still happens. Refusing would break routed writes to a node
@@ -870,6 +870,27 @@ repeatable mistakes:
   per node — took one command. It came after a long run of reading code and
   reasoning about what *should* happen. Bisecting the failing case against a
   passing one worked immediately every time it was actually used.
+
+**Reversed before v1: refused, not created.** The v1 release candidate on kind
+lost 8,448 acknowledged orders in the partition scenario and 7,400 in the cold
+start after it, every one owned by one pod. That pod restarted during the
+partition while MinIO was unreachable; the shop joined the cluster before it
+opened its namespaces, waiting for the bucket in between, and its peers' writes
+created `orders` and `stock` there with default options: replication factor 1,
+no persistence, for good. The pod then owned keys it neither replicated nor
+stored. The "legitimate startup ordering" this question kept creation for is
+the ordering that lost them.
+
+A peer request for a namespace this node's application has not opened is now
+refused with `ErrActivationPending` in `assertOwned`, before anything could
+create it, and counted (`Stats().UnopenedNamespaceRefusals`,
+`peercache_unopened_namespace_refusals_total`); the first per namespace is
+logged. Every caller already asks again for that error, and the application
+opening the namespace ends it. A node whose application never opens a namespace
+its peers use refuses its share of it indefinitely: an availability gap in a
+misconfiguration, visible in a counter, in place of silent loss. The shop now
+opens its store and namespaces before it joins.
+`TestAPeerRequestForAnUnopenedNamespaceIsRefused` replaces the test above.
 
 ---
 
