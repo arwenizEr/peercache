@@ -2424,7 +2424,7 @@ mutate "a relayed catch-up copy is filed under its relay" \
   '			From:     e.From,
 ' \
   '' \
-  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+  'TestARelayedCatchUpCopyNamesItsWriter$' ./tests
 
 # --- open question 50 (found by M16) ---
 
