@@ -1100,6 +1100,21 @@ runs). Objects per flush are counted rather than benchmarked:
 `TestAFlushWritesOneObject` makes one request for 1,000 keys over every
 partition, where before 0030 the same flush made 64.
 
+## Ignored namespace options (open question 26)
+
+`Namespace` on an open namespace, Machine A. With options, they are applied to a
+copy of the namespace's configuration and compared before the handle is
+returned; with none, nothing changed. A first, reflective comparison measured
+~1,040 ns/op, 624 B/op, 3 allocs and was replaced.
+
+| Benchmark | ns/op (median of 5) | runs | B/op | allocs |
+|---|---|---|---|---|
+| `BenchmarkNamespaceHandle/no_options` | 24.5 | 14.5, 14.7, 24.5, 46.1, 73.4 | 0 | 0 |
+| `BenchmarkNamespaceHandle/same_options` | 170.6 | 168.3, 168.5, 170.6, 183.4, 196.9 | 208 | 1 |
+
+The no-options spread is machine noise on a map lookup under a read lock; the
+path is unchanged by this work.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

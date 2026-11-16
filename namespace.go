@@ -144,6 +144,11 @@ type namespace struct {
 	opts  core.NamespaceOptions
 	err   error
 
+	// warnedOptions is set once a call to Namespace has been warned about
+	// for options this namespace ignored, so that the warning is logged
+	// once rather than on every call of a hot path.
+	warnedOptions atomic.Bool
+
 	// valueCodec encodes typed values: WithCodec's, or DefaultTypedCodec.
 	valueCodec codec.Codec
 	// valueType is the T of the first NamespaceOf that opened this

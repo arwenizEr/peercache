@@ -177,6 +177,7 @@ trap cleanup EXIT INT TERM
 
 caught=0
 vacuous=0
+broken=0
 skipped=0
 filtered=0
 
@@ -228,6 +229,16 @@ PY
   local run=(go test "$pkg")
   if [[ "$pkg" == *::* ]]; then
     run=(go test -C "${pkg%%::*}" "${pkg#*::}")
+  fi
+  # A mutation that does not compile fails its test for a reason that has
+  # nothing to do with the test, and used to be counted as caught. Build the
+  # package's tests first, running none, so that such an entry is reported
+  # for what it is: an entry that checks nothing.
+  if ! "${run[@]}" -run '^$' -count=1 >/dev/null 2>&1; then
+    echo "BROKEN   $name (the mutation does not compile; fix this entry)"
+    broken=$((broken + 1))
+    git checkout -- "$file"
+    return
   fi
   if "${run[@]}" -run "$test" -count=1 -timeout 120s >/dev/null 2>&1; then
     echo "VACUOUS  $name -- $test PASSED with the behaviour broken"
@@ -3028,6 +3039,29 @@ mutate "a fresh node first advertises no RPC address" \
 	cfg := opts.Config' \
   'TestTheFirstAliveMessageAdvertisesTheRPCAddress$' ./membership/
 
+# --- options given to an open namespace are warned about (open question 26) ---
+
+mutate "ignored namespace options are not warned about" \
+  ignoredopts.go \
+  '	if len(differ) == 0 || !ns.warnedOptions.CompareAndSwap(false, true) {' \
+  '	if true || !ns.warnedOptions.CompareAndSwap(false, true) {' \
+  'TestOptionsGivenToAnOpenNamespaceAreWarnedAbout$' ./tests
+mutate "ignored namespace options are warned about on every call" \
+  ignoredopts.go \
+  '	if len(differ) == 0 || !ns.warnedOptions.CompareAndSwap(false, true) {' \
+  '	if len(differ) == 0 {' \
+  'TestIgnoredOptionsAreWarnedAboutOnce$' ./tests
+mutate "options compared against defaults, not the open namespace" \
+  ignoredopts.go \
+  '	asked := ns.opts' \
+  '	asked := ns.opts; asked.ReplicationFactor = 1' \
+  'TestOptionsGivenToAnOpenNamespaceAreWarnedAbout$' ./tests
+mutate "an option field is left out of the comparison" \
+  internal/core/optdiff.go \
+  '	add(o.L1TTL != asked.L1TTL, "L1TTL")' \
+  '' \
+  'TestDifferencesCoversEveryField$' ./internal/core/
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \
@@ -3037,7 +3071,7 @@ mutate "a budget without a memory limit is not warned about" \
   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
 echo
-echo "caught: $caught   vacuous: $vacuous   skipped: $skipped"
+echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
   echo "FILTERED RUN: $filtered entries were not executed (ONLY=$ONLY)."
   echo "this run makes no claim about them."
@@ -3050,6 +3084,6 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 fi
 echo "tree clean"
 
-if [ "$vacuous" -ne 0 ] || [ "$skipped" -ne 0 ]; then
+if [ "$vacuous" -ne 0 ] || [ "$skipped" -ne 0 ] || [ "$broken" -ne 0 ]; then
   exit 1
 fi

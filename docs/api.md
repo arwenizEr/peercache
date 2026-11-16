@@ -225,6 +225,16 @@ because equal values of `T` need not encode to equal bytes.
 
 ### Namespace options
 
+Options apply when a namespace is first opened; the first call wins, and a
+later `Namespace(name, opts...)` returns the open namespace unchanged. If
+that later call's options would have changed it — a different `WithL1TTL`, a
+loader for a namespace opened without one — the cache logs
+`namespace options ignored: the namespace is already open` at Warn, once per
+namespace, with the option names. Repeating the original options, a subset of
+them, or none is silent. A namespace a peer's request opened first, with
+defaults, is the usual way to meet this warning: open every namespace before
+joining (open question 26).
+
 | Option | Default | Meaning |
 |---|---|---|
 | `WithLoader(Loader)` | none | Reconstructs a missing value. Without it, `GetOrLoad` returns `ErrNoLoader`. |

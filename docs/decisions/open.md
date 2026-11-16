@@ -505,7 +505,7 @@ every long-lived goroutine in the system exists and can be enumerated.
 
 ---
 
-## 26. Namespace options are fixed at creation, silently — M4, a sharp edge
+## 26. Namespace options are fixed at creation, silently — M4, warned about since v0.3
 
 `Namespace(name, opts...)` returns the existing namespace if there is one, and
 the options are ignored. There is no error and no warning.
@@ -525,6 +525,24 @@ function values, which Go cannot do meaningfully for `Loader` or `Partitioner`.
 namespace is requested with options that cannot be applied. That needs the
 comparison problem solved for the fields where it is possible (TTLs, shard
 counts, codec names) and skipped for the ones where it is not.
+
+**Resolved before v1 (warned, not refused).** A call to `Namespace` that passes
+options to an open namespace applies them to a copy of that namespace's own
+configuration and compares the copy field by field
+(`core.NamespaceOptions.Differences`). Only what the call sets can differ, so
+repeating the first call's options, or a subset, is silent; functions and
+interfaces are compared by whether they are set. A difference is logged at Warn
+once per namespace, naming the fields. The first call still wins: refusing
+would break callers that open a namespace from several places, and nothing
+could be refused for a namespace a peer's request opened first.
+
+The comparison is written out rather than reflective: a reflective walk cost
+1 µs and three allocations on a call documented as cheap enough for a hot path,
+the written-out one 170 ns and one, and only when options are passed.
+`TestDifferencesCoversEveryField` fails when a field is added to the struct and
+not to the comparison. Tests: `TestOptionsGivenToAnOpenNamespaceAreWarnedAbout`,
+`TestIgnoredOptionsAreWarnedAboutOnce`,
+`TestATypedNamespaceOpenedAgainIsNotWarnedAbout`.
 
 ---
 
