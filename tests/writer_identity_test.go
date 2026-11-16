@@ -16,13 +16,25 @@ import (
 // sends — and returns each key's writer as the copy names it.
 func replicaCopiesFor(t *testing.T, f *fabric, asker, holder, ns string, rf int) map[string]string {
 	t.Helper()
+	out := make(map[string]string)
+	for _, e := range catchUpPage(t, f, asker, holder, ns, rf, true) {
+		out[e.Key] = e.From
+	}
+	return out
+}
+
+// catchUpPage sends holder one catch-up request as asker, for what holder
+// owns or, with replicas, for its replica copies of what asker owns, and
+// returns the entries of the first page.
+func catchUpPage(t *testing.T, f *fabric, asker, holder, ns string, rf int, replicas bool) []wire.CatchUpEntry {
+	t.Helper()
 	client, err := f.net.Transport(core.Node{ID: asker, Addr: asker + ":7946"}).
 		Dial(core.Node{ID: holder, Addr: holder + ":7946"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	req, err := wire.Encode(&wire.CatchUpRequest{
-		Namespace: ns, Requester: asker, ReplicationFactor: rf, Limit: 1000, Replicas: true,
+		Namespace: ns, Requester: asker, ReplicationFactor: rf, Limit: 1000, Replicas: replicas,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,11 +47,7 @@ func replicaCopiesFor(t *testing.T, f *fabric, asker, holder, ns string, rf int)
 	if err := wire.Decode(raw, &resp); err != nil {
 		t.Fatal(err)
 	}
-	out := make(map[string]string, len(resp.Entries))
-	for _, e := range resp.Entries {
-		out[e.Key] = e.From
-	}
-	return out
+	return resp.Entries
 }
 
 // TestARelayedCatchUpCopyNamesItsWriter: a replica that sends its copies of

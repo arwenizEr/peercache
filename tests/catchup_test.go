@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/arwenizEr/peercache"
@@ -143,6 +144,26 @@ func TestCatchUpOnlySendsKeysTheAskerRanksFor(t *testing.T) {
 			"has no business holding", asker, after, keys, len(f.ids))
 	}
 	t.Logf("%s holds %d of %d keys after catch-up (was %d)", asker, after, keys, before)
+
+	// The count above is what the asker kept, and the asker also drops a
+	// copy it does not rank for, so it cannot tell a sender that filters
+	// from one that does not. Ask each owner directly: every key it sends
+	// must be one the asker ranks for. The mutation audit found the count
+	// passing with the sender's filter removed.
+	for _, owner := range f.ids {
+		if owner == asker {
+			continue
+		}
+		for _, e := range catchUpPage(t, f, asker, owner, "scoped", 2, false) {
+			d, err := f.caches[owner].DescribeKey("scoped", e.Key)
+			if err != nil {
+				t.Fatalf("DescribeKey(%s): %v", e.Key, err)
+			}
+			if !slices.Contains(d.Holders, asker) {
+				t.Fatalf("%s sent %s to %s in a catch-up; its holders are %v", owner, e.Key, asker, d.Holders)
+			}
+		}
+	}
 }
 
 // TestCatchUpDoesNotOverwriteNewerData covers the race that makes catch-up
