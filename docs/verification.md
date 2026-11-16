@@ -685,6 +685,10 @@ caught   a Set is applied after its key moved                               -- T
 caught   a replica-read copy outlives its key                               -- TestAReplicaReadCopyDoesNotOutliveItsKey
 caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
 caught   a fresh node first advertises no RPC address                       -- TestTheFirstAliveMessageAdvertisesTheRPCAddress
+caught   ignored namespace options are not warned about                     -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout
+caught   ignored namespace options are warned about on every call           -- TestIgnoredOptionsAreWarnedAboutOnce
+caught   options compared against defaults, not the open namespace          -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout
+caught   an option field is left out of the comparison                      -- TestDifferencesCoversEveryField
 caught   a drained node applies a peer's write                              -- TestADrainedNodeRefusesAPeerThatMissedTheDeparture
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath
