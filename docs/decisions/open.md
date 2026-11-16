@@ -61,7 +61,7 @@ appears, replacing the parameter with an opaque `ListenSpec` would be tidier.
 
 ---
 
-## 3. The contents of `Stats` — M0, provisional
+## 3. The contents of `Stats` — M0, settled
 
 docs/design.md section 3.1 returns `Stats` and never says what is in it.
 
@@ -72,6 +72,12 @@ breaking change.
 **What would force a change:** M7, which adds the correctness counters
 (split-brain detections, stale-epoch rejections, version conflicts, mailbox
 rejections, transfer failures). Those are additive.
+
+**Settled before v1.** Every field added since — 64 by v0.3.0 — was additive, as
+picked. Since v0.3.0 the fields also carry camelCase json tags, because the
+debug handler serves `Stats` as JSON and a later rename would break its
+readers; `TestDebugHandlerJSONNamesAreCamelCase` keeps a new field from going
+out untagged.
 
 ---
 
@@ -158,7 +164,7 @@ all, which is the real relationship between the two delays and the reason
 
 ---
 
-## 9. `BlockUntil` counts every timer, not the interesting ones — M0, known sharp edge
+## 9. `BlockUntil` counts every timer, not the interesting ones — M0, a harness sharp edge
 
 `Fake.BlockUntil(n)` parks until *n* timers are armed on the clock. It cannot
 distinguish yours from anyone else's. In a test where a component already holds
@@ -173,6 +179,12 @@ what it looks like it means.
 **What would force a change:** M2's idle-deactivation sweep, which will hold a
 timer per active group. At that point `BlockUntil` needs either a baseline
 (`Pending()` before, then block on baseline+n) or a tagged variant.
+
+**Still a sharp edge, harness only.** The fake clock has had `Pending()`
+since M0, so the baseline form picked above (`Pending()` before, then block
+on baseline+n) is available to any test that shares the clock with a
+component holding timers. `BlockUntil(n)` itself is unchanged, and nothing in
+the library depends on it.
 
 ---
 
@@ -298,7 +310,7 @@ library.
 
 ---
 
-## 17. Configured options that do nothing yet — M1, tracked
+## 17. Configured options that do nothing yet — M1, resolved in M10
 
 Three namespace options are accepted and validated at construction, and are not
 consulted by any data path:
@@ -390,7 +402,7 @@ held; this one was not, and did not.
 
 ---
 
-## 21. A node that loses a group keeps serving it — M3, an M6 constraint
+## 21. A node that loses a group keeps serving it — M3, resolved (M6 hand-off, question 51)
 
 The guard runs on activation, not on every turn. Once a group is active, the
 runtime does not re-check ownership, so a node that loses a group to a
@@ -409,6 +421,12 @@ window in which an *old* one is still running.
 
 This is the largest gap between what M3 does and what a reader might assume it
 does, which is why it is stated in `internal/ownership/doc.go` as well.
+
+**Resolved.** M6's graceful hand-off stops the group on the old owner and
+moves its state. Question 51 closed the rest: every turn of an active group
+now checks ownership first, so a group whose ownership moved under it answers
+`ErrNotOwner` instead of serving. Its state stays behind on that path, which
+question 51 records as the documented loss on a move.
 
 ---
 
@@ -1453,7 +1471,7 @@ release. An eviction event, if group state ever gains a TTL, is a new constant.
 
 ---
 
-## 44. External persistence — post-M10, designed, not built
+## 44. External persistence — post-M10, superseded by decision 0029 and built in M14
 
 Asked whether PeerCache should write through to an external resilient store.
 design principle 4 (docs/design.md) rules out writing to disk in v1 and allows persistence
