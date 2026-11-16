@@ -582,6 +582,7 @@ caught   Get copies instead of aliasing                                     -- T
 caught   read-path expiry disabled                                          -- TestExpiryIsObservedOnRead
 caught   shard selection collapses to one shard                             -- TestKeysSpreadAcrossShards
 caught   TTL deadline overflow reintroduced                                 -- TestUnrepresentableTTLDoesNotExpireImmediately
+caught   a restored key's deadline overflows                                -- TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately
 caught   L1 accepts an older version                                        -- TestOlderVersionIsRejected
 caught   L1 stops clamping TTL to MaxTTL                                    -- TestEveryEntryIsTTLBounded
 caught   L1 write stripe removed                                            -- TestConcurrentPutsNeverLeaveAnOlderVersion
@@ -2329,6 +2330,76 @@ restore treat stored keys as absent.
 **Since then the script reaches nested modules.** An entry whose package is
 written `dir::pkg` runs `go test -C dir pkg`, inside that module's own
 `go.mod`; both mutations above are now ordinary entries and run with the rest.
+
+### The full audit before v1: 302 of 363, then 365 of 365
+
+Every entry run end to end on `main` after v0.3.0, on Machine A — the first
+full run since M14b; everything between had been filtered runs of the entries
+a change added. **caught: 302, vacuous: 9, skipped: 28, broken: 24.**
+
+**Broken** is new. A mutation that did not compile failed its test for that
+reason and was counted as caught; `mutate()` now builds the package's tests
+before running the named one and reports such an entry as BROKEN, with the
+compiler's first lines, failing the run like VACUOUS and SKIP. Twenty-four
+entries had been checking nothing that way — most left a variable unused once
+the line that read it was mutated away — some since they were written. Each was
+made to compile, usually with `_ =`, and three of them then came back VACUOUS:
+
+- *The client does not verify the server* — the untrusted-server test passed
+  with `InsecureSkipVerify` on. The impostor listed only the rogue CA, so the
+  honest client, which presents its certificate only to a server listing its
+  CA, sent none, and the impostor aborted the handshake itself. It now lists
+  the honest CA too, and the test checks its handler was never reached.
+- *A snapshot hands over expired keys* — the value pass checks expiry again,
+  but an expired candidate still took a place in the page: a one-key page came
+  back empty while reporting more. Pinned.
+- *An empty view plans an evacuation* — without the guard the plan made no
+  moves anyway, and counted every key unchanged. Pinned.
+
+**Skipped:** twenty-eight anchors that the code had moved past — `fanOut` and
+`Write` gained a `Prev`, promotion moved to `RestoreAt`, replicas compare with
+`Newer`, the store writes through `putEntry`. Each was rewritten against the
+code as it is. One, *catch-up sends whatever is asked for*, then passed: the
+test counted what the asker kept, and the asker drops copies it does not rank
+for. It now reads each owner's page over the wire.
+
+**Vacuous**, the nine:
+
+- *TTL deadline overflow* — since TTL jitter, `Set` computes deadlines in
+  `Store.deadline`; the anchor matched `Restore`'s line instead. Re-aimed, and a
+  new entry and test cover `Restore`.
+- *Metadata never republished* — the RPC-address fix put the address in the
+  first alive message, so the test that checked it no longer needed a
+  republish. A peer's advertised epoch following its view is what republishing
+  carries; `TestAPeersAdvertisedEpochFollowsItsView`.
+- *The debug handler answers any method* — the dashboard's own check sat above
+  `writeJSON`'s and matched first, and no test POSTed to the dashboard. Both
+  checks have entries now.
+- *Each hit starts its own refresh* — fifty refreshes join one single-flight
+  load, so the loader count could not tell. The test closes the cache and counts
+  refreshes.
+- *A synchronous write below the factor is not counted* — the test had skipped
+  itself since question 56 made local callers wait out the activation delay:
+  its write was refused as pending, which it read as the behaviour changing on
+  purpose. It waits out the delay now and skips only on `ErrUnderReplicated`.
+- *A drained node applies a peer's write* — the write path checks again under
+  the store lock since question 58, so the handler's check is the only one a
+  *read* has; without it a drained node answered "not found" for a key its
+  successor holds. The test asks for one.
+- *A deletion no longer raises the version floor* — replicas order copies by
+  HLC since question 50, so the cluster test's replica took the rewrite whatever
+  its version. Checked in the store, where the floor still matters.
+- *A relayed catch-up copy is filed under its relay*, and *a hand-off claims to
+  be the writer of what it forwards* — nothing read a copy's writer. The
+  hand-off case had been guarded by the split-brain counter, which since forks
+  are judged by the key's history no longer reacts to a wrong writer. Both are
+  read over the wire now, `TestARelayedCatchUpCopyNamesItsWriter` and the heal
+  test's provenance check.
+
+Then the whole audit again: **caught: 365, vacuous: 0, skipped: 0, broken: 0,
+tree clean.** The lesson is the one M14b's run already taught, at four times
+the cost: filtered runs check what a change added, and only a full run checks
+what it moved.
 
 ### The full audit after M14b: 236, eleven repointed, one re-aimed
 
