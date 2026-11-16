@@ -52,8 +52,11 @@ var (
 	// under a stale epoch is worse than no hint.
 	ErrNotOwner = core.ErrNotOwner
 
-	// ErrNoLoader means [Namespace.GetOrLoad] was called on a namespace
-	// constructed without [WithLoader].
+	// ErrNoLoader means a load was asked of a namespace that has no loader
+	// for it: [Namespace.GetOrLoad] on one opened without [WithLoader], or
+	// [Namespace.BatchGetOrLoad] on one opened with neither [WithLoader] nor
+	// [WithBatchLoader]. It is configuration, the same on every pod, so it
+	// is reported before any owner is asked. Not retryable.
 	ErrNoLoader = core.ErrNoLoader
 
 	// ErrFuncNotRegistered means [Group.Call] named a function this node
