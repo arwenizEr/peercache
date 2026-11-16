@@ -355,7 +355,7 @@ mutate "store version stops incrementing" \
 mutate "L1 invalidation ignores the resident version" \
   internal/l1/l1.go \
   'if !ok || !stamp.NewerThan(e.stamp) {' \
-  'if !ok {' \
+  'if !ok || (false && !stamp.NewerThan(e.stamp)) {' \
   'TestInvalidateOlderThanKeepsNewerCopies' ./internal/l1/
 
 mutate "loader panic is no longer contained" \
@@ -523,7 +523,7 @@ mutate "the replica ranking is unsorted" \
 		// their sorts were unstable in different ways.
 		return ranked[i].node.ID < ranked[j].node.ID
 	})' \
-  '' \
+  '_ = keyHash' \
   'TestReplicasAreARankedPrefix' ./internal/ownership/
 
 mutate "an unknown membership claims everything" \
@@ -542,8 +542,10 @@ mutate "an unknown membership claims everything" \
 
 mutate "the guard activates groups it does not own" \
   internal/ownership/guard.go \
-  'if !ok || current.ID != g.self.ID {' \
-  'if false {' \
+  '	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)' \
+  '	if _, _ = ok, current; false {
+		g.refusals.Add(1)' \
   'TestGuardRefusesGroupsItDoesNotOwn' ./internal/ownership/
 
 mutate "newly acquired groups activate immediately" \
@@ -568,10 +570,14 @@ mutate "a stale epoch is accepted"   internal/ownership/guard.go   'if epoch < s
 
 mutate "a caller ahead of this node is not deferred"   internal/ownership/guard.go   'if epoch > snap.epoch {'   'if false {'   'TestFutureEpochDefersRatherThanRefusing' ./internal/ownership/
 
-mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '	current, ok := owner(snap, groupKey)'   '	if epoch < snap.epoch {
+mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '	current, ok := owner(snap, groupKey)
+	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)'   '	if epoch < snap.epoch {
 		return fmt.Errorf("mutant: %w", core.ErrStaleEpoch)
 	}
-	current, ok := owner(snap, groupKey)'   'TestNotOwnerBeatsStaleEpoch' ./internal/ownership/
+	current, ok := owner(snap, groupKey)
+	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)'   'TestNotOwnerBeatsStaleEpoch' ./internal/ownership/
 
 mutate "local activation does not use the current epoch"   internal/ownership/guard.go   'return g.CanActivateAt(groupKey, g.table.Epoch())'   'return g.CanActivateAt(groupKey, 0)'   'TestCanActivateUsesTheCurrentEpoch' ./internal/ownership/
 
@@ -662,7 +668,7 @@ mutate "a caller does not identify itself" \
 mutate "sentinel errors do not survive the hop" \
   transport/client.go \
   'return fmt.Errorf("transport: %s: %s: %w", node.ID, st.Message(), sentinel)' \
-  'return errors.New(st.Message())' \
+  '_ = sentinel; return errors.New(st.Message())' \
   'TestSentinelErrorsSurviveTheHop' ./transport/
 
 mutate "Unavailable is read as a deferred activation" \
@@ -687,8 +693,8 @@ mutate "the server does not verify client certificates" \
 
 mutate "the client does not verify the server" \
   transport/tls.go \
-  'RootCAs:            pool,' \
-  'InsecureSkipVerify: true, RootCAs: pool,' \
+  'InsecureSkipVerify: c.InsecureSkipVerify,' \
+  'InsecureSkipVerify: true,' \
   'TestMutualTLSRejectsAnUntrustedServer' ./transport/
 
 mutate "the TLS floor drops to 1.0" \
@@ -778,7 +784,7 @@ mutate "snapshot hands over expired keys" \
   'if e.expiresAt != 0 && now >= e.expiresAt {
 				continue
 			}' \
-  '' \
+  '_ = e' \
   'TestSnapshotSkipsExpiredEntries' ./internal/store/
 
 mutate "sync replication does not wait" \
@@ -823,8 +829,10 @@ mutate "a remote write skips replication" \
 mutate "promotion drains nothing" \
   promote.go \
   'taken := c.replicas.Drain(name, func(key string) bool {' \
-  'taken := c.replicas.Drain(name, func(key string) bool { return false
-			_ = func() bool {' \
+  'taken := c.replicas.Drain(name, func(key string) bool {
+			if true {
+				return false
+			}' \
   'TestKillingAnOwnerPromotesAReplica' ./tests
 
 mutate "catch-up sends whatever is asked for" \
@@ -918,7 +926,7 @@ mutate "an implicitly created namespace is not counted" \
   handler.go \
   'if !existed {
 		h.cache.implicitNamespaces.Add(1)' \
-  'if false {
+  'if _ = existed; false {
 		h.cache.implicitNamespaces.Add(1)' \
   'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' ./tests
 
@@ -933,7 +941,7 @@ mutate "an empty view plans an evacuation" \
   'if newErr != nil {
 			continue
 		}' \
-  '' \
+  '_ = newErr' \
   'TestAnEmptyNewViewPlansNothing' ./internal/rebalance/
 
 mutate "unchanged keys are never counted" \
@@ -941,7 +949,7 @@ mutate "unchanged keys are never counted" \
   'if !moved {
 			plan.Unchanged++
 		}' \
-  '' \
+  '_ = moved' \
   'TestNoChangeMeansNoMoves' ./internal/rebalance/
 
 # --- lifecycle: the entry that was truncated ----------------------------------
@@ -1263,7 +1271,7 @@ mutate "replica arrivals never check the budget" \
 mutate "probation hides nobody" \
   probation.go \
   '		if !ok || now-started >= int64(period) {' \
-  '		if true {' \
+  '		if _ = ok; true {' \
   'TestACrashloopingNodeIsNeverRanked$' ./tests
 
 mutate "a probation ending never reaches the ranking" \
@@ -1828,13 +1836,13 @@ mutate "an HLC order repeats on a stopped clock" \
 mutate "an observed HLC order is ignored" \
   internal/hlc/hlc.go \
   '		if uint64(o) <= last || c.last.CompareAndSwap(last, uint64(o)) {' \
-  '		if true {' \
+  '		if _ = last; true {' \
   'TestAnObservedOrderIsOutranked$' ./internal/hlc/
 
 mutate "a drifting peer drags the HLC ahead" \
   internal/hlc/hlc.go \
   '	if uint64(o) > limit {' \
-  '	if false {' \
+  '	if _ = limit; false {' \
   'TestADriftingPeerCannotDragTheClockAhead$' ./internal/hlc/
 
 # --- persistence: segment format and blob stores (decision 0029) ---
@@ -2022,13 +2030,13 @@ mutate "compaction deletes segments its snapshot failed to cover" \
 mutate "compaction drops tombstones inside their grace" \
   persistence.go \
   '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
-  '		if r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt) {' \
+  '		if _ = cutoff; r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt) {' \
   'TestATombstoneIsKeptForItsGrace$' ./tests
 
 mutate "compaction keeps tombstones forever" \
   persistence.go \
   '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
-  '		if false {' \
+  '		if _, _ = cutoff, now; false {' \
   'TestATombstoneIsKeptForItsGrace$' ./tests
 
 # --- repointed after M14b moved their code ---
@@ -2287,7 +2295,7 @@ mutate "otel registers counters as gauges" \
 mutate "otel keeps a counter's _total" \
   otel/otel.go \
   '		return strings.TrimSuffix(m.Name, "_total")' \
-  '		return m.Name' \
+  '		_ = strings.TrimSuffix; return m.Name' \
   'TestCounterNamesDropTheirTotal$' otel::./
 
 mutate "otel observes without the node attribute" \
@@ -2295,7 +2303,7 @@ mutate "otel observes without the node attribute" \
   '				o.ObserveFloat64(c, m.Value, node)
 			} else if g, ok := gauges[m.Name]; ok {
 				o.ObserveFloat64(g, m.Value, node)' \
-  '				o.ObserveFloat64(c, m.Value)
+  '				_ = node; o.ObserveFloat64(c, m.Value)
 			} else if g, ok := gauges[m.Name]; ok {
 				o.ObserveFloat64(g, m.Value)' \
   'TestEverySeriesIsBridged$' otel::./
@@ -2600,7 +2608,8 @@ mutate "a hit inside the window does not refresh" \
   namespace.go \
   '			n.maybeRefresh(key, version, left)
 ' \
-  '' \
+  '			_, _ = version, left
+' \
   'TestARefreshReloadsAKeyNearItsExpiry$' ./tests
 mutate "every hit refreshes, whatever its remaining lifetime" \
   refresh.go \
@@ -2720,7 +2729,7 @@ mutate "the owner's Get grants no remaining lifetime" \
   handler.go \
   '		TTLRemainingNanos: int64(left),
 	})' \
-  '		TTLRemainingNanos: 0,
+  '		TTLRemainingNanos: int64(left) * 0,
 	})' \
   'TestANonOwnedCopyDoesNotOutliveItsKey$' ./tests
 mutate "the owner's load grants no remaining lifetime" \
@@ -2732,7 +2741,7 @@ mutate "a batch entry grants no remaining lifetime" \
   handler.go \
   '			TTLRemainingNanos: int64(left),
 		})' \
-  '			TTLRemainingNanos: 0,
+  '			TTLRemainingNanos: int64(left) * 0,
 		})' \
   'TestABatchReadCopyDoesNotOutliveItsKey$' ./tests
 # --- tracing (decision 0038) ---
@@ -2781,7 +2790,7 @@ mutate "a store delete leaves its digest behind" \
 mutate "a store overwrite is counted as a new key" \
   internal/store/digest.go \
   '		s.digest.Replace(k, old.version, e.version)' \
-  '		s.digest.Add(k, e.version)' \
+  '		_ = old; s.digest.Add(k, e.version)' \
   'TestTheRunningDigestFollowsEveryWritePath$' ./internal/store
 mutate "a replica delete leaves its digest behind" \
   internal/replication/replica.go \
@@ -2808,7 +2817,7 @@ mutate "a cluster with a member unreachable is reported as agreeing" \
 mutate "a silent member holds DescribeCluster forever" \
   cluster.go \
   '			mctx, cancel := clock.WithTimeout(ctx, c.opts.Clock, DescribeTimeout)' \
-  '			mctx, cancel := context.WithCancel(ctx)' \
+  '			mctx, cancel := context.WithCancel(ctx); _ = clock.Real' \
   'TestAMemberThatNeverAnswersCostsOnlyTheTimeout$' ./tests
 # --- catch-up and hand-off paging, sorted once per pass ---
 
@@ -3069,7 +3078,7 @@ mutate "an option field is left out of the comparison" \
 mutate "a budget without a memory limit is not warned about" \
   peercache.go \
   '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {' \
-  '	if false {' \
+  '	if _, _ = debug.SetMemoryLimit, math.MaxInt; false {' \
   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
 echo
