@@ -1543,6 +1543,11 @@ admin.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.Deb
 A description reads each field on its own, so one taken during a membership
 change can mix two moments; it is a node's belief, not a consensus.
 
+Every JSON route names its fields in camelCase — `/stats` answers
+`{"self": {"id": …, "addr": …}, "members": 3, "ownedKeys": …}` — and
+`TestDebugHandlerJSONNamesAreCamelCase` keeps a new field from going out under
+its Go name.
+
 ### The metrics that are worth alerting on
 
 Most of the 63 are ordinary levels and rates. These eleven are not — each counts a

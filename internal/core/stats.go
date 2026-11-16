@@ -10,54 +10,54 @@ package core
 // path.
 type Stats struct {
 	// Self is this node.
-	Self Node
+	Self Node `json:"self"`
 	// Members is the number of nodes in the local membership view,
 	// including Self.
-	Members int
+	Members int `json:"members"`
 	// Epoch is the membership epoch the view was taken under.
-	Epoch Epoch
+	Epoch Epoch `json:"epoch"`
 
 	// OwnedKeys is the number of keys this node owns and holds.
-	OwnedKeys int64
+	OwnedKeys int64 `json:"ownedKeys"`
 	// ReplicaKeys is the number of keys this node holds as a replica.
-	ReplicaKeys int64
+	ReplicaKeys int64 `json:"replicaKeys"`
 	// L1Entries is the number of non-owned, TTL-bounded cached entries.
-	L1Entries int64
+	L1Entries int64 `json:"l1Entries"`
 
 	// AddressableGroups is the number of groups this node knows of. A group
 	// is addressable at all times; activation is a separate, smaller set.
-	AddressableGroups int64
+	AddressableGroups int64 `json:"addressableGroups"`
 	// ActiveGroups counts groups with a live actor goroutine on this node.
-	ActiveGroups int64
+	ActiveGroups int64 `json:"activeGroups"`
 
 	// Hits and Misses count namespace reads served from local memory and
 	// not, respectively. An expired key counts as a miss, because that is
 	// what the caller experienced.
-	Hits   int64
-	Misses int64
+	Hits   int64 `json:"hits"`
+	Misses int64 `json:"misses"`
 
 	// InflightLoads is the number of callers currently waiting on a loader.
 	// It is the observable evidence that concurrent misses are collapsing
 	// rather than stampeding.
-	InflightLoads int64
+	InflightLoads int64 `json:"inflightLoads"`
 	// Loads counts loader invocations; CollapsedLoads counts GetOrLoad
 	// calls that attached to a load already in flight instead of starting
 	// one. A healthy ratio under load is what singleflight is for.
-	Loads          int64
-	CollapsedLoads int64
+	Loads          int64 `json:"loads"`
+	CollapsedLoads int64 `json:"collapsedLoads"`
 	// CoalescedReads counts reads of keys owned elsewhere that missed L1
 	// and joined a fetch from the owner already in flight on this node,
 	// instead of sending their own. See docs/decisions/0028.
-	CoalescedReads int64
+	CoalescedReads int64 `json:"coalescedReads"`
 	// NegativeHits counts GetOrLoad calls the owner answered ErrNotFound
 	// from a remembered absence, without calling the loader, in namespaces
 	// opened with WithNegativeCaching. See docs/decisions/0034.
-	NegativeHits int64
+	NegativeHits int64 `json:"negativeHits"`
 	// Refreshes counts background reloads WithRefreshAhead completed, stored
 	// or dropped because a write landed first; RefreshFailures counts the
 	// ones whose loader failed, which left the current value in place.
-	Refreshes       int64
-	RefreshFailures int64
+	Refreshes       int64 `json:"refreshes"`
+	RefreshFailures int64 `json:"refreshFailures"`
 
 	// ReplicaReadsServed counts reads this node answered from its replica
 	// copy, for a peer or for itself, in namespaces opened with
@@ -65,11 +65,11 @@ type Stats struct {
 	// no copy, a copy older than the L1 TTL, or no longer a replica -- which
 	// the reader then sent to the owner. A rising referred count with a
 	// steady served count is what keys quieter than the TTL look like.
-	ReplicaReadsServed   int64
-	ReplicaReadsReferred int64
+	ReplicaReadsServed   int64 `json:"replicaReadsServed"`
+	ReplicaReadsReferred int64 `json:"replicaReadsReferred"`
 	// ReplicaReadsFloored counts replica answers this node discarded as a
 	// reader because an invalidation had already told it of a newer stamp.
-	ReplicaReadsFloored int64
+	ReplicaReadsFloored int64 `json:"replicaReadsFloored"`
 
 	// PersistPending is how many keys of persistent namespaces are waiting
 	// for the next flush — the keys a crash now would lose.
@@ -77,26 +77,26 @@ type Stats struct {
 	// wrote, and PersistFailures segments that could not be written and
 	// were kept for the next flush. See
 	// docs/decisions/0029-persistence-as-a-segment-log.md.
-	PersistPending        int64
-	PersistFlushes        int64
-	PersistRecordsWritten int64
-	PersistFailures       int64
+	PersistPending        int64 `json:"persistPending"`
+	PersistFlushes        int64 `json:"persistFlushes"`
+	PersistRecordsWritten int64 `json:"persistRecordsWritten"`
+	PersistFailures       int64 `json:"persistFailures"`
 	// PersistRestored counts keys a restore brought back into memory, and
 	// PersistRestoreFailures restores that could not read their partition —
 	// a store outage or a corrupt object — after which the partition is
 	// served from memory alone until a retry succeeds.
-	PersistRestored        int64
-	PersistRestoreFailures int64
+	PersistRestored        int64 `json:"persistRestored"`
+	PersistRestoreFailures int64 `json:"persistRestoreFailures"`
 	// PersistCompactions counts partitions folded into a snapshot by this
 	// node as their compactor, and PersistCompactFailures compactions that
 	// could not finish; their objects are folded by the next one.
-	PersistCompactions     int64
-	PersistCompactFailures int64
+	PersistCompactions     int64 `json:"persistCompactions"`
+	PersistCompactFailures int64 `json:"persistCompactFailures"`
 	// PersistSplits counts log sets this node moved into partition segments
 	// as its namespace's splitter, and PersistSplitFailures splits that
 	// stopped part-way; the next one completes them. See decision 0030.
-	PersistSplits        int64
-	PersistSplitFailures int64
+	PersistSplits        int64 `json:"persistSplits"`
+	PersistSplitFailures int64 `json:"persistSplitFailures"`
 
 	// RefusedActivations counts group activations the ownership guard
 	// refused, and DeferredActivations the subset postponed because the
@@ -106,13 +106,13 @@ type Stats struct {
 	// should spike after a membership change and return to zero; sustained
 	// refusals under stable membership mean callers disagree with this node
 	// about who owns what.
-	RefusedActivations  int64
-	DeferredActivations int64
+	RefusedActivations  int64 `json:"refusedActivations"`
+	DeferredActivations int64 `json:"deferredActivations"`
 	// StaleEpochRefusals counts activations refused because the caller
 	// resolved ownership under a view older than this node's. A sustained
 	// rate means a caller is caching ownership for
 	// longer than membership stays still.
-	StaleEpochRefusals int64
+	StaleEpochRefusals int64 `json:"staleEpochRefusals"`
 	// EpochSkew counts peer requests whose caller had resolved ownership
 	// under a different membership epoch from this node's.
 	//
@@ -120,7 +120,7 @@ type Stats struct {
 	// nodes that agree about membership can still hold different ones, so
 	// this is expected during churn. A sustained rate under stable
 	// membership means views are not settling.
-	EpochSkew int64
+	EpochSkew int64 `json:"epochSkew"`
 
 	// InvalidationsSent, InvalidationsDropped and InvalidationsFailed
 	// describe the best-effort invalidation broadcast.
@@ -132,9 +132,9 @@ type Stats struct {
 	// is the documented bound: correctness never depends on an
 	// invalidation arriving. They are
 	// worth watching as a ratio, not alerting on individually.
-	InvalidationsSent    int64
-	InvalidationsDropped int64
-	InvalidationsFailed  int64
+	InvalidationsSent    int64 `json:"invalidationsSent"`
+	InvalidationsDropped int64 `json:"invalidationsDropped"`
+	InvalidationsFailed  int64 `json:"invalidationsFailed"`
 
 	// ReplicationsSent, ReplicationsDropped and ReplicationsFailed describe
 	// replica fan-out.
@@ -145,9 +145,9 @@ type Stats struct {
 	// replication that is the expected cost of a peer being briefly
 	// unreachable; sustained, it means the replication factor is nominal
 	// rather than actual.
-	ReplicationsSent    int64
-	ReplicationsDropped int64
-	ReplicationsFailed  int64
+	ReplicationsSent    int64 `json:"replicationsSent"`
+	ReplicationsDropped int64 `json:"replicationsDropped"`
+	ReplicationsFailed  int64 `json:"replicationsFailed"`
 
 	// SplitBrainDetections counts forks a replica saw in a key's history:
 	// copies from two different writers, neither of which replaced the
@@ -162,7 +162,7 @@ type Stats struct {
 	//
 	// Any non-zero value deserves investigation. It does not mean data was
 	// lost, but it means two writers disagreed about who was in charge.
-	SplitBrainDetections int64
+	SplitBrainDetections int64 `json:"splitBrainDetections"`
 
 	// KeysPromoted counts keys this node took over from a failed owner:
 	// replicas it already held that it now owns. ReplicasEvicted counts
@@ -170,8 +170,8 @@ type Stats struct {
 	//
 	// Both spike on a membership change and are flat otherwise. Movement
 	// under stable membership means the view is not settling.
-	KeysPromoted    int64
-	ReplicasEvicted int64
+	KeysPromoted    int64 `json:"keysPromoted"`
+	ReplicasEvicted int64 `json:"replicasEvicted"`
 
 	// ReplicasRehomed counts replicas this node handed to the nodes that now
 	// rank for them before dropping its own copy. ReplicasRetained counts the
@@ -188,12 +188,12 @@ type Stats struct {
 	// failing and this node is accumulating copies it does not rank for. It
 	// is memory rather than data loss, which is the safe direction, but it
 	// means the cluster is not converging.
-	ReplicasRehomed  int64
-	ReplicasRetained int64
+	ReplicasRehomed  int64 `json:"replicasRehomed"`
+	ReplicasRetained int64 `json:"replicasRetained"`
 	// PromotionRounds counts reconciliations run. It exists so the two
 	// counters above can be read as a rate, and so a test can wait for a
 	// membership change to have been *acted on* rather than merely observed.
-	PromotionRounds int64
+	PromotionRounds int64 `json:"promotionRounds"`
 
 	// ReplicasPulled counts keys obtained by catch-up, CatchUpRuns the
 	// number of times it ran, and CatchUpFailures the peers that could not
@@ -203,23 +203,23 @@ type Stats struct {
 	// carries keys written after it came back — so without catch-up, every
 	// key that was quiet when it died stays missing. Failures here mean the
 	// replica set is thinner than its configured factor claims.
-	ReplicasPulled  int64
-	CatchUpRuns     int64
-	CatchUpFailures int64
+	ReplicasPulled  int64 `json:"replicasPulled"`
+	CatchUpRuns     int64 `json:"catchUpRuns"`
+	CatchUpFailures int64 `json:"catchUpFailures"`
 
 	// ReplicasCurrent mirrors ReadyState.ReplicasCurrent: this node has
 	// completed a catch-up, with no failure, under the membership view it
 	// holds now. It is here as well so the metrics surface can carry it.
-	ReplicasCurrent bool
+	ReplicasCurrent bool `json:"replicasCurrent"`
 
 	// KeysHandedOff counts keys pushed to a new owner during a graceful
 	// drain. Zero on a node that has never drained; on one that has, it
 	// should equal what it owned when the drain began.
-	KeysHandedOff int64
+	KeysHandedOff int64 `json:"keysHandedOff"`
 	// KeysAdopted counts keys received from a draining peer that this node
 	// already owned, and so took directly into its owned store rather than
 	// filing as replicas.
-	KeysAdopted int64
+	KeysAdopted int64 `json:"keysAdopted"`
 
 	// ImplicitNamespaces counts namespaces this node created in response to
 	// an incoming peer write, rather than because its own application asked
@@ -233,7 +233,7 @@ type Stats struct {
 	//
 	// The remedy is to open every namespace, with the options you want, on
 	// every node before serving traffic.
-	ImplicitNamespaces int64
+	ImplicitNamespaces int64 `json:"implicitNamespaces"`
 
 	// DegradedWrites counts synchronous writes this node acknowledged while
 	// holding fewer copies than the namespace's replication factor asked for.
@@ -258,7 +258,7 @@ type Stats struct {
 	// Counted, not refused, unless the namespace was opened with
 	// WithRequireReplicationFactor; such writes are refused and counted in
 	// UnderReplicatedRefusals instead. See docs/decisions/open.md question 37.
-	DegradedWrites int64
+	DegradedWrites int64 `json:"degradedWrites"`
 
 	// UnderReplicatedRefusals counts synchronous writes refused with
 	// [ErrUnderReplicated] because this node could not place as many copies
@@ -269,25 +269,25 @@ type Stats struct {
 	// The caller was told, so this is not a silent failure. It is still worth
 	// watching: a sustained rate means a node is cut off, or the cluster is
 	// smaller than the factor, and every write to those namespaces is failing.
-	UnderReplicatedRefusals int64
+	UnderReplicatedRefusals int64 `json:"underReplicatedRefusals"`
 
 	// MemoryBudget is the configured budget in bytes, zero for none, and
 	// MemoryUsed the accounted size of the owned, replica and L1 tiers. The
 	// accounting is reported with or without a budget, so that one can be
 	// sized from it.
-	MemoryBudget int64
-	MemoryUsed   int64
+	MemoryBudget int64 `json:"memoryBudget"`
+	MemoryUsed   int64 `json:"memoryUsed"`
 	// ShedL1, ShedReplicas and ShedOwned count entries dropped to stay within
 	// the budget, by tier. ShedOwned is data loss, by design and on purpose;
 	// a sustained rate means the budget is smaller than this node's share.
-	ShedL1       int64
-	ShedReplicas int64
-	ShedOwned    int64
+	ShedL1       int64 `json:"shedL1"`
+	ShedReplicas int64 `json:"shedReplicas"`
+	ShedOwned    int64 `json:"shedOwned"`
 
 	// MembersOnProbation counts members this node can see but does not yet
 	// rank, because they have been up for less than WithJoinProbation. A node
 	// that stays here and keeps reappearing is a pod in CrashLoopBackOff.
-	MembersOnProbation int
+	MembersOnProbation int `json:"membersOnProbation"`
 
 	// StateEscapes counts uses of a GroupState outside the turn that issued
 	// it. Any non-zero value is an application bug.
@@ -297,7 +297,7 @@ type Stats struct {
 	// The methods no-op and the violation is counted instead — silence would
 	// be wrong and a panic in someone else's goroutine would be worse — which
 	// makes this counter the only way the bug is ever visible.
-	StateEscapes int64
+	StateEscapes int64 `json:"stateEscapes"`
 
 	// MailboxRejections counts calls refused because a group's mailbox was
 	// full, reported to the caller as ErrGroupOverloaded.
@@ -306,7 +306,7 @@ type Stats struct {
 	// is backpressure working as designed, not a fault — but it is the
 	// signal that a group is saturated, and the only one that arrives before
 	// the latency does.
-	MailboxRejections int64
+	MailboxRejections int64 `json:"mailboxRejections"`
 
 	// VersionConflicts counts replicated copies rejected because a newer one
 	// was already held.
@@ -316,5 +316,5 @@ type Stats struct {
 	// order, which asynchronous replication makes ordinary and the stamp
 	// ordering handles. A steady low rate is normal; a rising one means
 	// reordering under load.
-	VersionConflicts int64
+	VersionConflicts int64 `json:"versionConflicts"`
 }
