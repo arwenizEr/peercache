@@ -234,8 +234,10 @@ PY
   # nothing to do with the test, and used to be counted as caught. Build the
   # package's tests first, running none, so that such an entry is reported
   # for what it is: an entry that checks nothing.
-  if ! "${run[@]}" -run '^$' -count=1 >/dev/null 2>&1; then
+  local built
+  if ! built=$("${run[@]}" -run '^$' -count=1 2>&1); then
     echo "BROKEN   $name (the mutation does not compile; fix this entry)"
+    printf '%s\n' "$built" | grep -E '\.go:[0-9]+' | head -3 | sed 's/^/           /'
     broken=$((broken + 1))
     git checkout -- "$file"
     return
