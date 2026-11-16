@@ -63,7 +63,7 @@ type grpcNode struct {
 }
 
 // newGRPCCluster builds n caches wired together by real gossip and real gRPC.
-func newGRPCCluster(t *testing.T, n int) []*grpcNode {
+func newGRPCCluster(t testing.TB, n int) []*grpcNode {
 	t.Helper()
 
 	nodes := make([]*grpcNode, 0, n)

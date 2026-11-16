@@ -319,7 +319,7 @@ func totalReplicaKeys(nodes []*grpcNode) int64 {
 }
 
 // waitForReplication blocks until the replica count stops moving.
-func waitForReplication(t *testing.T, nodes []*grpcNode) {
+func waitForReplication(t testing.TB, nodes []*grpcNode) {
 	t.Helper()
 	last := int64(-1)
 	stable := 0

@@ -9,6 +9,14 @@ change the public API.
 
 ### Changed
 
+- Asynchronous replication sends up to eight keys' copies at once, instead of
+  one at a time per node. A node's asynchronous replication rate was one over
+  the round trip; on kind at about 140,000 orders a minute the queue in front
+  of it overflowed and dropped some 250,000 replica writes a minute
+  (`Stats().ReplicationsDropped`), each a write acknowledged and never copied.
+  Over gRPC on loopback a copy now drains in about 38 µs rather than 351 µs.
+  One key's copies still travel one at a time and in order. The queue's total
+  bound is unchanged at 4,096, now split evenly across the senders.
 - A persistent namespace restores up to eight partitions at once after a
   restart or membership change, instead of one at a time. A caller of a
   partition near the back of the queue waited for every restore in front of

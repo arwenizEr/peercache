@@ -21,7 +21,19 @@ import (
 // which widens the data-loss window replication exists to bound. It is still
 // finite, because an unbounded queue in front of a slow peer is a memory leak
 // with a scheduling delay.
+//
+// It is the total across the fan-out workers: each holds an equal share.
 const replicaQueue = 4096
+
+// replicaWorkers is how many keys' asynchronous fan-out run at once.
+//
+// It was one: a node sent one replica write at a time, so its asynchronous
+// replication rate was one over the round trip, whatever its load. On kind at
+// about 140,000 orders a minute, the queue in front of that one sender
+// overflowed and dropped some 250,000 replica writes a minute — writes that had
+// reported success and were never copied. A key always goes to the same
+// worker, so one key's copies still travel one at a time and in order.
+const replicaWorkers = 8
 
 // replicaTimeout bounds one asynchronous fan-out attempt.
 //
@@ -45,8 +57,10 @@ const replicaTimeout = 5 * time.Second
 type replicator struct {
 	cache *cache
 
-	queue chan replicaWork
-	done  chan struct{}
+	// queues holds one channel per worker; a key's work always goes to
+	// queues[workerFor(namespace, key)].
+	queues []chan replicaWork
+	done   chan struct{}
 	wg    sync.WaitGroup
 
 	// base is cancelled by Close so an in-flight send returns at once
@@ -80,13 +94,16 @@ func newReplicator(c *cache) *replicator {
 	base, cancel := context.WithCancel(context.Background())
 	r := &replicator{
 		cache:      c,
-		queue:      make(chan replicaWork, replicaQueue),
+		queues:     make([]chan replicaWork, replicaWorkers),
 		done:       make(chan struct{}),
 		base:       base,
 		cancelBase: cancel,
 	}
-	r.wg.Add(1)
-	go r.run()
+	for i := range r.queues {
+		r.queues[i] = make(chan replicaWork, replicaQueue/replicaWorkers)
+		r.wg.Add(1)
+		go r.run(r.queues[i])
+	}
 	return r
 }
 
@@ -139,19 +156,38 @@ func (r *replicator) enqueue(w replicaWork) {
 		return
 	}
 	select {
-	case r.queue <- w:
+	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:
 	default:
 		r.dropped.Add(1)
 	}
 }
 
-func (r *replicator) run() {
+// workerFor picks the fan-out worker for a key: FNV-1a over the namespace and
+// the key. The same key always maps to the same worker, which is what keeps
+// one key's copies in order while different keys' travel at once.
+func workerFor(namespace, key string, n int) int {
+	const offset, prime = 14695981039346656037, 1099511628211
+	h := uint64(offset)
+	for i := 0; i < len(namespace); i++ {
+		h ^= uint64(namespace[i])
+		h *= prime
+	}
+	h ^= 0xff // a separator, so ("ab", "c") and ("a", "bc") differ
+	h *= prime
+	for i := 0; i < len(key); i++ {
+		h ^= uint64(key[i])
+		h *= prime
+	}
+	return int(h % uint64(n))
+}
+
+func (r *replicator) run(queue chan replicaWork) {
 	defer r.wg.Done()
 	for {
 		select {
 		case <-r.done:
 			return
-		case w := <-r.queue:
+		case w := <-queue:
 			ctx, cancel := clock.WithTimeout(r.base, r.cache.opts.Clock, replicaTimeout)
 			r.fanOut(ctx, w)
 			cancel()
