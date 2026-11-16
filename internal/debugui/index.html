@@ -117,17 +117,17 @@ async function get(path) {
 
 let prev = null, prevAt = 0;
 const TILES = [
-  ["Members", "Members"], ["OwnedKeys", "Owned keys"], ["ReplicaKeys", "Replica keys"], ["L1Entries", "L1 copies"],
-  ["ActiveGroups", "Active groups"], ["Hits", "Hits", true], ["Misses", "Misses", true], ["Loads", "Loader calls", true],
-  ["CollapsedLoads", "Collapsed loads", true], ["NegativeHits", "Negative hits", true], ["Refreshes", "Refreshes", true],
-  ["CoalescedReads", "Coalesced reads", true], ["DegradedWrites", "Degraded writes", true, "alert"],
-  ["SplitBrainDetections", "Split-brain forks", true, "alert"], ["VersionConflicts", "Version conflicts", true],
-  ["MemoryUsed", "Memory used (B)"], ["PersistPending", "Persist pending"], ["PersistFailures", "Persist failures", true, "alert"],
+  ["members", "Members"], ["ownedKeys", "Owned keys"], ["replicaKeys", "Replica keys"], ["l1Entries", "L1 copies"],
+  ["activeGroups", "Active groups"], ["hits", "Hits", true], ["misses", "Misses", true], ["loads", "Loader calls", true],
+  ["collapsedLoads", "Collapsed loads", true], ["negativeHits", "Negative hits", true], ["refreshes", "Refreshes", true],
+  ["coalescedReads", "Coalesced reads", true], ["degradedWrites", "Degraded writes", true, "alert"],
+  ["splitBrainDetections", "Split-brain forks", true, "alert"], ["versionConflicts", "Version conflicts", true],
+  ["memoryUsed", "Memory used (B)"], ["persistPending", "Persist pending"], ["persistFailures", "Persist failures", true, "alert"],
 ];
 
 function renderTiles(s) {
   const now = Date.now(), secs = prev ? (now - prevAt) / 1000 : 0;
-  const hitRatio = (s.Hits + s.Misses) ? (100 * s.Hits / (s.Hits + s.Misses)).toFixed(1) + "%" : "–";
+  const hitRatio = (s.hits + s.misses) ? (100 * s.hits / (s.hits + s.misses)).toFixed(1) + "%" : "–";
   let html = `<div class="tile"><div class="v">${hitRatio}</div><div class="l">Hit ratio</div></div>`;
   for (const [k, label, rate, alert] of TILES) {
     if (!(k in s)) continue;

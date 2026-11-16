@@ -21,9 +21,9 @@ type Epoch uint64
 // cluster; ownership hashing depends on it. Addr is the transport address peers
 // dial. Meta carries small, gossip-sized annotations such as the node's epoch.
 type Node struct {
-	ID   string
-	Addr string
-	Meta map[string]string
+	ID   string            `json:"id"`
+	Addr string            `json:"addr"`
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // Clone returns a deep copy, so that a caller cannot mutate a node held inside

@@ -26,6 +26,11 @@ change the public API.
 - `ReadyState`'s JSON field names are camelCase (`ready`, `reason`,
   `caughtUp`, …) like the rest of `Description`'s, instead of Go's field names.
   The debug handler's `/` and `/cluster` responses change accordingly.
+- `Stats` and `Node` have json tags too, so the debug handler's `/stats` is
+  camelCase (`ownedKeys`, `self.id`, …) instead of Go's field names; it was
+  the last PascalCase response. A test now walks every type the handler
+  serialises and fails on a field with no camelCase tag, and another checks
+  that each dashboard tile reads a field `/stats` has.
 
 ## [0.2.2] - 2026-11-15
 
