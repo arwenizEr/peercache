@@ -527,9 +527,6 @@ docs/             design.md, api.md, benchmarks.md, verification.md, decisions/
 - [pkg.go.dev](https://pkg.go.dev/github.com/arwenizEr/peercache): API reference
 - [`docs/api.md`](docs/api.md): the public API, with runnable examples and the
   metrics to alert on
-- [`docs/guide.tr.md`](docs/guide.tr.md): a Turkish guide with nine use cases
-  (sessions, rate limits, read-through, groups, workflows, queues, orders,
-  hot keys, idempotency), failure scenarios and operations
 - [`deploy/README.md`](deploy/README.md): running it in Kubernetes
 - [`docs/design.md`](docs/design.md): the design and the order it was built in
 - [`docs/benchmarks.md`](docs/benchmarks.md): numbers, with the machine they
