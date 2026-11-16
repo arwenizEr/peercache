@@ -161,6 +161,12 @@ func TestAnEmptyNewViewPlansNothing(t *testing.T) {
 		t.Fatalf("planning against an empty view produced %d moves; a node that has lost "+
 			"its view would evacuate to nowhere", plan.Total())
 	}
+	// Nor does it vouch for anything. With no view there is no placement to
+	// compare, so no key is unchanged either; counting them as unchanged
+	// would report a lost view as a perfectly stable one.
+	if plan.Unchanged != 0 {
+		t.Fatalf("planning against an empty view counted %d keys unchanged, want 0", plan.Unchanged)
+	}
 }
 
 // TestPlansAreDeterministic is what lets two nodes reason about the same
