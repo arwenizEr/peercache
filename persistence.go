@@ -130,10 +130,13 @@ type persister struct {
 	wg   sync.WaitGroup
 	// flushMu serialises flushes: the ticker's, a kick's and Close's.
 	flushMu sync.Mutex
-	// restoreMu serialises restores, so that at most one partition's records
-	// are held in memory at a time, as when they shared flushMu. A flush
-	// never takes it.
-	restoreMu sync.Mutex
+	// restoreSlots bounds the restores running at once, and with them how
+	// many partitions' records are held in memory together. It was a mutex —
+	// one partition at a time — and a node restarted onto a large namespace
+	// then restored its 64 partitions in a queue while every caller of a
+	// partition near the back waited for all of those in front: on kind, a
+	// slow minute after each restart. A flush never takes a slot.
+	restoreSlots chan struct{}
 
 	flushes  atomic.Int64
 	written  atomic.Int64
@@ -159,13 +162,14 @@ type persister struct {
 
 func newPersister(ns *namespace, store core.BlobStore) *persister {
 	p := &persister{
-		ns:      ns,
-		store:   store,
-		clk:     ns.cache.opts.Clock,
-		pending: map[string]segment.Record{},
-		shed:    map[string]struct{}{},
-		kick:    make(chan struct{}, 1),
-		done:    make(chan struct{}),
+		restoreSlots: make(chan struct{}, restoreParallelism),
+		ns:           ns,
+		store:        store,
+		clk:          ns.cache.opts.Clock,
+		pending:      map[string]segment.Record{},
+		shed:         map[string]struct{}{},
+		kick:         make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 	p.rctx, p.rcancel = context.WithCancel(context.Background())
 	// The ticker is created here, not in run: a ticker armed on the
@@ -596,8 +600,10 @@ func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
 // newest snapshot, every segment it does not name, newest record per key, kept
 // only for keys this node owns and not expired.
 func (p *persister) restore(ctx context.Context, part int) error {
-	p.restoreMu.Lock()
-	defer p.restoreMu.Unlock()
+	if err := p.takeRestoreSlot(ctx); err != nil {
+		return err
+	}
+	defer p.releaseRestoreSlot()
 	// Registered before the read: a flush that moves a record out of pending
 	// while storage is read keeps it for the overlay below.
 	mark := p.beginRestore()
@@ -623,6 +629,27 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	}
 	return err
 }
+
+// restoreParallelism is how many partitions of one namespace restore at once.
+//
+// Eight of 64 holds an eighth of the namespace's records in memory at the peak
+// rather than a sixty-fourth, and cut the time to a namespace answering
+// everywhere after a restart by the factor docs/benchmarks.md records. The
+// restores are independent: each reads its own partition, and each merges
+// newest-wins into the store, so two at once cannot undo each other.
+const restoreParallelism = 8
+
+// takeRestoreSlot waits for a restore slot, or for ctx.
+func (p *persister) takeRestoreSlot(ctx context.Context) error {
+	select {
+	case p.restoreSlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *persister) releaseRestoreSlot() { <-p.restoreSlots }
 
 // beginRestore registers a restore with the flusher and returns its mark:
 // the batches flushed from here on are kept for its overlay.
@@ -878,8 +905,10 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		return nil
 	}
 
-	p.restoreMu.Lock()
-	defer p.restoreMu.Unlock()
+	if err := p.takeRestoreSlot(ctx); err != nil {
+		return err
+	}
+	defer p.releaseRestoreSlot()
 	mark := p.beginRestore()
 	defer p.endRestore()
 	newest, err := p.read(ctx, persistPartition(p.ns.groupKeyFor(key)))

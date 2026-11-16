@@ -1115,6 +1115,26 @@ returned; with none, nothing changed. A first, reflective comparison measured
 The no-options spread is machine noise on a map lookup under a read lock; the
 path is unchanged by this work.
 
+## Restore after a restart — partitions in parallel
+
+`BenchmarkRestoreAfterRestart`, Machine A: a persistent namespace filled and
+closed, then a fresh cache opened on the same store with 2 ms on every store
+call, and 64 readers reading across the keyspace at once. ns/op is the time
+until every reader has its answers; p50/max is the wait of a reader's first
+read. Three runs of `-benchtime 3x` each; medians, with the runs.
+
+| Keys | Restores at once | Until every reader answers | First read p50 | First read max |
+|---|---|---|---|---|
+| 50,000 | 1 (a mutex) | 2.40 s (2.17, 2.40, 2.46) | 706 ms | 1,628 ms |
+| 50,000 | 8 | 0.29 s (0.28, 0.29, 0.58) | 103 ms | 227 ms |
+| 200,000 | 1 (a mutex) | 8.58 s (8.39, 8.58, 8.61) | 2,472 ms | 5,997 ms |
+| 200,000 | 8 | 2.52 s (2.41, 2.52, 2.68) | 831 ms | 1,873 ms |
+
+8.3× and 3.4×. The larger namespace gains less because merging records into the
+store, not waiting on storage, is most of its cost. On kind this was the slow
+minute after each restart of a pod restoring about 400,000 keys
+(docs/m16-results.md).
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

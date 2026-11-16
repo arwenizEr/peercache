@@ -7,6 +7,15 @@ change the public API.
 
 ## [Unreleased]
 
+### Changed
+
+- A persistent namespace restores up to eight partitions at once after a
+  restart or membership change, instead of one at a time. A caller of a
+  partition near the back of the queue waited for every restore in front of
+  it; with 50,000 keys and 2 ms of storage latency, every partition now
+  answers in 0.29 s instead of 2.4 s. At the peak eight partitions' records
+  are in memory together rather than one.
+
 ## [1.0.0] - 2026-11-16
 
 The first stable release. From here the promises in
