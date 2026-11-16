@@ -158,6 +158,7 @@ func TestTheDebugHandlerServesJSONAndRefusesTheRest(t *testing.T) {
 		{http.MethodGet, "/nowhere", http.StatusNotFound},
 		{http.MethodPost, "/", http.StatusMethodNotAllowed},
 		{http.MethodDelete, "/key?namespace=orders&key=k", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/ui", http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
 		req, _ := http.NewRequest(tc.method, srv.URL+tc.path, nil)

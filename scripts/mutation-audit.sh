@@ -2342,8 +2342,15 @@ mutate "DescribeKey never names this node the owner" \
 
 mutate "the debug handler answers any method" \
   describe.go \
-  '	if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
-  '	if false {' \
+  '
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
+  '
+	if false {' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+mutate "the dashboard answers any method" \
+  describe.go \
+  '		if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
+  '		if false {' \
   'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
 
 mutate "the debug handler accepts a key lookup without a key" \
