@@ -552,3 +552,25 @@ func BenchmarkNamespaceGetCompressed(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkNamespaceHandle measures Namespace on an open namespace, which is
+// documented as cheap enough for a hot path: with no options, and with options
+// matching the first call's, which are applied and compared before the handle
+// is returned (open question 26).
+func BenchmarkNamespaceHandle(b *testing.B) {
+	c := benchCache(b)
+	opts := []peercache.NamespaceOption{peercache.WithReplicationFactor(2), peercache.WithL1TTL(time.Second)}
+	c.Namespace("bench", opts...)
+	b.Run("no options", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = c.Namespace("bench")
+		}
+	})
+	b.Run("same options", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = c.Namespace("bench", opts...)
+		}
+	})
+}

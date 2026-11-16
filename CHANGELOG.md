@@ -7,6 +7,14 @@ change the public API.
 
 ## [Unreleased]
 
+### Added
+
+- `Namespace(name, opts...)` on an already open namespace logs a warning,
+  once per namespace, when its options would have changed it, naming the
+  options that were ignored. The first call still wins, as before; repeating
+  its options, a subset of them, or none stays silent. Open question 26: this
+  was silent and once made a benchmark measure local hits as remote reads.
+
 ## [0.3.0] - 2026-11-16
 
 A minor version because the public API and the debug handler's JSON change:

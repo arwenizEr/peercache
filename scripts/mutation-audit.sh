@@ -3028,6 +3028,13 @@ mutate "a fresh node first advertises no RPC address" \
 	cfg := opts.Config' \
   'TestTheFirstAliveMessageAdvertisesTheRPCAddress$' ./membership/
 
+# --- options given to an open namespace are warned about (open question 26) ---
+
+mutate "ignored namespace options are not warned about"   ignoredopts.go   '	if len(differ) == 0 || !ns.warnedOptions.CompareAndSwap(false, true) {'   '	if true || !ns.warnedOptions.CompareAndSwap(false, true) {'   'TestOptionsGivenToAnOpenNamespaceAreWarnedAbout$' ./tests
+mutate "ignored namespace options are warned about on every call"   ignoredopts.go   '	if len(differ) == 0 || !ns.warnedOptions.CompareAndSwap(false, true) {'   '	if len(differ) == 0 {'   'TestIgnoredOptionsAreWarnedAboutOnce$' ./tests
+mutate "options compared against defaults, not the open namespace"   ignoredopts.go   '	asked := ns.opts'   '	asked := core.DefaultNamespaceOptions()'   'TestOptionsGivenToAnOpenNamespaceAreWarnedAbout$' ./tests
+mutate "an option field is left out of the comparison"   internal/core/optdiff.go   '	add(o.L1TTL != asked.L1TTL, "L1TTL")'   ''   'TestDifferencesCoversEveryField$' ./internal/core/
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \

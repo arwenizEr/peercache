@@ -34,7 +34,9 @@ import (
 type Cache interface {
 	// Namespace returns a handle to a named keyspace, creating it on first
 	// use. Calling it again with different options does not reconfigure an
-	// existing namespace; the first call wins.
+	// existing namespace; the first call wins. A later call whose options
+	// would have changed it is logged at Warn, once per namespace, naming
+	// the options that were ignored.
 	Namespace(name string, opts ...NamespaceOption) Namespace
 
 	// Group returns a handle to the group with the given id. A group is
@@ -514,6 +516,7 @@ func (c *cache) Namespace(name string, opts ...NamespaceOption) Namespace {
 	ns, ok := c.namespaces[name]
 	c.mu.RUnlock()
 	if ok {
+		c.warnIgnoredOptions(ns, opts)
 		return ns
 	}
 
@@ -532,6 +535,7 @@ func (c *cache) Namespace(name string, opts ...NamespaceOption) Namespace {
 	// different staleness bounds would be a data-loss bug wearing a
 	// convenience-feature costume.
 	if ns, ok := c.namespaces[name]; ok {
+		c.warnIgnoredOptions(ns, opts)
 		return ns
 	}
 	if c.closed.Load() {
