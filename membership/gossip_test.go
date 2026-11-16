@@ -270,6 +270,37 @@ func TestPeerEpochIsVisible(t *testing.T) {
 	}
 }
 
+// TestAPeersAdvertisedEpochFollowsItsView is what republishing is for: a node
+// whose view moves on tells its peers, so they can see it is not behind.
+//
+// A node's first alive message carries the epoch it had when it started. Only
+// a republish after each join or departure carries a later one, so without it
+// a peer's advertised epoch stays where it began however far its view moves.
+func TestAPeersAdvertisedEpochFollowsItsView(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+
+	a := newGossip(t, "a")
+	b := newGossip(t, "b")
+	if err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatalf("Join(b): %v", err)
+	}
+	c := newGossip(t, "c")
+	if err := c.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatalf("Join(c): %v", err)
+	}
+
+	awaitReal(t, "a to see b advertise the epoch b holds", 20*time.Second, func() bool {
+		members, own := b.Members()
+		if len(members) != 3 {
+			return false
+		}
+		seen, ok := a.PeerEpoch("b")
+		return ok && seen == own && own > 0
+	})
+}
+
 func TestGossipValidatesOptions(t *testing.T) {
 	if _, err := membership.New(membership.Options{}); !errors.Is(err, core.ErrInvalidOption) {
 		t.Fatalf("New without a node ID = %v, want ErrInvalidOption", err)

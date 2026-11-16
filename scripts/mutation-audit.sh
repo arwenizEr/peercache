@@ -1621,7 +1621,7 @@ mutate "a refused activation keeps its empty record"   internal/actor/record.go 
 # The republisher replaced a synchronous UpdateNode in the event goroutine,
 # which could deadlock memberlist. That deadlock cannot be staged without over
 # sixty real nodes; what is held here is that republishing still happens.
-mutate "this node's metadata is never republished"   membership/gossip.go   '			case g.republish <- struct{}{}:'   '			case <-make(chan struct{}):'   'TestGossipAdvertisesTheRPCAddress$' ./membership/
+mutate "this node's metadata is never republished"   membership/gossip.go   '			case g.republish <- struct{}{}:'   '			case <-make(chan struct{}):'   'TestAPeersAdvertisedEpochFollowsItsView$' ./membership/
 
 # --- atomic key operations (decision 0027) ---
 
