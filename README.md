@@ -329,6 +329,11 @@ The words "strong" and "quorum" are absent from the API on purpose.
   replicate to it synchronously. Everything else completes without it.
 - **A single hot group is limited to one pod's throughput.** Groups are not
   sharded.
+- **A group's state lives only on its owner.** It is neither replicated nor
+  persisted, so when the group changes owner — a restart, a scale-out, a
+  drain — the new owner starts from nothing, and the old one stops serving
+  what it held. State that must survive belongs in a namespace; a group
+  function can write it there.
 
 ## Operating it
 

@@ -21,28 +21,29 @@ restarted pod hashes to the same place and reclaims exactly what it had.
 
 ## The five things that must be right
 
-### 1. Open every namespace on every node, before serving
+### 1. Open every namespace on every node, before joining
 
 ```go
-// On every pod, at startup, with identical options.
+// On every pod, at startup, with identical options, before the cache joins.
 cache.Namespace("orders", peercache.WithReplicationFactor(3), peercache.WithSyncReplication())
 ```
 
-**A namespace not opened locally is created for you on the first routed write —
-with default options, meaning replication factor 1.** Options are fixed at
-creation, so that node then replicates nothing for that namespace, permanently,
-however you configure it afterwards. Losing the node loses its entire share at
-what you believe is RF=3.
+**A peer's request for a namespace this node has not opened is refused** with
+`ErrActivationPending`, which the peer asks again for. A node that joins before
+opening its namespaces refuses its share of them until it does; a node that
+never opens one its peers use cannot serve its share of it at all.
 
-In testing, a cluster where one of five nodes had opened the namespace placed
-17% of the copies RF=3 implies, and every write reported success.
+Until v1.0.0 such a request created the namespace with default options —
+replication factor 1, no persistence — and options are fixed at creation. On
+kind, a pod that joined before opening its namespaces lost its share of every
+acknowledged order that way.
 
-`Stats().ImplicitNamespaces` counts this. **Alert on it being non-zero** — it
-means a node is running with configuration your application never chose.
+`Stats().UnopenedNamespaceRefusals` counts the refusals. A few while a node
+starts are normal; **alert on a rate that does not fall.**
 
 ### 2. Alert on the two counters that mean "your writes are not what you think"
 
-`peercache_implicit_namespaces_total` is one. The other is
+`peercache_unopened_namespace_refusals_total` is one. The other is
 `peercache_degraded_writes_total`, and it is the sharper of the two because the
 misconfiguration above is at least static, while this one appears and disappears
 with the network.
@@ -60,10 +61,11 @@ RF=3 got one copy and cannot tell. The window lasts as long as the partition.
   annotations:
     summary: "{{ $labels.pod }} acknowledged writes below its replication factor"
 
-- alert: PeerCacheImplicitNamespace
-  expr: peercache_implicit_namespaces_total > 0
+- alert: PeerCacheUnopenedNamespace
+  expr: rate(peercache_unopened_namespace_refusals_total[10m]) > 0
+  for: 10m
   annotations:
-    summary: "{{ $labels.pod }} is running a namespace its application never configured"
+    summary: "{{ $labels.pod }} refuses a namespace its application never opened"
 ```
 
 Worth watching but not paging on: `peercache_replicas_retained_total`, which
