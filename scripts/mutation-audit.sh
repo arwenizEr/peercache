@@ -3016,6 +3016,18 @@ mutate "a batch load drops keys that moved" \
   '	return nil' \
   'TestACallerAsksAgainForMisroutedKeys$' ./tests
 
+# --- a fresh node's first alive message carries its RPC address ---
+
+mutate "a fresh node first advertises no RPC address" \
+  membership/gossip.go \
+  '	g.meta.Store(&nodeMeta{RPCAddr: g.self.Addr, Started: g.started})
+
+	cfg := opts.Config' \
+  '	g.meta.Store(&nodeMeta{Started: g.started})
+
+	cfg := opts.Config' \
+  'TestTheFirstAliveMessageAdvertisesTheRPCAddress$' ./membership/
+
 # --- the memory budget says what it does not bound (open question 55) ---
 
 mutate "a budget without a memory limit is not warned about" \

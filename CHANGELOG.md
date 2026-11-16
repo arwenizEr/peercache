@@ -7,6 +7,15 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A freshly started node's first gossip message advertised no RPC address:
+  `membership.New` set it only after memberlist had built that message, so
+  a peer that joined before the node's first republish dialled the gossip
+  port for data and failed with `error reading server preface: EOF` until a
+  later membership change corrected it. Tests that retried around the
+  failure no longer do.
+
 ### Changed
 
 - `transport.Methods` and `peercachetest.Epoch` are functions, `Methods()` and

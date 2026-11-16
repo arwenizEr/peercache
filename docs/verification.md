@@ -245,6 +245,18 @@ gives each node exactly one address, so the distinction does not exist there.
 That is the argument for keeping a small number of real-socket tests despite
 their cost.
 
+The same symptom came back much later, rarely, on CI: the first write to a
+freshly started peer, after gossip had converged. It was read as a handshake
+still in progress and the tests learned to retry. It was this bug's remainder.
+`membership.New` stored the RPC address in the gossip metadata only after
+`memberlist.Create`, but Create asks the delegate for metadata while building
+the node's first alive message — so that message carried none, and a peer that
+joined before the node's first republish dialled the SWIM port until a later
+change corrected it. The metadata is now complete before Create;
+`TestTheFirstAliveMessageAdvertisesTheRPCAddress` records the first alive
+message through memberlist's `Alive` delegate and fails without the fix, and
+the retries are gone, so a regression shows up as the failure it is.
+
 ### An mTLS test that proved nothing
 
 Recorded in full under M3's heading in spirit, but it happened here. The first
@@ -672,6 +684,7 @@ caught   a read-modify-write is applied after its key moved                 -- T
 caught   a Set is applied after its key moved                               -- TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves
 caught   a replica-read copy outlives its key                               -- TestAReplicaReadCopyDoesNotOutliveItsKey
 caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
+caught   a fresh node first advertises no RPC address                       -- TestTheFirstAliveMessageAdvertisesTheRPCAddress
 caught   a drained node applies a peer's write                              -- TestADrainedNodeRefusesAPeerThatMissedTheDeparture
 caught   a store delete leaves its digest behind                            -- TestTheRunningDigestFollowsEveryWritePath
 caught   a store overwrite is counted as a new key                          -- TestTheRunningDigestFollowsEveryWritePath

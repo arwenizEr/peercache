@@ -176,7 +176,13 @@ func New(opts Options) (*Gossip, error) {
 		republishDone: make(chan struct{}),
 	}
 	g.started = clock.Real().Now().UnixNano()
-	g.meta.Store(&nodeMeta{Started: g.started})
+	// The RPC address goes in before memberlist.Create, which asks the
+	// delegate for metadata while building this node's first alive message.
+	// Peers learn the node from that message; one without an RPC address
+	// sends them to the gossip port for data until a later republish. An
+	// empty Self.Addr defaults to the gossip address below, which is also
+	// what peers fall back to, so nothing is lost by leaving it out here.
+	g.meta.Store(&nodeMeta{RPCAddr: g.self.Addr, Started: g.started})
 
 	cfg := opts.Config
 	if cfg == nil {
