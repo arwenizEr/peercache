@@ -690,6 +690,10 @@ caught   a fresh node first advertises no RPC address                       -- T
 caught   partitions restore one at a time                                   -- TestPartitionsRestoreInParallel
 caught   async fan-out sends one copy at a time                             -- TestAsyncFanOutRunsInParallel
 caught   one key's async copies travel on several senders                   -- TestAsyncFanOutKeepsOneKeysWritesInOrder
+caught   an idle tick reconciles in full                                    -- TestAnIdleTickDoesNotReconcile
+caught   a stray replica is left for a membership change that never comes   -- TestAStrayReplicaIsHandedOnOnAQuietCluster
+caught   a hand-off backlog waits for a membership change                   -- TestAStrayBacklogLargerThanTheHandOffQueueIsHandedOn
+caught   a copy a hand-off puts back waits for a membership change          -- TestACopyAHandOffPutsBackIsTriedAgainOnAQuietCluster
 caught   ignored namespace options are not warned about                     -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout
 caught   ignored namespace options are warned about on every call           -- TestIgnoredOptionsAreWarnedAboutOnce
 caught   options compared against defaults, not the open namespace          -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout

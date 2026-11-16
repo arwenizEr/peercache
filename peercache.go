@@ -555,6 +555,10 @@ func (c *cache) Namespace(name string, opts ...NamespaceOption) Namespace {
 	ns = c.newNamespaceLocked(name, resolved)
 	c.namespaces[name] = ns
 	c.order = append(c.order, name)
+	// Replicas may have arrived before the application opened it; the
+	// reconciliation skips a namespace it cannot see, so the next tick
+	// must look again.
+	c.promoter.markDirty()
 	return ns
 }
 
@@ -791,7 +795,7 @@ func (c *cache) sweepLoop() {
 			// idempotent and costs a map scan when there is nothing
 			// to do, which is the common case.
 			if c.promoter != nil {
-				c.promoter.reconcile()
+				c.promoter.tick()
 			}
 		}
 	}

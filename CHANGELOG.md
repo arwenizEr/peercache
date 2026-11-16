@@ -9,6 +9,15 @@ change the public API.
 
 ### Changed
 
+- A tick reconciles replicas only when something may be out of place: for ten
+  seconds after a membership view, or after a copy arrived where this node's
+  ranking does not put it, a hand-off put one back, a pass left work behind,
+  or a namespace was opened. Every tick used to rank every replica the node
+  held, twice, with nothing to do: 8.7 ms a tick at 100,000 keys in five
+  nodes, and on kind, at about 400,000 keys a pod, about 9,000 orders a minute
+  against 140,000 on an empty store. `Stats().PromotionRounds` still counts
+  the reconciliations run, so it no longer rises by one a second on a quiet
+  node.
 - Asynchronous replication sends up to eight keys' copies at once, instead of
   one at a time per node. A node's asynchronous replication rate was one over
   the round trip; on kind at about 140,000 orders a minute the queue in front

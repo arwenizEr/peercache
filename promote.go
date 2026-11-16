@@ -3,6 +3,7 @@ package peercache
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -51,6 +52,13 @@ type promoter struct {
 	// as a rate rather than a total.
 	rounds atomic.Int64
 
+	// dirty asks the next tick for a reconciliation: something may be out
+	// of place that no membership change will come to fix. See tick.
+	dirty atomic.Bool
+	// viewAt is when the guard last applied a membership view, in clock
+	// nanoseconds. Ticks reconcile for reconcileSettle after it.
+	viewAt atomic.Int64
+
 	// mu serializes reconciliations. They start from three places — the
 	// guard's update callback, the sweep loop, and the end of a catch-up —
 	// and two at once each read the hand-off queue's room and each drained
@@ -89,11 +97,48 @@ func (p *promoter) start(guard *ownership.Guard) {
 		default:
 		}
 		p.cache.restoreGen.Add(1)
+		p.viewAt.Store(p.cache.opts.Clock.Now().UnixNano())
 		p.reconcile()
 	})
 	// Reconcile once now, for a node that starts holding replicas — which
 	// happens when catch-up runs before any membership change.
+	p.viewAt.Store(p.cache.opts.Clock.Now().UnixNano())
 	p.reconcile()
+}
+
+// reconcileSettle is how long after a membership view the sweep loop's ticks
+// keep reconciling unconditionally.
+//
+// A view change reconciles at once, on the guard's callback. The ticks after it
+// catch what that pass could not see yet: a write, restore or adoption that
+// decided ownership under the previous view and landed after the pass. Each of
+// those is microseconds wide; ten seconds is a margin, not a measurement.
+const reconcileSettle = 10 * time.Second
+
+// tick is the sweep loop's reconciliation: a full pass while a view is
+// settling or when something has been marked out of place, and nothing
+// otherwise.
+//
+// Every tick used to reconcile in full. With nothing to do, that still ranked
+// every replica the node held, twice: about 130 ns an entry, 8 ms a tick at
+// 100,000 keys in five nodes (BenchmarkIdleTick), and on kind, at about 400,000
+// keys a pod, a fifteenth of an empty cluster's throughput. Between views a
+// copy can be out of place only by arriving there, and every way in marks the
+// promoter dirty: the replicate handler for a copy this node does not rank
+// for, the hand-off for a copy it puts back, a reconciliation that left work
+// behind, and a namespace opened after its replicas arrived.
+func (p *promoter) tick() {
+	settling := p.cache.opts.Clock.Now().UnixNano()-p.viewAt.Load() < int64(reconcileSettle)
+	if p.dirty.Swap(false) || settling {
+		p.reconcile()
+	}
+}
+
+// markDirty asks the next tick to reconcile.
+func (p *promoter) markDirty() {
+	if p != nil {
+		p.dirty.Store(true)
+	}
 }
 
 // reconcile moves keys between the replica store and the owned store to match
@@ -111,6 +156,9 @@ func (p *promoter) reconcile() {
 	for _, name := range c.replicas.Namespaces() {
 		ns, ok := c.namespaceIfExists(name)
 		if !ok {
+			// Opening the namespace marks the promoter dirty, so the
+			// next tick after the application opens it is the one that
+			// reconciles these.
 			// A namespace this node holds replicas for but has never
 			// been asked about locally. Skip it — do *not* create it.
 			//
@@ -216,6 +264,11 @@ func (p *promoter) reconcile() {
 				}
 				return owner.ID == self || (e.From != "" && owner.ID == e.From)
 			})))
+			if len(c.replicas.Keys(name)) > 0 {
+				// Kept: hand-offs in flight, or copies that arrived
+				// between the passes. A later tick looks again.
+				p.markDirty()
+			}
 			continue
 		}
 
@@ -223,9 +276,15 @@ func (p *promoter) reconcile() {
 		// replicas this node no longer ranks for, until a later round has
 		// room; a full queue is no reason to drain them only to put them
 		// back. The queue's bound is what paces a large rebalance.
-		orphans := c.replicas.DrainUpTo(name, c.handoff.room(), func(key string) bool {
+		room := c.handoff.room()
+		orphans := c.replicas.DrainUpTo(name, room, func(key string) bool {
 			return !c.stillReplicaFor(ns.groupKeyFor(key), rf, self)
 		})
+		if len(orphans) >= room {
+			// The queue's room ran out, so there may be more: a later
+			// tick drains them as it frees up.
+			p.markDirty()
+		}
 		for key, e := range orphans {
 			p.evicted.Add(1)
 			c.handoff.enqueue(handoffWork{namespace: name, key: key, entry: e})
