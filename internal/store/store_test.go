@@ -738,6 +738,16 @@ func TestSnapshotSkipsExpiredEntries(t *testing.T) {
 	if len(entries) != 1 || entries[0].Key != "alive" {
 		t.Fatalf("Snapshot = %v, want just the unexpired key", entries)
 	}
+
+	// An expired key must not take a place in the page either. "doomed"
+	// sorts before "e-alive"; counted as a candidate, it would fill a
+	// one-key page, be dropped when the values are read, and leave an empty
+	// page that still says there is more.
+	s.Set("e-alive", []byte("v"), time.Hour)
+	entries, _ = s.Snapshot("b", 1, nil)
+	if len(entries) != 1 || entries[0].Key != "e-alive" {
+		t.Fatalf("Snapshot(after b, limit 1) = %v, want [e-alive]: an expired key took the page", entries)
+	}
 }
 
 // TestSnapshotFiltersByCaller pins the predicate catch-up uses to decide who is
