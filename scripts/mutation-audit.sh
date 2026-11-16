@@ -283,9 +283,14 @@ mutate "shard selection collapses to one shard" \
 
 mutate "TTL deadline overflow reintroduced" \
   internal/store/store.go \
+  '	return deadlineNanos(now, ttl)' \
+  '	return now.Add(ttl).UnixNano()' \
+  'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
+mutate "a restored key's deadline overflows" \
+  internal/store/store.go \
   'expiresAt = deadlineNanos(s.clk.Now(), ttl)' \
   'expiresAt = s.clk.Now().Add(ttl).UnixNano()' \
-  'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
+  'TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
 
 # These two moved when the L1 tier began comparing (epoch, version)
 # stamps rather than bare versions. The audit reported them as SKIP rather

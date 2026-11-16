@@ -196,6 +196,19 @@ func TestUnrepresentableTTLDoesNotExpireImmediately(t *testing.T) {
 	}
 }
 
+// TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately is the same
+// property for the promotion path, which computes its own deadline: a replica
+// promoted with the longest TTL a caller can give must not arrive dead.
+func TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately(t *testing.T) {
+	s, _ := newStore(t)
+	if !s.Restore("k", []byte("v"), time.Duration(math.MaxInt64), 1, 0) {
+		t.Fatal("Restore refused a key it does not hold")
+	}
+	if _, _, ok := s.Get("k"); !ok {
+		t.Fatal("a key restored with the maximum TTL expired immediately")
+	}
+}
+
 // TestSetCopiesTheCallersBuffer is the safe half of the aliasing contract:
 // callers may reuse the buffer they passed to Set.
 func TestSetCopiesTheCallersBuffer(t *testing.T) {
