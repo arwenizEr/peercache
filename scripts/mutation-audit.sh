@@ -234,8 +234,10 @@ PY
   # nothing to do with the test, and used to be counted as caught. Build the
   # package's tests first, running none, so that such an entry is reported
   # for what it is: an entry that checks nothing.
-  if ! "${run[@]}" -run '^$' -count=1 >/dev/null 2>&1; then
+  local built
+  if ! built=$("${run[@]}" -run '^$' -count=1 2>&1); then
     echo "BROKEN   $name (the mutation does not compile; fix this entry)"
+    printf '%s\n' "$built" | grep -E '\.go:[0-9]+' | head -3 | sed 's/^/           /'
     broken=$((broken + 1))
     git checkout -- "$file"
     return
@@ -281,9 +283,14 @@ mutate "shard selection collapses to one shard" \
 
 mutate "TTL deadline overflow reintroduced" \
   internal/store/store.go \
+  '	return deadlineNanos(now, ttl)' \
+  '	return now.Add(ttl).UnixNano()' \
+  'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
+mutate "a restored key's deadline overflows" \
+  internal/store/store.go \
   'expiresAt = deadlineNanos(s.clk.Now(), ttl)' \
   'expiresAt = s.clk.Now().Add(ttl).UnixNano()' \
-  'TestUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
+  'TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately' ./internal/store/
 
 # These two moved when the L1 tier began comparing (epoch, version)
 # stamps rather than bare versions. The audit reported them as SKIP rather
@@ -353,7 +360,7 @@ mutate "store version stops incrementing" \
 mutate "L1 invalidation ignores the resident version" \
   internal/l1/l1.go \
   'if !ok || !stamp.NewerThan(e.stamp) {' \
-  'if !ok {' \
+  'if !ok || (false && !stamp.NewerThan(e.stamp)) {' \
   'TestInvalidateOlderThanKeepsNewerCopies' ./internal/l1/
 
 mutate "loader panic is no longer contained" \
@@ -521,7 +528,7 @@ mutate "the replica ranking is unsorted" \
 		// their sorts were unstable in different ways.
 		return ranked[i].node.ID < ranked[j].node.ID
 	})' \
-  '' \
+  '_ = keyHash' \
   'TestReplicasAreARankedPrefix' ./internal/ownership/
 
 mutate "an unknown membership claims everything" \
@@ -540,8 +547,10 @@ mutate "an unknown membership claims everything" \
 
 mutate "the guard activates groups it does not own" \
   internal/ownership/guard.go \
-  'if !ok || current.ID != g.self.ID {' \
-  'if false {' \
+  '	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)' \
+  '	if _, _ = ok, current; false {
+		g.refusals.Add(1)' \
   'TestGuardRefusesGroupsItDoesNotOwn' ./internal/ownership/
 
 mutate "newly acquired groups activate immediately" \
@@ -566,10 +575,14 @@ mutate "a stale epoch is accepted"   internal/ownership/guard.go   'if epoch < s
 
 mutate "a caller ahead of this node is not deferred"   internal/ownership/guard.go   'if epoch > snap.epoch {'   'if false {'   'TestFutureEpochDefersRatherThanRefusing' ./internal/ownership/
 
-mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '	current, ok := owner(snap, groupKey)'   '	if epoch < snap.epoch {
+mutate "the epoch is checked before ownership"   internal/ownership/guard.go   '	current, ok := owner(snap, groupKey)
+	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)'   '	if epoch < snap.epoch {
 		return fmt.Errorf("mutant: %w", core.ErrStaleEpoch)
 	}
-	current, ok := owner(snap, groupKey)'   'TestNotOwnerBeatsStaleEpoch' ./internal/ownership/
+	current, ok := owner(snap, groupKey)
+	if !ok || current.ID != g.self.ID {
+		g.refusals.Add(1)'   'TestNotOwnerBeatsStaleEpoch' ./internal/ownership/
 
 mutate "local activation does not use the current epoch"   internal/ownership/guard.go   'return g.CanActivateAt(groupKey, g.table.Epoch())'   'return g.CanActivateAt(groupKey, 0)'   'TestCanActivateUsesTheCurrentEpoch' ./internal/ownership/
 
@@ -660,7 +673,7 @@ mutate "a caller does not identify itself" \
 mutate "sentinel errors do not survive the hop" \
   transport/client.go \
   'return fmt.Errorf("transport: %s: %s: %w", node.ID, st.Message(), sentinel)' \
-  'return errors.New(st.Message())' \
+  '_ = sentinel; return errors.New(st.Message())' \
   'TestSentinelErrorsSurviveTheHop' ./transport/
 
 mutate "Unavailable is read as a deferred activation" \
@@ -685,8 +698,8 @@ mutate "the server does not verify client certificates" \
 
 mutate "the client does not verify the server" \
   transport/tls.go \
-  'RootCAs:            pool,' \
-  'InsecureSkipVerify: true, RootCAs: pool,' \
+  'InsecureSkipVerify: c.InsecureSkipVerify,' \
+  'InsecureSkipVerify: true,' \
   'TestMutualTLSRejectsAnUntrustedServer' ./transport/
 
 mutate "the TLS floor drops to 1.0" \
@@ -740,20 +753,20 @@ mutate "enqueueing an invalidation blocks when the queue is full" \
 
 mutate "an older replica copy overwrites a newer one" \
   internal/replication/replica.go \
-  'if !e.Stamp.NewerThan(existing.Stamp) {' \
+  'if !Newer(e, existing) {' \
   'if false {' \
   'TestAnOlderCopyIsRejected' ./internal/replication/
 
 mutate "the replica store compares versions, ignoring the epoch" \
   internal/replication/replica.go \
-  'if !e.Stamp.NewerThan(existing.Stamp) {' \
-  'if e.Stamp.Version <= existing.Stamp.Version {' \
+  '	return a.Stamp.NewerThan(b.Stamp)' \
+  '	return a.Stamp.Version > b.Stamp.Version' \
   'TestALaterEpochWinsWhateverTheVersion' ./internal/replication/
 
 mutate "Drain leaves a stranded copy behind" \
   internal/replication/replica.go \
   '		taken[key] = e
-		delete(nr.entries, key)' \
+		nr.del(key)' \
   '		taken[key] = e' \
   'TestDrainTakesOnlyWhatItClaims' ./internal/replication/
 
@@ -776,7 +789,7 @@ mutate "snapshot hands over expired keys" \
   'if e.expiresAt != 0 && now >= e.expiresAt {
 				continue
 			}' \
-  '' \
+  '_ = e' \
   'TestSnapshotSkipsExpiredEntries' ./internal/store/
 
 mutate "sync replication does not wait" \
@@ -821,19 +834,22 @@ mutate "a remote write skips replication" \
 mutate "promotion drains nothing" \
   promote.go \
   'taken := c.replicas.Drain(name, func(key string) bool {' \
-  'taken := c.replicas.Drain(name, func(key string) bool { return false
-			_ = func() bool {' \
+  'taken := c.replicas.Drain(name, func(key string) bool {
+			if true {
+				return false
+			}' \
   'TestKillingAnOwnerPromotesAReplica' ./tests
 
 mutate "catch-up sends whatever is asked for" \
   handler.go \
-  'for _, n := range ranked {
-			if n.ID == in.Requester {
+  'for _, node := range ranked[:n] {
+			if node.ID == in.Requester {
 				return true
 			}
 		}
 		return false' \
-  'return true' \
+  '_ = ranked[:n]
+		return true' \
   'TestCatchUpOnlySendsKeysTheAskerRanksFor' ./tests
 
 mutate "catch-up does not reconcile what it pulled" \
@@ -916,7 +932,7 @@ mutate "an implicitly created namespace is not counted" \
   handler.go \
   'if !existed {
 		h.cache.implicitNamespaces.Add(1)' \
-  'if false {
+  'if _ = existed; false {
 		h.cache.implicitNamespaces.Add(1)' \
   'TestAnImplicitNamespaceIsCountedAndReplicatesNothing' ./tests
 
@@ -931,7 +947,7 @@ mutate "an empty view plans an evacuation" \
   'if newErr != nil {
 			continue
 		}' \
-  '' \
+  '_ = newErr' \
   'TestAnEmptyNewViewPlansNothing' ./internal/rebalance/
 
 mutate "unchanged keys are never counted" \
@@ -939,7 +955,7 @@ mutate "unchanged keys are never counted" \
   'if !moved {
 			plan.Unchanged++
 		}' \
-  '' \
+  '_ = moved' \
   'TestNoChangeMeansNoMoves' ./internal/rebalance/
 
 # --- lifecycle: the entry that was truncated ----------------------------------
@@ -1027,7 +1043,7 @@ mutate "a correctness counter is exported as a gauge" \
 
 mutate "an out-of-order copy is not counted as a version conflict" \
   internal/replication/replica.go \
-  '			if existing.Stamp.NewerThan(e.Stamp) {
+  '			if Newer(existing, e) {
 				s.versionConflicts.Add(1)
 			}' \
   '' \
@@ -1035,7 +1051,7 @@ mutate "an out-of-order copy is not counted as a version conflict" \
 
 mutate "a retransmission is counted as a version conflict" \
   internal/replication/replica.go \
-  '			if existing.Stamp.NewerThan(e.Stamp) {
+  '			if Newer(existing, e) {
 				s.versionConflicts.Add(1)
 			}' \
   '			s.versionConflicts.Add(1)' \
@@ -1139,9 +1155,13 @@ mutate "a namespace requiring its factor still acknowledges below it"   namespac
 # The refusal after a partial placement. An isolated node has no targets and
 # takes the other branch, so only a cluster with some replicas but not enough
 # reaches this one.
-mutate "a write placed on some replicas but not enough is acknowledged"   namespace.go   '	// and takes precedence: it is the more specific diagnosis.
-	if n.underFactor(len(targets)) {'   '	// and takes precedence: it is the more specific diagnosis.
-	if false {'   'TestRequireReplicationFactorRefusesThroughAForwardedWrite$' ./tests
+mutate "a write placed on some replicas but not enough is acknowledged" \
+  namespace.go \
+  '	// than only by the owner.
+	if n.underFactor(len(targets)) {' \
+  '	// than only by the owner.
+	if false {' \
+  'TestRequireReplicationFactorRefusesThroughAForwardedWrite$' ./tests
 
 # The sentinel has to survive gRPC, or a write through any non-owner sees a
 # generic unreachable error and the distinction exists only for local writes.
@@ -1261,7 +1281,7 @@ mutate "replica arrivals never check the budget" \
 mutate "probation hides nobody" \
   probation.go \
   '		if !ok || now-started >= int64(period) {' \
-  '		if true {' \
+  '		if _ = ok; true {' \
   'TestACrashloopingNodeIsNeverRanked$' ./tests
 
 mutate "a probation ending never reaches the ranking" \
@@ -1428,8 +1448,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '60 series come out of it' \
-  '59 series come out of it' \
+  '63 series come out of it' \
+  '62 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -1494,6 +1514,10 @@ mutate "a two-digit milestone row stops being counted" \
 
 # --- Question 42: a lost tombstone ---
 
+# Checked in the store: since replicas order copies by HLC (question 50), the
+# cluster test's replica takes the rewrite whatever its version, so it no
+# longer depends on the floor. The floor still keeps a key's version from
+# going backwards across a Delete, which L1 stamps compare.
 mutate "a deletion no longer raises the version floor" \
   internal/store/store.go \
   '		// docs/decisions/open.md question 42.
@@ -1501,7 +1525,7 @@ mutate "a deletion no longer raises the version floor" \
 			sh.floor = e.version
 		}' \
   '		// docs/decisions/open.md question 42.' \
-  'TestALostDeleteDoesNotResurrectAnOlderValue$' ./tests
+  'TestARewriteAfterShedIsVersionedAboveWhatWasShed$' ./internal/store/
 
 # --- Typed group functions ---
 
@@ -1554,17 +1578,19 @@ mutate "a misconfigured namespace's nil store is reachable from a peer"   handle
 
 # Compression across nodes: the wire and L1 carry plain values, the stores
 # framed ones. Each side once got the other's form.
-mutate "a remote Get unframes a value the owner already unframed"   namespace.go   '		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+mutate "a remote Get unframes a value the owner already unframed" \
+  namespace.go \
+  '		n.l1.Put(key, value, stamp, l1Lifetime(n.opts.L1TTL, left))
 	}
 	return value, nil
 }
-
-'   '		n.l1.Put(key, value, stamp, n.opts.L1TTL)
+' \
+  '		n.l1.Put(key, value, stamp, l1Lifetime(n.opts.L1TTL, left))
 	}
 	return n.decode(value)
 }
-
-'   'TestCompressedValuesSurviveEveryRemotePath$' ./tests
+' \
+  'TestCompressedValuesSurviveEveryRemotePath$' ./tests
 
 # A load that raced a Set stored its older value over the newer one.
 mutate "a load overwrites a write that raced it"   internal/store/store.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
@@ -1572,7 +1598,11 @@ mutate "a load overwrites a write that raced it"   internal/store/store.go   '	i
 	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' ./tests
 
 # A replicated tombstone removed the replica's copy whatever its stamp.
-mutate "a stale tombstone deletes a newer replica"   internal/replication/replica.go   '	if !held || e.Stamp.NewerThan(stamp) {'   '	if !held {'   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' ./tests
+mutate "a stale tombstone deletes a newer replica" \
+  internal/replication/replica.go \
+  '	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {' \
+  '	if !held {' \
+  'TestAStaleTombstoneDoesNotDeleteANewerReplica$' ./tests
 
 # A timer whose turn could not be queued was dropped, its entry left behind.
 mutate "a timer due on a full mailbox is dropped"   internal/actor/record.go   '	if r.timers[gt.name] == gt && r.act != nil {
@@ -1606,7 +1636,7 @@ mutate "a refused activation keeps its empty record"   internal/actor/record.go 
 # The republisher replaced a synchronous UpdateNode in the event goroutine,
 # which could deadlock memberlist. That deadlock cannot be staged without over
 # sixty real nodes; what is held here is that republishing still happens.
-mutate "this node's metadata is never republished"   membership/gossip.go   '			case g.republish <- struct{}{}:'   '			case <-make(chan struct{}):'   'TestGossipAdvertisesTheRPCAddress$' ./membership/
+mutate "this node's metadata is never republished"   membership/gossip.go   '			case g.republish <- struct{}{}:'   '			case <-make(chan struct{}):'   'TestAPeersAdvertisedEpochFollowsItsView$' ./membership/
 
 # --- atomic key operations (decision 0027) ---
 
@@ -1614,13 +1644,15 @@ mutate "an update reads and writes under separate locks" \
   internal/store/update.go \
   '	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	sh.forget(key)
 
 	old, had := sh.entries[key]' \
   '	sh.mu.RLock()
 	old, had := sh.entries[key]
 	sh.mu.RUnlock()
 	sh.mu.Lock()
-	defer sh.mu.Unlock()' \
+	defer sh.mu.Unlock()
+	sh.forget(key)' \
   'TestUpdateIsAtomicUnderContention$' ./internal/store
 
 mutate "compare-and-swap compares framed bytes" \
@@ -1722,10 +1754,10 @@ mutate "a replica serves a copy older than the TTL" \
 mutate "a replica serves a key it no longer ranks for" \
   namespace.go \
   '	if !ranked {
-		return nil, core.Stamp{}, 0, false
+		return nil, core.Stamp{}, 0, 0, false
 	}' \
-  '	if false {
-		return nil, core.Stamp{}, 0, false
+  '	if _ = ranked; false {
+		return nil, core.Stamp{}, 0, 0, false
 	}' \
   'TestANodeThatNoLongerRanksRefersTheRead$' ./tests
 
@@ -1761,8 +1793,8 @@ mutate "a self-replica reads over the network" \
 
 mutate "a replica copy is cached for a full TTL from the read" \
   namespace.go \
-  '			n.l1.Put(key, val, stamp, remaining)' \
-  '			n.l1.Put(key, val, stamp, n.opts.L1TTL)' \
+  '			n.l1.Put(key, val, stamp, l1Lifetime(remaining, left))' \
+  '			n.l1.Put(key, val, stamp, l1Lifetime(n.opts.L1TTL, left))' \
   'TestAReplicaCopyIsCachedForWhatIsLeftOfItsTTL$' ./tests
 
 mutate "replica reads always go to the owner" \
@@ -1826,13 +1858,13 @@ mutate "an HLC order repeats on a stopped clock" \
 mutate "an observed HLC order is ignored" \
   internal/hlc/hlc.go \
   '		if uint64(o) <= last || c.last.CompareAndSwap(last, uint64(o)) {' \
-  '		if true {' \
+  '		if _ = last; true {' \
   'TestAnObservedOrderIsOutranked$' ./internal/hlc/
 
 mutate "a drifting peer drags the HLC ahead" \
   internal/hlc/hlc.go \
   '	if uint64(o) > limit {' \
-  '	if false {' \
+  '	if _ = limit; false {' \
   'TestADriftingPeerCannotDragTheClockAhead$' ./internal/hlc/
 
 # --- persistence: segment format and blob stores (decision 0029) ---
@@ -1866,18 +1898,20 @@ mutate "the memory blob store keeps the caller's slice" \
 
 mutate "a store write reports an order it did not store" \
   internal/store/store.go \
-  '	return Write{Version: version, Order: order, ExpiresAt: expiresAt}' \
-  '	return Write{Version: version, Order: s.nextOrder(), ExpiresAt: expiresAt}' \
+  '	return Write{Version: version, Order: order, ExpiresAt: expiresAt, Prev: old.order}' \
+  '	return Write{Version: version, Order: s.nextOrder(), ExpiresAt: expiresAt, Prev: old.order}' \
   'TestAKeysOrdersRiseWithItsVersions$' ./internal/store/
 
 mutate "a promoted value is given a new order" \
   internal/store/store.go \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
-	delta := size(key, stored)
-	if ok {' \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()}
-	delta := size(key, stored)
-	if ok {' \
+  '	} else if ok && existing.version >= version {
+		return false
+	}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})' \
+  '	} else if ok && existing.version >= version {
+		return false
+	}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()})' \
   'TestRestoreInstallsTheGivenOrder$' ./internal/store/
 
 mutate "an atomic update stores no order" \
@@ -1940,16 +1974,16 @@ mutate "a delete runs ahead of the restore" \
 # the target, which no test reached: the entry passed with it broken.
 mutate "a restore skips a corrupt log" \
   persistence.go \
-  '		f, err := p.load(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		kept := f.Records[:0]' \
-  '		f, err := p.load(ctx, name)
-		if err != nil {
-			continue
-		}
-		kept := f.Records[:0]' \
+  '			if err != nil {
+				return nil, err
+			}
+			loaded[name] = true
+			kept := f.Records[:0]' \
+  '			if err != nil {
+				continue
+			}
+			loaded[name] = true
+			kept := f.Records[:0]' \
   'TestACorruptSegmentFailsTheRestore$' ./tests
 
 mutate "a failed restore is never retried" \
@@ -2003,12 +2037,8 @@ mutate "a shed persistent key is not marked for restore" \
 
 mutate "a restore reads only one snapshot" \
   persistence.go \
-  '		if !strings.HasPrefix(name[len(prefix):], "snap-") {
-			continue
-		}' \
-  '		if !strings.HasPrefix(name[len(prefix):], "snap-") || len(sc.merged) > 0 {
-			continue
-		}' \
+  '			if loaded[name] || !strings.HasPrefix(name[len(prefix):], "snap-") {' \
+  '			if loaded[name] || !strings.HasPrefix(name[len(prefix):], "snap-") || len(sc.merged) > 0 {' \
   'TestARestoreMergesEverySnapshot$' ./tests
 
 mutate "compaction deletes segments its snapshot failed to cover" \
@@ -2020,40 +2050,47 @@ mutate "compaction deletes segments its snapshot failed to cover" \
 mutate "compaction drops tombstones inside their grace" \
   persistence.go \
   '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
-  '		if r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt) {' \
+  '		if _ = cutoff; r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt) {' \
   'TestATombstoneIsKeptForItsGrace$' ./tests
 
 mutate "compaction keeps tombstones forever" \
   persistence.go \
   '		if r.Order < cutoff && (r.Tombstone || (r.ExpiresAt != 0 && now >= r.ExpiresAt)) {' \
-  '		if false {' \
+  '		if _, _ = cutoff, now; false {' \
   'TestATombstoneIsKeptForItsGrace$' ./tests
 
 # --- repointed after M14b moved their code ---
 
 mutate "promotion restarts the version sequence" \
   internal/store/store.go \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}
-	delta := size(key, stored)
-	if ok {' \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: 1, order: order}
-	delta := size(key, stored)
-	if ok {' \
+  '	} else if ok && existing.version >= version {
+		return false
+	}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})' \
+  '	} else if ok && existing.version >= version {
+		return false
+	}
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: 1, order: order})' \
   'TestRestoreContinuesTheVersionSequence' ./internal/store/
 
 mutate "Restore overwrites a newer value" \
   internal/store/store.go \
-  '	if ok && existing.version >= version {
+  '	if ok && order != 0 && existing.order != 0 {
+		if existing.order >= order {
+			return false
+		}
+	} else if ok && existing.version >= version {
 		return false
 	}
-	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}' \
-  '	sh.entries[key] = entry{val: stored, expiresAt: expiresAt, version: version, order: order}' \
+' \
+  '	_ = existing
+' \
   'TestRestoreRefusesAnOlderVersion' ./internal/store/
 
 mutate "deletions are not replicated" \
   namespace.go \
-  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)' \
-  '	err := error(nil)' \
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)' \
+  '	_ = order; err := error(nil)' \
   'TestADeletionReplicates' ./tests
 
 mutate "handed-off keys are not adopted by their new owner" \
@@ -2064,8 +2101,8 @@ mutate "handed-off keys are not adopted by their new owner" \
 
 mutate "promotion restarts a key's lifetime" \
   promote.go \
-  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
-  '		if ns.store.Restore(key, e.Value, time.Duration(e.ExpiresAt-now+int64(10*time.Second)), e.Stamp.Version, e.Order) {' \
+  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {' \
+  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt+10_000_000_000, e.Stamp.Version, e.Order) {' \
   'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
 
 mutate "an adopted hand-off is framed a second time" \
@@ -2076,15 +2113,15 @@ mutate "an adopted hand-off is framed a second time" \
 
 mutate "atomic writes are not replicated" \
   atomic.go \
-  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)' \
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)' \
   '	err = error(nil)' \
   'TestTouchOutlivesTheOriginalDeadlineAcrossFailover$' ./tests
 
 mutate "a failed synchronous Set skips its invalidation" \
   namespace.go \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, false)
+  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
 	if err == nil {
 		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	}' \
@@ -2092,9 +2129,9 @@ mutate "a failed synchronous Set skips its invalidation" \
 
 mutate "a failed synchronous Delete skips its invalidation" \
   namespace.go \
-  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
 	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)' \
-  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, true)
+  '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
 	if err == nil {
 		n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
 	}' \
@@ -2102,9 +2139,9 @@ mutate "a failed synchronous Delete skips its invalidation" \
 
 mutate "a failed synchronous atomic write skips its invalidation" \
   atomic.go \
-  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
-  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, false)
+  '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)
 	if err == nil {
 		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	}' \
@@ -2118,8 +2155,8 @@ mutate "a restore keeps the first record it reads" \
 
 mutate "a promoted replica's order is not carried" \
   promote.go \
-  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, e.Order) {' \
-  '		if ns.store.Restore(key, e.Value, time.Duration(left), e.Stamp.Version, 0) {' \
+  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {' \
+  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, 0) {' \
   'TestARestoreDoesNotUndoAPromotedWrite$' ./tests
 
 # --- persist.Dir (decision 0029, M14c) ---
@@ -2196,11 +2233,11 @@ mutate "a split deletes logs its segments failed to cover" \
 
 mutate "a restore ignores logs not yet split" \
   persistence.go \
-  '	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
-	if err != nil {
-		return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
-	}' \
-  '	var logs []string' \
+  '		logs, err := p.store.List(ctx, logPrefix(p.ns.name))
+		if err != nil {
+			return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
+		}' \
+  '		var logs []string' \
   'TestAColdStartRestoresWhatWasFlushed$' ./tests
 
 mutate "a flush writes one object per partition" \
@@ -2285,7 +2322,7 @@ mutate "otel registers counters as gauges" \
 mutate "otel keeps a counter's _total" \
   otel/otel.go \
   '		return strings.TrimSuffix(m.Name, "_total")' \
-  '		return m.Name' \
+  '		_ = strings.TrimSuffix; return m.Name' \
   'TestCounterNamesDropTheirTotal$' otel::./
 
 mutate "otel observes without the node attribute" \
@@ -2293,7 +2330,7 @@ mutate "otel observes without the node attribute" \
   '				o.ObserveFloat64(c, m.Value, node)
 			} else if g, ok := gauges[m.Name]; ok {
 				o.ObserveFloat64(g, m.Value, node)' \
-  '				o.ObserveFloat64(c, m.Value)
+  '				_ = node; o.ObserveFloat64(c, m.Value)
 			} else if g, ok := gauges[m.Name]; ok {
 				o.ObserveFloat64(g, m.Value)' \
   'TestEverySeriesIsBridged$' otel::./
@@ -2327,8 +2364,15 @@ mutate "DescribeKey never names this node the owner" \
 
 mutate "the debug handler answers any method" \
   describe.go \
-  '	if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
-  '	if false {' \
+  '
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
+  '
+	if false {' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+mutate "the dashboard answers any method" \
+  describe.go \
+  '		if r.Method != http.MethodGet && r.Method != http.MethodHead {' \
+  '		if false {' \
   'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
 
 mutate "the debug handler accepts a key lookup without a key" \
@@ -2357,7 +2401,7 @@ mutate "a persistent namespace is described without its persistence" \
 
 mutate "a failed sync replication is an opaque error" \
   namespace.go \
-  '		n.countDegraded(0)
+  '		n.countDegraded(0, degradedByFailure)
 		return fmt.Errorf("%w: %w", ErrUnderReplicated, err)' \
   '		return err' \
   'TestAFailedSyncReplicationReportsTheWriteAsHeld$' ./tests
@@ -2398,7 +2442,7 @@ mutate "a relayed catch-up copy is filed under its relay" \
   '			From:     e.From,
 ' \
   '' \
-  'TestANodeRestartedFasterThanDetectionRecoversWhatItOwns$' ./tests
+  'TestARelayedCatchUpCopyNamesItsWriter$' ./tests
 
 # --- open question 50 (found by M16) ---
 
@@ -2598,7 +2642,8 @@ mutate "a hit inside the window does not refresh" \
   namespace.go \
   '			n.maybeRefresh(key, version, left)
 ' \
-  '' \
+  '			_, _ = version, left
+' \
   'TestARefreshReloadsAKeyNearItsExpiry$' ./tests
 mutate "every hit refreshes, whatever its remaining lifetime" \
   refresh.go \
@@ -2718,7 +2763,7 @@ mutate "the owner's Get grants no remaining lifetime" \
   handler.go \
   '		TTLRemainingNanos: int64(left),
 	})' \
-  '		TTLRemainingNanos: 0,
+  '		TTLRemainingNanos: int64(left) * 0,
 	})' \
   'TestANonOwnedCopyDoesNotOutliveItsKey$' ./tests
 mutate "the owner's load grants no remaining lifetime" \
@@ -2730,7 +2775,7 @@ mutate "a batch entry grants no remaining lifetime" \
   handler.go \
   '			TTLRemainingNanos: int64(left),
 		})' \
-  '			TTLRemainingNanos: 0,
+  '			TTLRemainingNanos: int64(left) * 0,
 		})' \
   'TestABatchReadCopyDoesNotOutliveItsKey$' ./tests
 # --- tracing (decision 0038) ---
@@ -2779,7 +2824,7 @@ mutate "a store delete leaves its digest behind" \
 mutate "a store overwrite is counted as a new key" \
   internal/store/digest.go \
   '		s.digest.Replace(k, old.version, e.version)' \
-  '		s.digest.Add(k, e.version)' \
+  '		_ = old; s.digest.Add(k, e.version)' \
   'TestTheRunningDigestFollowsEveryWritePath$' ./internal/store
 mutate "a replica delete leaves its digest behind" \
   internal/replication/replica.go \
@@ -2806,7 +2851,7 @@ mutate "a cluster with a member unreachable is reported as agreeing" \
 mutate "a silent member holds DescribeCluster forever" \
   cluster.go \
   '			mctx, cancel := clock.WithTimeout(ctx, c.opts.Clock, DescribeTimeout)' \
-  '			mctx, cancel := context.WithCancel(ctx)' \
+  '			mctx, cancel := context.WithCancel(ctx); _ = clock.Real' \
   'TestAMemberThatNeverAnswersCostsOnlyTheTimeout$' ./tests
 # --- catch-up and hand-off paging, sorted once per pass ---
 
@@ -3067,7 +3112,7 @@ mutate "an option field is left out of the comparison" \
 mutate "a budget without a memory limit is not warned about" \
   peercache.go \
   '	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {' \
-  '	if false {' \
+  '	if _, _ = debug.SetMemoryLimit, math.MaxInt; false {' \
   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
 echo

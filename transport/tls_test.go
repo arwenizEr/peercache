@@ -276,8 +276,15 @@ func TestMutualTLSRejectsAnUntrustedServer(t *testing.T) {
 
 	// The impostor serves with a certificate from a CA the client does not
 	// trust, but accepts any client so the failure is the client's decision.
+	//
+	// It must also advertise the honest CA. A Go TLS client presents its
+	// certificate only if it is signed by a CA the server lists, so an
+	// impostor listing only the rogue CA got no certificate, aborted the
+	// handshake itself, and this test passed with client verification
+	// switched off — the mutation audit found it.
 	impostorTLS := rogue.issue(t, "node-b")
 	impostorTLS.InsecureSkipVerify = true
+	impostorTLS.CAFile = ca.caFile()
 	impostor := newPeer(t, "node-b", impostorTLS)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -305,6 +312,9 @@ func TestMutualTLSRejectsAnUntrustedServer(t *testing.T) {
 
 	if _, err := c.Invoke(ctx, transport.MethodGet, []byte("hello")); err == nil {
 		t.Fatal("a client accepted a server certificate from an untrusted CA")
+	}
+	if calls, _, _, _, _ := impostor.handler.snapshot(); calls != 0 {
+		t.Fatalf("the impostor served %d request(s): the client sent data to a server it should not trust", calls)
 	}
 }
 

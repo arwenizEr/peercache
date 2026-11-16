@@ -225,7 +225,13 @@ func TestANewOwnerCountsFromItsPromotedCopy(t *testing.T) {
 
 // TestADrainedNodeRefusesAPeerThatMissedTheDeparture: a peer that did not
 // hear a node's departure still routes its keys to it. The drained node must
-// refuse the write rather than apply it to keys it has handed on.
+// refuse the write rather than apply it to keys it has handed on, and refuse
+// the read rather than answer it from a store it has emptied.
+//
+// The write alone does not pin the handler's draining check: since question
+// 58 the write path checks again under the store's lock, and that check
+// refuses too. The read has no second check, and without the first one the
+// drained node answered "not found" for a key its successor holds.
 func TestADrainedNodeRefusesAPeerThatMissedTheDeparture(t *testing.T) {
 	f, open, key := fourNodeStock(t)
 	ctx := context.Background()
@@ -243,6 +249,11 @@ func TestADrainedNodeRefusesAPeerThatMissedTheDeparture(t *testing.T) {
 		!errors.Is(err, peercache.ErrActivationPending) {
 		t.Fatalf("Increment from a peer that missed the departure = %d, %v; the drained "+
 			"node applied it to a key it has handed on", v, err)
+	}
+	if v, err := open(unaware).Get(ctx, key); !errors.Is(err, peercache.ErrNotOwner) &&
+		!errors.Is(err, peercache.ErrActivationPending) {
+		t.Fatalf("Get from a peer that missed the departure = %q, %v; the drained node "+
+			"answered for a key it has handed on", v, err)
 	}
 }
 

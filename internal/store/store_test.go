@@ -196,6 +196,19 @@ func TestUnrepresentableTTLDoesNotExpireImmediately(t *testing.T) {
 	}
 }
 
+// TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately is the same
+// property for the promotion path, which computes its own deadline: a replica
+// promoted with the longest TTL a caller can give must not arrive dead.
+func TestARestoreWithAnUnrepresentableTTLDoesNotExpireImmediately(t *testing.T) {
+	s, _ := newStore(t)
+	if !s.Restore("k", []byte("v"), time.Duration(math.MaxInt64), 1, 0) {
+		t.Fatal("Restore refused a key it does not hold")
+	}
+	if _, _, ok := s.Get("k"); !ok {
+		t.Fatal("a key restored with the maximum TTL expired immediately")
+	}
+}
+
 // TestSetCopiesTheCallersBuffer is the safe half of the aliasing contract:
 // callers may reuse the buffer they passed to Set.
 func TestSetCopiesTheCallersBuffer(t *testing.T) {
@@ -737,6 +750,16 @@ func TestSnapshotSkipsExpiredEntries(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Key != "alive" {
 		t.Fatalf("Snapshot = %v, want just the unexpired key", entries)
+	}
+
+	// An expired key must not take a place in the page either. "doomed"
+	// sorts before "e-alive"; counted as a candidate, it would fill a
+	// one-key page, be dropped when the values are read, and leave an empty
+	// page that still says there is more.
+	s.Set("e-alive", []byte("v"), time.Hour)
+	entries, _ = s.Snapshot("b", 1, nil)
+	if len(entries) != 1 || entries[0].Key != "e-alive" {
+		t.Fatalf("Snapshot(after b, limit 1) = %v, want [e-alive]: an expired key took the page", entries)
 	}
 }
 
