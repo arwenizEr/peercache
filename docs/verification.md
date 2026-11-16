@@ -688,6 +688,8 @@ caught   a replica-read copy outlives its key                               -- T
 caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
 caught   a fresh node first advertises no RPC address                       -- TestTheFirstAliveMessageAdvertisesTheRPCAddress
 caught   partitions restore one at a time                                   -- TestPartitionsRestoreInParallel
+caught   async fan-out sends one copy at a time                             -- TestAsyncFanOutRunsInParallel
+caught   one key's async copies travel on several senders                   -- TestAsyncFanOutKeepsOneKeysWritesInOrder
 caught   ignored namespace options are not warned about                     -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout
 caught   ignored namespace options are warned about on every call           -- TestIgnoredOptionsAreWarnedAboutOnce
 caught   options compared against defaults, not the open namespace          -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout

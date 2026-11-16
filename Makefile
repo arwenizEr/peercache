@@ -23,6 +23,8 @@ TIMEOUT ?= 300s
 #
 # The margin was 2.0x before the simulation tests, 1.7x at the end of M8 and
 # 1.1x by November 2026 (816s for one pass of tests), when it went to 1500s.
+# A day later the tests package took 2015s for both passes and the gate timed
+# out again; it went to 3600s, a 1.8x margin.
 # Re-measure before assuming it, rather than after the gate stops passing;
 # that is the mistake 300s was.
 #
@@ -30,7 +32,7 @@ TIMEOUT ?= 300s
 # itself costs" — three tests are 81% of a race pass, their cost is inherent to
 # running many nodes under the detector, and two of them are acceptance criteria.
 # The figures live there rather than here so there is one copy to keep true.
-RACE_TIMEOUT ?= 1500s
+RACE_TIMEOUT ?= 3600s
 
 .PHONY: all ci test test-s3 test-otel crossversion test-race latency examples vet lint bench bench-l1-eval bench-save cover fuzz tidy tools fmt clean
 

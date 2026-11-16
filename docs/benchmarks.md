@@ -1135,6 +1135,24 @@ store, not waiting on storage, is most of its cost. On kind this was the slow
 minute after each restart of a pod restoring about 400,000 keys
 (docs/m16-results.md).
 
+## Asynchronous fan-out — several keys at once
+
+`BenchmarkAsyncFanOutOverGRPC`, Machine A: three caches over real gRPC on
+loopback, an asynchronous RF=3 namespace, 20,000 keys owned by the writer
+written in chunks of 1,024 with each chunk's copies awaited before the next.
+ns/op is a write plus its two copies landing. Three runs of
+`-benchtime 20000x`; medians, with the runs. No write was dropped in either.
+
+| Senders per node | ns/op |
+|---|---|
+| 1 | 351,259 (323,657, 351,259, 359,453) |
+| 8, by key | 38,055 (35,734, 38,055, 87,562) |
+
+9.2×. A key always goes to the same sender, so one key's copies still travel
+one at a time and in order. On kind at about 140,000 orders a minute, the
+single sender's queue overflowed and dropped some 250,000 replica writes a
+minute — writes acknowledged and never copied.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

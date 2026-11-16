@@ -3100,6 +3100,12 @@ mutate "partitions restore one at a time" \
   'const restoreParallelism = 1' \
   'TestPartitionsRestoreInParallel$' ./tests
 
+# --- asynchronous fan-out runs several keys at once, one key in order ---
+
+mutate "async fan-out sends one copy at a time"   replicate.go   'const replicaWorkers = 8'   'const replicaWorkers = 1'   'TestAsyncFanOutRunsInParallel$' ./tests
+
+mutate "one key's async copies travel on several senders"   replicate.go   'case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:'   'case r.queues[len(w.value)%len(r.queues)] <- w:'   'TestAsyncFanOutKeepsOneKeysWritesInOrder$' ./tests
+
 # --- options given to an open namespace are warned about (open question 26) ---
 
 mutate "ignored namespace options are not warned about" \
