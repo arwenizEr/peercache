@@ -376,6 +376,7 @@ code they document or measure.
 doc.go            Package documentation
 peercache.go      Cache construction, lifecycle
 namespace.go      Namespace handle
+ignoredopts.go    Warning for options given to an already open namespace
 batchload.go      BatchGetOrLoad: one request per owner, one batch load per owner
 refresh.go        WithRefreshAhead: background reloads of keys read near expiry
 trace.go          WithTracer: spans around peer requests and loads
