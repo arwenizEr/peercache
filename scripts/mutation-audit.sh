@@ -1509,6 +1509,10 @@ mutate "a two-digit milestone row stops being counted" \
 
 # --- Question 42: a lost tombstone ---
 
+# Checked in the store: since replicas order copies by HLC (question 50), the
+# cluster test's replica takes the rewrite whatever its version, so it no
+# longer depends on the floor. The floor still keeps a key's version from
+# going backwards across a Delete, which L1 stamps compare.
 mutate "a deletion no longer raises the version floor" \
   internal/store/store.go \
   '		// docs/decisions/open.md question 42.
@@ -1516,7 +1520,7 @@ mutate "a deletion no longer raises the version floor" \
 			sh.floor = e.version
 		}' \
   '		// docs/decisions/open.md question 42.' \
-  'TestALostDeleteDoesNotResurrectAnOlderValue$' ./tests
+  'TestARewriteAfterShedIsVersionedAboveWhatWasShed$' ./internal/store/
 
 # --- Typed group functions ---
 
