@@ -71,6 +71,7 @@ func TestMajoritySideWritesSurviveAHeal(t *testing.T) {
 	})
 
 	written := make(map[string]string)
+	writer := make(map[string]string)
 	for i := 0; i < 120; i++ {
 		key := fmt.Sprintf("healed/%d", i)
 		val := fmt.Sprintf("v%d", i)
@@ -82,6 +83,9 @@ func TestMajoritySideWritesSurviveAHeal(t *testing.T) {
 			continue
 		}
 		written[key] = val
+		if d, err := f.caches[via].DescribeKey("healed", key); err == nil {
+			writer[key] = d.Owner
+		}
 	}
 	if len(written) < 60 {
 		t.Fatalf("only %d of 120 writes were acknowledged on the majority side; this "+
@@ -93,6 +97,33 @@ func TestMajoritySideWritesSurviveAHeal(t *testing.T) {
 	f.convergeTo(t, len(f.ids))
 	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	f.settle(t)
+
+	// The heal moves replicas, and a moved copy must still name the node that
+	// wrote it, not the one that forwarded it. Read every replica copy over
+	// the wire, before catch-up: catch-up sends a key as its owner's, which
+	// is a different claim. The split-brain check further down was this
+	// test's guard against a forged writer until forks were judged by the
+	// key's history; the mutation audit found it no longer saw one.
+	rehomed := int64(0)
+	for _, id := range f.ids {
+		rehomed += f.caches[id].Stats().ReplicasRehomed
+	}
+	if rehomed == 0 {
+		t.Fatal("the heal moved no replica, so this test checks no hand-off")
+	}
+	for _, asker := range f.ids {
+		for _, holder := range f.ids {
+			if holder == asker {
+				continue
+			}
+			for _, e := range catchUpPage(t, f, asker, holder, "healed", rf, true) {
+				if w, ok := writer[e.Key]; ok && e.From != "" && e.From != w {
+					t.Fatalf("%s holds %s as written by %s; %s wrote it. A hand-off named "+
+						"the node that carried the copy", holder, e.Key, e.From, w)
+				}
+			}
+		}
+	}
 
 	// Catch-up on every node, which is the strongest repair the design offers.
 	// If a key is gone after this, it is gone.
