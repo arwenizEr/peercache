@@ -3,47 +3,59 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/arwenizEr/peercache.svg)](https://pkg.go.dev/github.com/arwenizEr/peercache)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-An embedded, partitioned, in-memory state layer for Go services that run as
-several replicas — with no separate cache tier.
+A shared, partitioned, in-memory state layer that lives inside your Go service.
+No cache tier to run: every replica of the service embeds the library, and
+together they hold the state.
 
-Every pod embeds the library. Each key belongs to exactly one pod, chosen by
-rendezvous hashing over the live membership. Reads hit local memory when the
-data is owned locally or recently cached, and go to the owner otherwise.
-Mutations and registered computations run on the owner, so a working set is
-never shipped to the caller: computation moves to the data.
-
-It is meant for state that is hot, shared and rebuildable — sessions, per-user
-or per-tenant aggregates, rate-limit counters, workflow state — where a network
-hop to Redis on every access is the cost you want to remove.
+- **Each key has one owner**, chosen by rendezvous hashing over the live
+  members. Reads are served from local memory when this pod owns the key or
+  cached it recently, and from the owner otherwise.
+- **Computation moves to the data.** Writes and registered functions run on the
+  owner, so a working set is never shipped to the caller.
+- **Copies on other pods** (async or sync replication) survive pod loss, and
+  graceful shutdown hands keys to their next owner.
+- **Persistence is opt-in, per namespace**, to a local disk, a shared volume or
+  S3.
 
 ```
 go get github.com/arwenizEr/peercache
 ```
 
-Go 1.25 or later.
+Requires Go 1.25 or later ([why](docs/decisions/0013-go-floor-raised-to-1.25.md)).
 
----
+## When to use it
+
+Use it for state that is hot, shared and rebuildable, where a network hop to
+Redis on every access is the cost you want to remove: sessions, per-user or
+per-tenant aggregates, rate-limit counters, workflow state.
+
+Do not use it for:
+
+- **A system of record.** Without persistence, state is lost when every pod
+  holding it dies. With persistence there is still a loss window of one flush
+  interval and no cross-key atomicity.
+- **Transactions.** Nothing spans two keys or two groups.
+- **Pub/sub, streams or scripting.** It is not a Redis replacement.
+- **More than one cluster.** One Kubernetes cluster is one failure domain, and
+  that is the scope.
 
 ## Contents
 
 - [Quick start](#quick-start)
 - [Groups: computation on the owner](#groups-computation-on-the-owner)
 - [Running a cluster](#running-a-cluster)
+- [Persistence](#persistence)
 - [Guarantees](#guarantees)
-- [What this is not](#what-this-is-not)
-- [Observability](#observability)
-- [Status](#status)
-- [Repository layout](#repository-layout)
+- [Operating it](#operating-it)
+- [Stability and verification](#stability-and-verification)
 - [Development](#development)
+- [Repository layout](#repository-layout)
 - [Documentation](#documentation)
-- [License](#license)
-
----
 
 ## Quick start
 
-A single node needs nothing but an ID. Everything below works unchanged when the
-cache is part of a cluster; only construction differs.
+A single node needs only an ID. The same code works in a cluster; only the
+construction changes.
 
 ```go
 package main
@@ -87,8 +99,8 @@ func main() {
 }
 ```
 
-A namespace with a loader reconstructs missing keys on their owner, once,
-however many callers miss at the same moment:
+**Loaders.** A namespace with a loader rebuilds a missing key on its owner. The
+load runs once, however many callers miss at the same moment:
 
 ```go
 users := peercache.NamespaceOf[User](cache, "users",
@@ -100,26 +112,28 @@ users := peercache.NamespaceOf[User](cache, "users",
 u, err := users.GetOrLoad(ctx, "user:42")
 ```
 
-For one key that must change atomically, `SetIfAbsent`, `CompareAndSwap`,
-`Increment` and `Touch` run on the key's owner as a single step:
+**Atomic single-key operations.** `SetIfAbsent`, `CompareAndSwap`, `Increment`
+and `Touch` each run on the key's owner as one step:
 
 ```go
 hits, err := ns.Increment(ctx, "rl:user:7", 1, time.Minute) // a rate-limit window
 ```
 
-`cache.Namespace(name)` is the same API over `[]byte` values, for callers that
-bring their own encoding. Missing keys are `peercache.ErrNotFound`; every error
-the library returns is matched with `errors.Is`.
+**Raw bytes.** `cache.Namespace(name)` is the same API over `[]byte` values, for
+callers that bring their own encoding.
+
+**Errors.** A missing key is `peercache.ErrNotFound`. Match every error the
+library returns with `errors.Is`.
 
 ## Groups: computation on the owner
 
-A group is a virtual actor: addressable at all times, activated lazily on its
-owner, deactivated when idle. While active it runs on a single goroutine, fed by
-a bounded mailbox, so every call on one group is serialized — which is why there
-is no lock API.
+A group is a virtual actor. It is addressable at any time, activated on its
+owner when first called, and deactivated when idle. An active group runs on one
+goroutine fed by a bounded mailbox, so calls on one group never overlap. That
+is why there is no lock API.
 
-Functions are registered by name at startup and called by name; closures never
-cross the network. Every pod must run the same binary and register the same
+Functions are registered by name at startup and called by name. Closures never
+cross the network, so every pod must run the same binary and register the same
 functions.
 
 ```go
@@ -138,14 +152,14 @@ err := peercache.RegisterTypedGroupFunc(cache, "add",
 total, err := peercache.CallTyped[int, int](ctx, cache.Group("tenant:acme"), "add", 5)
 ```
 
-`peercache.NewRouter` batches queue messages by owning group, so ten thousand
+`peercache.NewRouter` batches queue messages by owning group: ten thousand
 messages across three owners become at most three requests per flush.
 
 ## Running a cluster
 
-A cluster needs a peer transport (gRPC) and a membership authority (gossip over
-memberlist). Both are public packages so the application wires them, and both
-listen on their own port.
+A cluster needs two more pieces: a peer transport (`transport`, gRPC) and a
+membership source (`membership`, gossip over memberlist). The application
+creates both, and each listens on its own port.
 
 ```go
 import (
@@ -184,199 +198,241 @@ if err != nil {
 	return err
 }
 
-// Open namespaces and register group functions here, then:
+// Open every namespace and register every group function here, then:
 if err := cache.CatchUp(ctx); err != nil { // pull the replicas this node should hold
 	return err
 }
 if err := cache.WaitReady(ctx); err != nil {
 	return err
 }
-// ...serve traffic. On shutdown (a PreStop hook), cache.Drain(ctx) hands this
+// Serve traffic. On shutdown (a PreStop hook), cache.Drain(ctx) hands this
 // node's keys to their new owners before the pod stops.
 ```
 
-In Kubernetes, seeds come from a headless service, readiness comes from
-`cache.Ready()`, and the PreStop hook calls `Drain`. [`deploy/`](deploy) has a
-Deployment and a StatefulSet with the probes, ports and hooks filled in, and its
-[README](deploy/README.md) explains the five things that must be right.
-`transport.Options.TLS` enables mutual TLS between peers.
+In Kubernetes:
 
----
+- seeds come from a headless service,
+- the readiness probe reads `cache.Ready()`,
+- the PreStop hook calls `Drain`.
+
+[`deploy/`](deploy) has a Deployment and a StatefulSet with the probes, ports
+and hooks filled in, and [`deploy/README.md`](deploy/README.md) lists the five
+things that must be right. `transport.Options.TLS` turns on mutual TLS between
+peers.
+
+## Persistence
+
+By default a namespace lives only in memory. `WithPersistence` writes it behind
+to a blob store, so its keys survive the loss of every pod that held them:
+
+```go
+store, err := persist.Dir("/var/lib/peercache") // a volume every pod can reach
+if err != nil {
+	return err
+}
+orders := cache.Namespace("orders", peercache.WithPersistence(store))
+```
+
+- Writes are acknowledged first and flushed every 100 ms
+  (`persist.WithFlushInterval`), so a crash loses at most the last interval.
+  On `persist.Dir`, a write is durable at p99 105 ms after its acknowledgement.
+  `Close` and `Drain` flush before they return.
+- A node that comes to own keys it does not hold restores them from storage on
+  first access. Calls to that partition wait for the restore, within their
+  deadline.
+- Backends: `persist.Dir` (local or shared disk), `persist.Memory` (tests), and
+  `persist/s3` (S3, MinIO, R2, Ceph RGW). `persist/s3` is a separate module, so
+  only programs that use it depend on the AWS SDK. On an object store, use a
+  flush interval of a second or more; [`docs/api.md`](docs/api.md#persistence--withpersistence)
+  has the request-cost table.
 
 ## Guarantees
 
-This section is the most useful documentation in the project, so it comes before
-everything else that follows.
+These are the promises and their limits. Each one is covered by a named test
+([`docs/verification.md`](docs/verification.md)), and the numbers come from
+[`docs/benchmarks.md`](docs/benchmarks.md).
 
-- **Operations on a single group are serialized while that group has one
-  activation.** Serialization is structural — one goroutine per activated group,
-  fed by a bounded mailbox — which is why there is no lock API.
-- **Membership is eventually consistent.** It is gossip based and therefore AP.
-  A network partition can briefly produce two activations of the same group.
-  Conflicting writes are *detected and counted*, not automatically merged. The
-  window is narrowed by activation delay and detected via epochs. It is not
-  eliminated, and no configuration setting will eliminate it.
-- **State is not durable.** Ungraceful pod termination loses that pod's owned
-  data and any replicas not yet caught up. Graceful shutdown transfers ownership
-  and streams state. Every namespace must therefore either be reconstructible
-  from a loader or tolerate loss — unless it is opened with `WithPersistence`,
-  which writes it behind to a blob store and loses at most the last 100 ms
-  flush interval (`docs/decisions/0029-persistence-as-a-segment-log.md`).
-  `persist.Dir` keeps it on a local or shared disk, measured at p99 105 ms from
-  acknowledgement to durable; an object-storage backend is still being built.
-- **Async replication has a data-loss window** averaging **≈0.1 ms**, p99 under
-  1.5 ms, measured at RF=3 over gRPC (see `docs/benchmarks.md`). A write
-  acknowledged inside it exists on one node only. `WithSyncReplication()` closes
-  the window while the writer can see its replicas, at the cost of bounding a
-  group's write rate by its slowest replica.
-- **A synchronous write can still be acknowledged below its replication factor.**
-  Replication targets come from the ranking over the *writer's own membership
-  view*, so a node cut off from the cluster eventually detects every peer as
-  failed, ranks itself the owner of everything, places the one copy it can reach
-  and returns `nil`. The caller asked for three copies, got one, and cannot tell.
-  The window lasts as long as the partition. `Stats().DegradedWrites` and
-  `peercache_degraded_writes_total` count it and are the only signal that
-  separates it from a healthy write — **alert on any non-zero value**. The
-  neighbouring case is correct and worth knowing: while the writer still *sees*
-  its replicas but cannot reach them, the write fails rather than being
-  acknowledged. A namespace opened with `WithRequireReplicationFactor()` refuses
-  these writes with `ErrUnderReplicated` instead — trading availability during a
-  partition, and on any cluster smaller than the factor, for a `nil` that always
-  means the factor was reached. Off by default.
-- **With a memory budget, a node over it sheds data rather than being
-  OOM-killed.** `WithMemoryBudget` caps the owned, replica and L1 tiers. Over it,
-  the node sheds to nine tenths: L1 first, then replicas, then owned data — the
-  last of which is data loss, by design, counted in `Stats().ShedOwned`. It is
-  what stops a failover cascade, where survivors inherit a dead node's share,
-  exceed their limits and die in turn. A shed key that is written again is never
-  served at its older value after a failover; that holds whether or not the
-  removal sent to its replicas arrives. The trade is data for liveness: in the
-  cascade test, three deaths of five at RF=2 left two survivors under budget
-  and 1152 of 1500 keys readable, where without a budget all 1500 survived on
-  nodes holding 1.9× the budget — which in a real pod is three OOM kills. No
-  budget is the default, and then nothing is shed.
-- **With join probation, a crashlooping pod moves no keys.** `WithJoinProbation`
-  keeps a node out of the ownership ranking until it has been up for the given
-  time, so a pod that restarts every few seconds is never ranked and its
-  restarts cause no rebalancing and no "not found" for data the healthy nodes
-  hold. A new pod carries no share for that long; a cold start, where every node
-  is young, ranks them all. Off by default.
-- **A slow node slows only its own keys.** A node whose every message is
-  delayed — a CPU-throttled pod — delays reads of the keys it owns and writes
-  that replicate to it synchronously, and nothing else: reads of keys owned
-  elsewhere and asynchronous writes complete without waiting on it. Whether it is
-  judged dead is memberlist's call, made with a 500 ms probe timeout and a
-  suspicion window of seconds; the test harness does not model that part.
-- **Every namespace must be opened on every node, with the same options, before
-  serving.** A namespace not opened locally is created on the first routed write
-  with *default* options — replication factor 1 — and options cannot be changed
-  afterwards. That node then silently replicates nothing for it. A five-node
-  cluster where one node had opened the namespace placed 17% of the copies RF=3
-  implies, with every write reporting success. `Stats().ImplicitNamespaces`
-  counts the misconfiguration; any non-zero value deserves an alert.
-- **A restarted node must call `CatchUp` before it serves traffic.** This is the
-  sharpest edge in the system. Replication is a stream of writes, not a state
-  transfer, so a node that restarts receives only the keys written *after* it
-  came back — while the ownership ranking hands it back its keys immediately. It
-  will answer "not found", with total confidence, for data sitting safely on the
-  node that covered for it. In the chaos test that presented as 558 of 600 keys
-  lost, none of them actually gone. Readiness stays false until `CatchUp` has
-  run, so a readiness probe wired to `Ready()` keeps traffic away until then.
-- **A key's TTL holds across failover, drain and catch-up.** Replicas hold the
-  owner's deadline, not a duration, so a promoted, drained or caught-up key
-  expires when it was written to, and a key that expired on its owner does not
-  come back on the node that replaces it. Expired replicas are reclaimed on the
-  cache's tick.
-- **Reads of non-owned keys may be stale** by up to the configured L1 TTL.
-  Invalidation broadcasts are a latency optimisation and may be lost;
-  correctness never depends on one arriving. A namespace opened with
-  `WithReplicaReads` lets replicas answer too, and its reads may be stale by up
-  to the L1 TTL plus the replication delay — measured, not bounded.
-- **Replication survives the loss of RF−1 nodes, and no more.** At RF=3, a
-  chaos run of 30 kills and 30 restarts over 60 simulated seconds lost no
-  synchronously written key. At RF=2, killing both holders of a key loses it —
-  that is what RF=2 means, and it is asserted as a test rather than left as a
-  caveat. Survivors are always correct: losing data is possible, corrupting it
-  is not.
-- **That guarantee describes a cluster at rest, not one still settling.** A
-  membership change — a node joining, a partition healing — moves keys, and until
-  the copies have been restored a key can be *readable* while fewer than RF nodes
-  hold it. Readable and replicated are not the same condition: one node answering
-  is enough for the first and not for the second. Losing RF−1 nodes during that
-  window can therefore lose a key that would have survived once the cluster had
-  settled.
+### Consistency
 
-  `CatchUp` is what closes the window, which is why it is an explicit call. The
-  operational rule is the same one restarts already have: after a membership
-  change, catch up before you rely on the replication factor again.
-  `Ready().ReplicasCurrent`, exported as `peercache_replicas_current`, says when
-  a node has done so under the view it holds now. It sits beside readiness rather
-  than inside it, because a node can serve correctly long before the cluster is
-  back at its factor.
-- **A membership change moves replicas rather than discarding them.** When the
-  ranking reassigns a key, the node holding a copy hands it to the nodes that now
-  rank for it before dropping its own; if it cannot place it anywhere, it keeps
-  it. Dropping on the local ranking alone lost keys whenever a partition healed,
-  because the copies had been placed at positions computed without the absent
-  node — 20 of 94 acknowledged writes in the reduced case. `ReplicasRehomed` and
-  `ReplicasRetained` account for every moved copy.
-- **Failure detection must be faster than your failure rate.** A cluster losing
-  a node every two seconds while taking three to notice never converges. This is
-  a deployment constraint the library cannot fix.
-- **Throughput degrades to single-pod capacity for a single hot group.** Group
-  sharding for hot-key mitigation is not implemented.
+- **Calls on one group are serialized while it has one activation.** This is
+  structural: one goroutine per active group.
+- **Membership is eventually consistent (AP).** A network partition can briefly
+  produce two activations of one group. Conflicting writes are detected via
+  epochs and counted, not merged. Activation delay narrows the window; no
+  setting closes it.
+- **Reads of keys owned elsewhere may be stale** by up to the L1 TTL.
+  Invalidation messages only make updates show up sooner; correctness never
+  depends on one arriving. With `WithReplicaReads`, replicas answer reads too,
+  and staleness grows by the replication delay. That delay is measured, not
+  bounded.
+- **TTLs hold across failover, drain and catch-up.** Replicas store the owner's
+  deadline, not a duration, so a key expires when it was meant to wherever it
+  ends up.
 
-The words "strong" and "quorum" do not appear in this API, deliberately.
+The words "strong" and "quorum" are absent from the API on purpose.
 
-## What this is not
+### Durability and replication
 
-- Not a database. Nothing is written to disk.
-- Not a general distributed transaction system. There are no cross-key or
-  cross-group transactions.
-- Not a Redis replacement for pub/sub, streams, or Lua scripting.
-- Not multi-region. Single Kubernetes cluster, single failure domain.
+- **Without persistence, a pod killed ungracefully loses the keys it owned**,
+  except those with a current replica elsewhere. Graceful shutdown hands them
+  over. A namespace without persistence must be rebuildable from a loader or
+  tolerate loss.
+- **Replication survives the loss of RF−1 nodes, and no more.** At RF=3, a run
+  of 30 kills and 30 restarts lost no synchronously written key. At RF=2,
+  killing both holders of a key loses it. Survivors are never corrupted.
+- **Async replication has a loss window**: about 0.1 ms on average, p99 under
+  1.5 ms at RF=3 over gRPC. A write acknowledged inside it exists on one node.
+  `WithSyncReplication()` closes the window while the writer can see its
+  replicas, and limits a group's write rate to what its slowest replica can
+  take.
+- **A synchronous write can be acknowledged with fewer copies than asked for.**
+  A node cut off from the cluster eventually considers itself owner of
+  everything. It writes the one copy it can reach and returns `nil`.
+  `Stats().DegradedWrites` (`peercache_degraded_writes_total`) is the only
+  signal: **alert on any non-zero value**. If the writer still sees its
+  replicas but cannot reach them, the write fails instead.
+  `WithRequireReplicationFactor()` refuses these writes with
+  `ErrUnderReplicated`, giving up availability during a partition, and on any
+  cluster smaller than the factor, in exchange for a `nil` that always means the
+  factor was reached. Off by default.
 
----
+### Membership changes
 
-## Observability
+- **A restarted node must call `CatchUp` before serving.** Replication streams
+  writes; it does not transfer state. A restarted node gets its keys back in the
+  ranking at once but holds only keys written after it returned, so without
+  catch-up it answers "not found" for data that is safe on another node.
+  `Ready()` stays false until `CatchUp` has run, so a readiness probe keeps
+  traffic away.
+- **Keys move with their copies.** When the ranking reassigns a key, the node
+  holding a copy hands it to the new holders before dropping its own, and keeps
+  it if it cannot place it. `ReplicasRehomed` and `ReplicasRetained` count the
+  moves.
+- **While a change settles, the replication factor is not yet restored.** A key
+  can be readable from one node before RF nodes hold it again, and losing RF−1
+  nodes inside that window can lose it. `CatchUp` closes the window.
+  `Ready().ReplicasCurrent` (`peercache_replicas_current`) reports when this node
+  has caught up under its current view.
 
-PeerCache imports no metrics client library. `cache.MetricsHandler()` serves the
-Prometheus text format, `cache.Metrics()` returns plain values for any other
-backend, and `cache.Stats()` is the same data as a struct. Beside the usual
-throughput and latency series it exports the correctness counters — split-brain
-detections, stale-epoch refusals, version conflicts, degraded writes, implicit
-namespaces — because a window in a guarantee that is not counted cannot be told
-apart from one that does not exist. [`docs/api.md`](docs/api.md) lists every
-series and which ones to alert on.
+### Overload and slow nodes
 
-## Status
+- **With `WithMemoryBudget`, a node over budget sheds data rather than being
+  OOM-killed.** It sheds down to nine tenths: L1 first, then replicas, then
+  owned keys. Shedding owned keys is data loss, counted in `Stats().ShedOwned`;
+  in a persistent namespace a shed key stays in storage and comes back on its
+  next access. The budget stops failover cascades, where survivors inherit a
+  dead node's share and die in turn. Off by default.
+- **With `WithJoinProbation`, a crashlooping pod moves no keys.** A node stays
+  out of the ranking until it has been up for the given time. A cold start,
+  where every node is young, ranks them all. Off by default.
+- **A slow node slows only its own keys**: reads it owns and writes that
+  replicate to it synchronously. Everything else completes without it.
+- **A single hot group is limited to one pod's throughput.** Groups are not
+  sharded.
 
-Stable since `v1.0.0`. What that promises is written down in
-[decision 0042](docs/decisions/0042-what-v1-promises.md): the API you call is
-additive in minor releases; the interfaces you implement (`Transport`,
-`Logger`, `persist.BlobStore`, …) keep their method sets until v2; the
-interfaces the library returns (`Cache`, `Namespace`, …) may gain methods, so
-test with `peercachetest` rather than a fake; any two adjacent minor releases
-run in one cluster and read each other's persisted data; debug JSON fields and
-metric names are never renamed or removed.
+## Operating it
 
-Beyond unit and integration tests, the library is checked by a linearizability
-checker over group histories, a deterministic fault simulation (partitions, hard
-kills, revivals) run across thousands of seeds nightly, fuzzing of every protocol
-message, chaos and rolling-upgrade tests, and a mutation audit that breaks each
-guarded behaviour on purpose and confirms a named test fails.
-[`docs/verification.md`](docs/verification.md) maps every acceptance criterion
-in [`docs/design.md`](docs/design.md) to the test that proves it.
+Four rules. The library enforces or reports each one, but cannot fix them for
+you:
 
----
+1. **Open every namespace, with the same options, on every node, before joining
+   the cluster.** A peer's request for a namespace this node has not opened is
+   refused with `ErrActivationPending` and counted in
+   `Stats().UnopenedNamespaceRefusals`.
+2. **Call `CatchUp` before serving, and wire readiness to `Ready()`.**
+3. **Alert on `DegradedWrites` and `UnopenedNamespaceRefusals`.**
+4. **Detect failures faster than they happen.** A cluster that loses a node
+   every two seconds but takes three to notice never converges.
+
+**Observability.** PeerCache imports no metrics client. `cache.MetricsHandler()`
+serves Prometheus text, `cache.Metrics()` returns plain values for any other
+backend, and `cache.Stats()` is the same data as a struct. Along with throughput
+and latency it exports the correctness counters (split-brain detections,
+stale-epoch refusals, version conflicts, degraded writes) because a gap in a
+guarantee that is not counted looks the same as no gap.
+`cache.DebugHandler()` serves a live dashboard, and the `otel` module bridges
+the series to OpenTelemetry. [`docs/api.md`](docs/api.md) lists every series and
+which ones to alert on.
+
+## Stability and verification
+
+Stable since `v1.0.0`. [Decision 0042](docs/decisions/0042-what-v1-promises.md)
+spells out what that means:
+
+- The API you call only grows in minor releases.
+- The interfaces you implement (`Transport`, `Logger`, `persist.BlobStore`, …)
+  keep their method sets until v2.
+- The interfaces the library returns (`Cache`, `Namespace`, …) may gain
+  methods, so test with `peercachetest` rather than your own fake.
+- Two adjacent minor releases run in one cluster and read each other's
+  persisted data.
+- Debug JSON fields and metric names are never renamed or removed.
+
+Besides unit and integration tests, the library is checked by:
+
+- a linearizability checker over group histories,
+- a deterministic fault simulation (partitions, hard kills, revivals) over
+  thousands of seeds,
+- fuzzing of every protocol message,
+- chaos and rolling-upgrade tests,
+- scenarios on a kind cluster,
+- a mutation audit that breaks each guarded behaviour on purpose and checks
+  that a named test fails.
+
+[`docs/verification.md`](docs/verification.md) maps every acceptance criterion in
+[`docs/design.md`](docs/design.md) to the test that proves it.
+
+## Development
+
+Tests are deterministic. Time moves only when a test moves it, randomness comes
+from a seed printed on failure, and no test sleeps.
+
+```bash
+make test          # fast feedback
+make test-race     # the gate: -race -count=2
+make vet lint      # go vet and staticcheck
+make examples      # run every example; each asserts what it shows
+make bench         # benchmarks, 5 runs
+make fuzz          # fuzz the frame parser, the decoder, the codecs, the partitioner
+make bench-l1-eval # re-run the cache-library comparison (nested module)
+make ci            # what the pipeline runs
+
+bash scripts/mutation-audit.sh   # break each invariant, check a test notices
+```
+
+On Windows without GNU make, use `mingw32-make` or run the `go` commands
+directly.
+
+The long runs live in `.github/workflows/nightly.yml`: two thousand simulation
+seeds, repeated linearizability checks, an hour of soak, ten minutes per fuzz
+target and the mutation audit. A failure prints its seed, so it reproduces with
+one command:
+
+```bash
+PEERCACHE_SEED=1234 go test ./... -run TestThatFailed
+```
+
+`internal/testkit` runs N nodes in one process over a fake network and a fake
+clock, and can drop, delay, reorder, partition, isolate, kill (gracefully or
+not) and revive them. Simulated time costs nothing: five nodes, a 3/2 partition
+and an hour on each side of the heal take about **1.5 ms** of wall clock.
+
+`tests/repo/discipline_test.go` reads the repository as text and fails on
+`time.Sleep`; on `time.Now`, timers, tickers or `context.WithTimeout` outside
+`internal/clock`; on the `log` package; on an `internal/` package importing the
+root; on a package without a `doc.go`; on an undocumented exported symbol; on a
+dependency outside the budget; and on a leftover TODO marker.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the rest.
 
 ## Repository layout
 
-The root directory is the public API. Go does not allow one package to span
-directories, so everything a caller imports lives here, everything else lives
-under `internal/`, and the tests live under `tests/`. The only test files in the
-root are godoc examples, benchmarks and a fuzz target, which belong next to the
-code they document or measure.
+The root directory is the public API. Go does not let one package span
+directories, so everything a caller imports is here, everything else is under
+`internal/`, and the tests are under `tests/`. The only test files in the root
+are godoc examples, benchmarks and a fuzz target.
+
+<details>
+<summary>Every file and package</summary>
 
 ```
 doc.go            Package documentation
@@ -456,81 +512,31 @@ tests/repo/       Tests that read the repository as text: engineering rules,
 proto/            gRPC service definitions
 examples/         Runnable programs, one per feature: lifecycle, namespace,
                   groups, ownership, remote, replication, rolling-upgrade,
-                  observability, failure-guarantees
+                  observability, failure-guarantees, and shop (the kind
+                  scenarios)
 deploy/           Kubernetes manifests and the operational guide
 scripts/          mutation-audit.sh, clean/ (the `make clean` implementation)
 docs/             design.md, api.md, benchmarks.md, verification.md, decisions/
 .github/          ci.yml per commit, nightly.yml for the long runs
 ```
 
----
-
-## Development
-
-Everything is deterministic. Time only moves when a test moves it, randomness
-comes from a seed that is printed on failure, and no test sleeps.
-
-```bash
-make test          # fast feedback
-make test-race     # the gate: -race -count=2
-make vet lint      # go vet and staticcheck
-make examples      # run every example to completion; they assert what they show
-make bench         # benchmarks, 5 runs
-make fuzz          # fuzz the frame parser, the decoder, the codecs, the partitioner
-make bench-l1-eval # re-run the cache-library comparison (nested module)
-
-bash scripts/mutation-audit.sh   # break each invariant, check its test notices
-make ci            # exactly what the pipeline runs
-```
-
-The long-running verification is nightly rather than per-commit, in
-`.github/workflows/nightly.yml`: two thousand simulation seeds, repeated
-linearizability checks, an hour of soak, ten minutes per fuzz target, and the
-mutation audit. A failure there prints the seed or commits the crasher, so it
-reproduces with one command:
-
-```bash
-PEERCACHE_SEED=1234 go test ./... -run TestThatFailed
-```
-
-On Windows without GNU make, `mingw32-make` works, or run the `go` commands
-directly.
-
-`internal/testkit` builds N in-process nodes over a fake network and a fake
-clock, with fault injection for drop, delay, reorder, partition, isolation,
-graceful kill, hard kill and revival. Simulated time is free: five nodes, a 3/2
-partition and an hour advanced on each side of a heal run in about **1.5 ms** of
-wall clock.
-
-`tests/repo/discipline_test.go` reads the repository as text and fails the build on any
-`time.Sleep`; any direct `time.Now`, `time.After`, timer, ticker or
-`context.WithTimeout` outside `internal/clock`; the `log` package; an
-`internal/` package importing the root package; a package without a `doc.go`;
-an undocumented exported symbol; a dependency outside the budget; and a leftover
-TODO marker. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rest.
-
----
+</details>
 
 ## Documentation
 
-- [pkg.go.dev](https://pkg.go.dev/github.com/arwenizEr/peercache) — API reference
-- [`docs/api.md`](docs/api.md) — the public API, with runnable examples and the
+- [pkg.go.dev](https://pkg.go.dev/github.com/arwenizEr/peercache): API reference
+- [`docs/api.md`](docs/api.md): the public API, with runnable examples and the
   metrics to alert on
-- [`deploy/README.md`](deploy/README.md) — running it in Kubernetes
-- [`docs/design.md`](docs/design.md) — the design and the order it was built in
-- [`docs/benchmarks.md`](docs/benchmarks.md) — numbers, with the machine they
+- [`deploy/README.md`](deploy/README.md): running it in Kubernetes
+- [`docs/design.md`](docs/design.md): the design and the order it was built in
+- [`docs/benchmarks.md`](docs/benchmarks.md): numbers, with the machine they
   were measured on
-- [`docs/verification.md`](docs/verification.md) — how each acceptance criterion
+- [`docs/verification.md`](docs/verification.md): how each acceptance criterion
   is proven, and how each test failed when the behaviour was broken on purpose
-- [`docs/decisions/`](docs/decisions/) — one record per significant choice, plus
-  `open.md` for the questions still open
+- [`docs/decisions/`](docs/decisions/): one record per significant choice, plus
+  `open.md` for open questions
 - [`CHANGELOG.md`](CHANGELOG.md), [`CONTRIBUTING.md`](CONTRIBUTING.md),
   [`SECURITY.md`](SECURITY.md)
-
-Go 1.25 is the floor because memberlist's transitive graph (`x/net`, `x/sys`,
-`miekg/dns`) has moved past older releases, and holding those back would mean
-pinning the modules that receive security patches; see
-[`docs/decisions/0013-go-floor-raised-to-1.25.md`](docs/decisions/0013-go-floor-raised-to-1.25.md).
 
 ## License
 
