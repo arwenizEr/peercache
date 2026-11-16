@@ -29,6 +29,11 @@ const DefaultTypedCodec = codec.NameMsgPack
 // replication, the L1 tier, TTLs, the memory budget — sees the same bytes it
 // always did. A missing key is the zero T and [ErrNotFound]. A value that will
 // not encode, or stored bytes that will not decode as a T, is [ErrCodec].
+//
+// TypedNamespace is implemented by this module only and may gain methods in a minor
+// release (docs/decisions/0042-what-v1-promises.md). A test that needs one
+// should run a real cache with package peercachetest rather than fake this
+// interface.
 type TypedNamespace[T any] interface {
 	// Get returns the value under key.
 	Get(ctx context.Context, key string) (T, error)

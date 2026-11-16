@@ -31,6 +31,11 @@ import (
 //
 // A Cache is safe for concurrent use. Namespace and Group return handles, not
 // data, and are cheap enough to call on a hot path.
+//
+// Cache is implemented by this module only and may gain methods in a minor
+// release (docs/decisions/0042-what-v1-promises.md). A test that needs one
+// should run a real cache with package peercachetest rather than fake this
+// interface.
 type Cache interface {
 	// Namespace returns a handle to a named keyspace, creating it on first
 	// use. Calling it again with different options does not reconfigure an

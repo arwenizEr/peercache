@@ -35,6 +35,11 @@ import (
 // [Namespace.Set] copies the value it is given, so a caller may reuse the
 // buffer. [Namespace.Get] returns the stored slice without copying, so a caller
 // must not modify it. See docs/decisions/0007-get-returns-the-stored-slice.md.
+//
+// Namespace is implemented by this module only and may gain methods in a minor
+// release (docs/decisions/0042-what-v1-promises.md). A test that needs one
+// should run a real cache with package peercachetest rather than fake this
+// interface.
 type Namespace interface {
 	// Get returns the value for key, or [ErrNotFound]. A missing key never
 	// returns a nil value, so that a key holding zero bytes stays

@@ -16,6 +16,11 @@ import (
 // it enables is the difference between one RPC and ten thousand. Submit groups
 // messages by owner, issues one request per owner, and the owner applies every
 // message for a given group inside a single actor turn.
+//
+// Router is implemented by this module only and may gain methods in a minor
+// release (docs/decisions/0042-what-v1-promises.md). A test that needs one
+// should run a real cache with package peercachetest rather than fake this
+// interface.
 type Router[T any] interface {
 	// Submit routes msgs to their owners. It returns once every owner has
 	// accepted its batch, or with an error if any batch failed; a partial

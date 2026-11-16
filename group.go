@@ -22,6 +22,11 @@ import (
 // The serialization guarantee holds while the group has one activation. A
 // partition can briefly produce two, which is detected through epochs and
 // counted, not prevented.
+//
+// Group is implemented by this module only and may gain methods in a minor
+// release (docs/decisions/0042-what-v1-promises.md). A test that needs one
+// should run a real cache with package peercachetest rather than fake this
+// interface.
 type Group interface {
 	// ID returns the group's identifier.
 	ID() string

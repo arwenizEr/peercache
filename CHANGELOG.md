@@ -14,6 +14,10 @@ change the public API.
   options that were ignored. The first call still wins, as before; repeating
   its options, a subset of them, or none stays silent. Open question 26: this
   was silent and once made a benchmark measure local hits as remote reads.
+- `docs/decisions/0042-what-v1-promises.md`: what stops changing at v1.0 and
+  how each promise is enforced. The interfaces an application implements are
+  frozen by `TestImplementedInterfacesAreFrozen`; the ones the library returns
+  say in their documentation that they may gain methods.
 
 ## [0.3.0] - 2026-11-16
 
