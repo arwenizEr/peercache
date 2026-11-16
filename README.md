@@ -351,8 +351,7 @@ series and which ones to alert on.
 
 ## Status
 
-Pre-1.0: the API is complete for what is described here, and may still change
-before `v1.0.0`. What v1 will then promise is written down in
+Stable since `v1.0.0`. What that promises is written down in
 [decision 0042](docs/decisions/0042-what-v1-promises.md): the API you call is
 additive in minor releases; the interfaces you implement (`Transport`,
 `Logger`, `persist.BlobStore`, …) keep their method sets until v2; the

@@ -23,6 +23,61 @@ reads), MinIO, 32 load-generator workers.
 - **Forks:** `peercache_split_brain_detections_total`, summed over the pods at
   the check. A pod the scenario restarted reports only what it counted since.
 
+## v1.0.0 candidates (2026-11-16), accumulated data
+
+### First candidate, ec5836b: two scenarios lost orders
+
+| Scenario | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
+|---|---|---|---|---|---|
+| steady | 143,327 | 0 | 0 | 50 / 0 / 0 | 0 |
+| kill9 | 145,941 | 0 | 47 | 48 / 2 / 0 | 0 |
+| rolling | 106,976 | 0 | 380 | 27 / 23 / 0 | 0 |
+| partition | 45,711 | **8,448** | 71 | 34 / 3 / **13** | 0 |
+| coldstart | 36,808 | **7,400** | 0 | 37 / 0 / **13** | 0 |
+| minio, and the cold start after it | 237,663 | 0 | 0 | 50 / 0 / 0 | 0 |
+
+Every lost order was owned by shop-4. It restarted during the partition while
+MinIO was unreachable from its node; the shop joined the cluster before opening
+its namespaces, waiting for the bucket in between, and its peers' writes created
+`orders` and `stock` there with default options — replication factor 1, no
+persistence, and options are fixed at creation. shop-4 then owned keys it
+neither replicated nor stored: "not found" after the heal, gone after the cold
+start. The new warning for ignored namespace options named it in the pod's log.
+Fixed in PR #79: a peer's request for a namespace this node has not opened is
+refused with `ErrActivationPending` (open question 32, reversed), and the shop
+opens its namespaces before it joins.
+
+### Second candidate, 8a71f7e: every invariant held
+
+| Scenario | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
+|---|---|---|---|---|---|
+| steady | 11,607 | 0 | 0 | 50 / 0 / 0 | 0 |
+| kill9 | 13,347 | 0 | 80 | 48 / 2 / 0 | 0 |
+| rolling | 12,599 | 0 | 561 | 22 / 28 / 0 | 0 |
+| partition | 16,866 | 0 | 294 | 44 / 6 / 0 | 0 |
+| coldstart | 6,260 | 0 | 8 | 49 / 1 / 0 | 0 |
+| minio, and the cold start after it | 236,091 | 0 | 0 | 50 / 0 / 0 | 0 |
+
+shop-4 restarted during the partition again, and this time refused its peers'
+requests for `orders`, `ratelimit` and `catalog` until it had opened them, as
+logged. Nothing was lost.
+
+**Throughput after a restart.** The low counts are the minute after a
+restart, not the release. MinIO held about 2.4 million keys by this run, and a
+restarted pod restores its share — about 400,000 — while writes to partitions it
+has not restored yet wait with `ErrActivationPending` (open question 57).
+Bisected on the same cluster, the minute after a `rollout restart`:
+
+| Build | Orders in 60 s | Checkout p50 |
+|---|---|---|
+| ec5836b (before #79) | 26,845 · 9,081 | 8.5 ms · 113 ms |
+| 8a71f7e (with #79) | 8,664 · 30,365 | 72.7 ms · 7.3 ms |
+| 8a71f7e, warm | 130,481 | 7.3 ms |
+
+The two builds spread the same way, so #79 costs nothing measurable here;
+restore volume does. A restart's slow minute grows with what the namespace
+holds; the fresh-data runs above did not show it.
+
 ## Run of 2026-11-15 (v0.2.1 candidate, fb059b7), fresh data
 
 The first run in which every scenario, the partition included, holds every

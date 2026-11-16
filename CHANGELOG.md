@@ -7,6 +7,17 @@ change the public API.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-16
+
+The first stable release. From here the promises in
+`docs/decisions/0042-what-v1-promises.md` hold: the API you call is additive in
+minor releases, the interfaces you implement are frozen until v2, adjacent
+minor releases interoperate on the wire and in storage, and debug JSON fields
+and metric names are never renamed or removed. Checked for this release: the
+full mutation audit (every entry caught), the race-enabled suite, the
+cross-version job against v0.3.0, and all six M16 scenarios on kind with no
+acknowledged write lost.
+
 ### Changed
 
 - A peer's request for a namespace this node's application has not opened is
@@ -418,7 +429,8 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/arwenizEr/peercache/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/arwenizEr/peercache/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/arwenizEr/peercache/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/arwenizEr/peercache/compare/v0.2.0...v0.2.1

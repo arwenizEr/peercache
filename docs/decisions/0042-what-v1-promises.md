@@ -76,8 +76,13 @@ nothing.
 - Doc comments on the returned interfaces state promise 2 (done with this
   decision).
 - `TestImplementedInterfacesAreFrozen` exists (done with this decision).
-- The M16 scenarios run clean on the release candidate, on kind.
+- The M16 scenarios run clean on the release candidate, on kind. The first
+  candidate did not — 8,448 acknowledged orders lost to a namespace created
+  with defaults on a pod that joined before opening it (open question 32,
+  reversed); the second, with the fix, did. See docs/m16-results.md.
 - The README's Status section points here instead of "may still change".
+
+All four held for `v1.0.0`.
 
 ## Consequences
 
