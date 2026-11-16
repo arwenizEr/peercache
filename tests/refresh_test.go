@@ -108,6 +108,15 @@ func TestConcurrentHitsStartOneRefresh(t *testing.T) {
 	if got := l.calls.Load(); got != 2 {
 		t.Fatalf("the loader ran %d times for fifty hits inside the window, want 2", got)
 	}
+	// The loader count alone cannot tell one refresh from fifty: fifty would
+	// join one single-flight load. Close waits for every refresh in flight,
+	// and each counts itself, so what is left is how many were started.
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := c.Stats().Refreshes; got != 1 {
+		t.Fatalf("fifty hits inside the window started %d refreshes, want 1", got)
+	}
 }
 
 // TestAWriteDuringARefreshWins: a Set or a Delete that lands while the reload
