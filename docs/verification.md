@@ -687,6 +687,7 @@ caught   a Set is applied after its key moved                               -- T
 caught   a replica-read copy outlives its key                               -- TestAReplicaReadCopyDoesNotOutliveItsKey
 caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
 caught   a fresh node first advertises no RPC address                       -- TestTheFirstAliveMessageAdvertisesTheRPCAddress
+caught   partitions restore one at a time                                   -- TestPartitionsRestoreInParallel
 caught   ignored namespace options are not warned about                     -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout
 caught   ignored namespace options are warned about on every call           -- TestIgnoredOptionsAreWarnedAboutOnce
 caught   options compared against defaults, not the open namespace          -- TestOptionsGivenToAnOpenNamespaceAreWarnedAbout

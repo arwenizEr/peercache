@@ -3092,6 +3092,14 @@ mutate "a fresh node first advertises no RPC address" \
 	cfg := opts.Config' \
   'TestTheFirstAliveMessageAdvertisesTheRPCAddress$' ./membership/
 
+# --- partitions restore in parallel ---
+
+mutate "partitions restore one at a time" \
+  persistence.go \
+  'const restoreParallelism = 8' \
+  'const restoreParallelism = 1' \
+  'TestPartitionsRestoreInParallel$' ./tests
+
 # --- options given to an open namespace are warned about (open question 26) ---
 
 mutate "ignored namespace options are not warned about" \
