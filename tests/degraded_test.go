@@ -77,6 +77,12 @@ func TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy(t *testing.T) {
 	waitForCache(t, "the isolated node to see a cluster of one", func() bool {
 		return f.caches[isolated].Stats().Members == 1
 	})
+	// The isolated node acquires every group when it sees its peers fail,
+	// which happens during the advances above, and since question 56 its own
+	// callers wait out the activation delay too. Without this the write was
+	// refused as pending, the test skipped, and the degraded-write counter
+	// went unchecked.
+	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 
 	const key = "degraded/only-copy"
 	err := openNS(isolated).Set(ctx, key, []byte("acknowledged"), 0)
@@ -84,10 +90,17 @@ func TestAnIsolatedNodeAcknowledgesSyncWritesWithOneCopy(t *testing.T) {
 	view := f.caches[isolated].Stats()
 	t.Logf("isolated node sees %d members; Set returned %v", view.Members, err)
 
-	if err != nil {
+	// Refusing below the factor is the direction question 37 leaves open, so
+	// that error says the pinned behaviour changed on purpose. Any other
+	// error means the test is not reaching the case it is about, and a skip
+	// would hide that, as it once did.
+	if errors.Is(err, peercache.ErrUnderReplicated) {
 		t.Skipf("the isolated node refused the write (%v); the behaviour this test "+
 			"pins has changed, which is the intended direction — update it and "+
 			"docs/decisions/open.md question 37", err)
+	}
+	if err != nil {
+		t.Fatalf("the isolated node's write failed for another reason: %v", err)
 	}
 
 	// It said yes. Establish that it really is the only copy by checking that
