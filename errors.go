@@ -9,10 +9,12 @@ import "github.com/arwenizEr/peercache/internal/core"
 // this package wrap their cause with %w; unwrap to reach transport or codec
 // detail.
 var (
-	// ErrNotImplemented means the code path exists but the work that
-	// fills it in has not run yet. It is scaffolding, not a runtime
-	// condition, and must not survive the change that implements the
-	// path.
+	// ErrNotImplemented means the receiving binary does not recognise the
+	// RPC method it was asked to run — what a peer on a newer build looks
+	// like during a rolling upgrade — or that a cache with no transport was
+	// asked to reach another node. Callers that send newer RPCs treat it
+	// as "this peer is older" and fall back; it is not a sign of an
+	// unfinished feature.
 	ErrNotImplemented = core.ErrNotImplemented
 
 	// ErrNotFound means the key or group does not exist. It is distinct
