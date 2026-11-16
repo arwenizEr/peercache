@@ -7,6 +7,13 @@ change the public API.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
+A minor version because the public API and the debug handler's JSON change:
+two exported variables became functions, and every debug response is now
+camelCase. Wire and persisted formats are unchanged — `make crossversion`
+runs v0.2.2 and this release in one cluster, both ways.
+
 ### Fixed
 
 - A freshly started node's first gossip message advertised no RPC address:
@@ -387,7 +394,8 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/arwenizEr/peercache/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/arwenizEr/peercache/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/arwenizEr/peercache/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arwenizEr/peercache/compare/v0.1.0...v0.2.0
