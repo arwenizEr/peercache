@@ -3225,6 +3225,20 @@ mutate "restored keys share the live replication queue" \
   '	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:' \
   'TestARestoreDoesNotCrowdOutLiveReplication$' ./tests
 
+# --- a dirty tick under a settled view does not scan for promotions ---
+
+mutate "every dirty tick scans every replica for promotion" \
+  promote.go \
+  '		if full || ns.promotedEpoch.Load() != epoch {' \
+  '		if true {' \
+  'TestAStrayTickDoesNotScanForPromotions$' ./tests
+
+mutate "a namespace opened late is never scanned on a quiet cluster" \
+  promote.go \
+  '		if full || ns.promotedEpoch.Load() != epoch {' \
+  '		if full {' \
+  'TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

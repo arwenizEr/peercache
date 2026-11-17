@@ -722,6 +722,7 @@ func (c *cache) Stats() Stats {
 		stats.KeysPromoted = promoted
 		stats.ReplicasEvicted = evicted
 		stats.PromotionRounds = rounds
+		stats.PromotionScans = c.promoter.scanCount()
 		pulled, cruns, cfailures := c.catchup.counters()
 		stats.ReplicasPulled = pulled
 		stats.CatchUpRuns = cruns

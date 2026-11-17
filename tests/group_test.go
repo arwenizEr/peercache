@@ -301,7 +301,7 @@ func TestMaxActiveGroupsIsEnforced(t *testing.T) {
 	}
 }
 
-func waitForCache(t *testing.T, what string, cond func() bool) {
+func waitForCache(t testing.TB, what string, cond func() bool) {
 	t.Helper()
 	const yields = 5_000_000
 	for i := 0; !cond(); i++ {

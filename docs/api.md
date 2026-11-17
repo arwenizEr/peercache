@@ -75,7 +75,7 @@ cannot yet serve, and planning moves only the share the ranking reassigns.
 `deploy/` has manifests wiring both to Kubernetes probes.
 
 Every counter is exported: `MetricsHandler` serves
-65 series in the Prometheus text exposition format, and PeerCache imports no
+66 series in the Prometheus text exposition format, and PeerCache imports no
 metrics client library to do it. Latency histograms are available behind
 `WithLatencyHistograms()` and off by default, for a reason that is a measurement
 rather than an opinion — see Observability below.
@@ -1516,7 +1516,7 @@ mux.Handle("/metrics", cache.MetricsHandler())
 ```
 
 That is the whole integration. The handler writes the Prometheus text exposition
-format with the content type a scraper expects, and 65 series come out of it.
+format with the content type a scraper expects, and 66 series come out of it.
 `WriteMetrics` is the same output to any `io.Writer`; the two are tested to
 produce identical bytes.
 
@@ -1560,7 +1560,7 @@ its Go name.
 
 ### The metrics that are worth alerting on
 
-Most of the 65 are ordinary levels and rates. These twelve are not — each counts a
+Most of the 66 are ordinary levels and rates. These twelve are not — each counts a
 window this system is documented as having, and a non-zero value means the
 window was entered.
 
@@ -1593,6 +1593,14 @@ counts copies of keys a restore brought back from storage, dropped when a
 restart's burst filled their queue; their replicas usually still hold them from
 before. It has a queue apart from live writes so that such a burst cannot
 reach `peercache_replications_dropped_total`, which stays the one to alert on.
+
+`peercache_promotion_scans_total` is not among them either; it is a health
+signal, not a correctness one. It counts passes that ranked every replica of a
+namespace for ownership, which a node runs on a membership change, on every
+tick for ten seconds after one, and at the end of a catch-up. Under stable
+membership it is flat even while `peercache_promotion_rounds_total` rises: a
+round that runs only to hand off copies that arrived out of place does not
+scan. A rising rate under stable membership means the view is not settling.
 
 Transfer failures are covered by `peercache_replications_failed_total`: the drain handoff reuses the replication
 path rather than inventing a transfer protocol, so a failed transfer *is* a

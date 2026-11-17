@@ -7,6 +7,25 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A tick that runs only to hand on out-of-place copies no longer ranks every
+  replica the node holds for ownership. After a rolling restart a node can be
+  left with more stray copies than the hand-off queue takes in one tick, and
+  every tick until they were gone scanned the whole replica store under the
+  namespace's replica lock: on kind, at 1.3 million replicas a pod, a third of
+  a core for minutes, with every copy arriving meanwhile stalled behind it. The
+  promotion scan now runs on a membership change, while a view settles, at the
+  end of a catch-up, and once under each epoch for a namespace opened late.
+  `TestAStrayTickDoesNotScanForPromotions`,
+  `TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas`.
+
+### Added
+
+- `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that
+  ranked every replica of a namespace for ownership. Flat under stable
+  membership.
+
 ## [1.1.1] - 2026-11-17
 
 One fix found by the v1.1.0 run on kind, and a test made deterministic.

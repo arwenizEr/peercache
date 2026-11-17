@@ -51,6 +51,9 @@ type promoter struct {
 	// rounds counts reconciliations, so that the counters above can be read
 	// as a rate rather than a total.
 	rounds atomic.Int64
+	// scans counts promotion scans: passes that ranked every replica of a
+	// namespace for ownership. See reconcileWith.
+	scans atomic.Int64
 
 	// dirty asks the next tick for a reconciliation: something may be out
 	// of place that no membership change will come to fix. See tick.
@@ -129,8 +132,12 @@ const reconcileSettle = 10 * time.Second
 // behind, and a namespace opened after its replicas arrived.
 func (p *promoter) tick() {
 	settling := p.cache.opts.Clock.Now().UnixNano()-p.viewAt.Load() < int64(reconcileSettle)
-	if p.dirty.Swap(false) || settling {
-		p.reconcile()
+	if settling {
+		p.reconcileWith(true)
+		return
+	}
+	if p.dirty.Swap(false) {
+		p.reconcileWith(false)
 	}
 }
 
@@ -142,8 +149,33 @@ func (p *promoter) markDirty() {
 }
 
 // reconcile moves keys between the replica store and the owned store to match
-// the current membership.
-func (p *promoter) reconcile() {
+// the current membership, ranking every replica held for ownership.
+func (p *promoter) reconcile() { p.reconcileWith(true) }
+
+// reconcileWith is reconcile, with the promotion scan optional. full is true
+// on a view change, while one settles, and at the end of a catch-up; a tick
+// that runs only because something was marked dirty passes false.
+//
+// # Why a dirty tick does not scan for promotions
+//
+// The promotion scan ranks every replica the node holds for ownership, under
+// the namespace's replica lock. A dirty tick on a settled view has nothing for
+// it to find: a replica becomes this node's to own only when ownership moves,
+// which is a view change, and every copy that arrives for a key this node
+// already owns is promoted by the replicate handler as it lands. Catch-up,
+// which files owned keys as replicas in bulk, ends with a full reconciliation.
+//
+// It used to scan anyway. On kind, a pod left with 117,000 out-of-place copies
+// after a rolling restart could hand off only a queue's worth a tick, so every
+// tick for minutes was dirty, and every one ranked all 1.3 million replicas the
+// pod held: a third of a core, with the replica lock held for each pass, which
+// stalled every copy arriving for that namespace. Throughput past 3 million
+// keys fell from 110,000 orders a minute to 25,000 (docs/m16-results.md).
+//
+// A namespace whose promotion scan has not run under the current epoch still
+// scans on a dirty tick: one opened after its replicas arrived marks the
+// promoter dirty for exactly that.
+func (p *promoter) reconcileWith(full bool) {
 	c := p.cache
 	if c.guard == nil || c.isClosed() {
 		return
@@ -153,6 +185,7 @@ func (p *promoter) reconcile() {
 	p.rounds.Add(1)
 
 	self := c.selfID()
+	epoch := uint64(c.guard.Table().Epoch())
 	for _, name := range c.replicas.Namespaces() {
 		ns, ok := c.namespaceIfExists(name)
 		if !ok {
@@ -195,11 +228,15 @@ func (p *promoter) reconcile() {
 		// this node is about to own, in the window between the two
 		// passes, and a reader arriving in that window would be told
 		// the key does not exist.
-		taken := c.replicas.Drain(name, func(key string) bool {
-			owner, _, err := c.guard.Table().Owner(ns.groupKeyFor(key))
-			return err == nil && owner.ID == self
-		})
-		p.restore(ns, taken)
+		if full || ns.promotedEpoch.Load() != epoch {
+			ns.promotedEpoch.Store(epoch)
+			p.scans.Add(1)
+			taken := c.replicas.Drain(name, func(key string) bool {
+				owner, _, err := c.guard.Table().Owner(ns.groupKeyFor(key))
+				return err == nil && owner.ID == self
+			})
+			p.restore(ns, taken)
+		}
 
 		// Demote what this node owns no longer. A key whose ownership moved
 		// away stayed in the owned store, outside every rule: never
@@ -370,6 +407,9 @@ func (p *promoter) Close() {
 func (p *promoter) counters() (promoted, evicted, rounds int64) {
 	return p.promoted.Load(), p.evicted.Load(), p.rounds.Load()
 }
+
+// scanCount reports promotion scans; see reconcileWith.
+func (p *promoter) scanCount() int64 { return p.scans.Load() }
 
 // demote moves the owned-store entries of keys this node no longer owns into
 // the replica store, as copies this node wrote. See reconcile.

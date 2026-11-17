@@ -118,7 +118,7 @@ func (f *fabric) revive(t *testing.T, id string) {
 // promoter acts on the guard's update callback. A test that reads Stats between
 // those two moments sees a cluster that has noticed a failure and not yet
 // repaired it, which is a real state but never the one being asserted about.
-func (f *fabric) settle(t *testing.T) {
+func (f *fabric) settle(t testing.TB) {
 	t.Helper()
 	const maxYields = 5_000_000
 	const quietFor = 2000
@@ -161,7 +161,7 @@ func (f *fabric) live() []string {
 }
 
 // convergeTo waits until every live node sees exactly n members.
-func (f *fabric) convergeTo(t *testing.T, n int) {
+func (f *fabric) convergeTo(t testing.TB, n int) {
 	t.Helper()
 	const maxYields = 10_000_000
 	for i := 0; ; i++ {
@@ -267,7 +267,7 @@ func withWrappers(
 	return func(h *fabricHooks) { h.wrapTransport, h.wrapMembership = tr, m }
 }
 
-func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipConfig,
+func newFabricFull(t testing.TB, n int, counting bool, mcfg testkit.MembershipConfig,
 	activationDelay time.Duration, opts ...fabricOption) *fabric {
 	t.Helper()
 
@@ -366,7 +366,7 @@ func newFabricFull(t *testing.T, n int, counting bool, mcfg testkit.MembershipCo
 // this spins rather than assuming, yielding instead of sleeping, bounded so a
 // failure reports rather than hangs. There is no wall-clock time involved — the
 // fake clock has already been advanced and does not move again.
-func (f *fabric) converge(t *testing.T) {
+func (f *fabric) converge(t testing.TB) {
 	t.Helper()
 	const maxYields = 5_000_000
 	for i := 0; ; i++ {
