@@ -3184,15 +3184,24 @@ mutate "the fan-out frames a written value again" \
   'err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)' \
   'err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)' \
   'TestAWriteIsCompressedOnce$' ./tests
+
 # --- invalidation hints: batched, per peer, none without L1 ---
 # Hints batch twice — run takes what has queued, a peer's sender what has
 # queued for it — so breaking either alone still batches, and no single-line
 # mutation of one is caught. TestHintsQueuedTogetherShareMessages fails with
 # both gone (one message per hint, as before); the entries cover the rest.
 
-mutate "a namespace without L1 sends hints"   invalidate.go   '	if n.opts.L1TTL < 0 {'   '	if n.opts.L1TTL < -1<<62 {'   'TestANamespaceWithoutL1SendsNoHints$' ./tests
+mutate "a namespace without L1 sends hints" \
+  invalidate.go \
+  '	if n.opts.L1TTL < 0 {' \
+  '	if n.opts.L1TTL < -1<<62 {' \
+  'TestANamespaceWithoutL1SendsNoHints$' ./tests
 
-mutate "a batched invalidation drops its entries"   handler.go   '		for _, e := range in.Entries {'   '		for _, e := range in.Entries[:0] {'   'TestHintsQueuedTogetherShareMessages$' ./tests
+mutate "a batched invalidation drops its entries" \
+  handler.go \
+  '		for _, e := range in.Entries {' \
+  '		for _, e := range in.Entries[:0] {' \
+  'TestHintsQueuedTogetherShareMessages$' ./tests
 
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
