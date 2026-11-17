@@ -19,7 +19,7 @@ restarted pod a new identity, which rendezvous hashing treats as a departure
 plus an unrelated arrival — two rebalances instead of none. With stable names a
 restarted pod hashes to the same place and reclaims exactly what it had.
 
-## The five things that must be right
+## The six things that must be right
 
 ### 1. Open every namespace on every node, before joining
 
@@ -137,6 +137,34 @@ reading 1 on every pod is the signal it has. It is the gauge form of
 under its current membership view returned `nil`. Replacing pods faster than the cluster restores copies is
 how a rolling upgrade at RF=3 ends up, briefly, at RF=1.
 
+### 6. A slow start must not look like a dead process
+
+A pod can take minutes to start honestly: opening namespaces, restoring what
+persistence brings back, waiting for a blob store that is down. If nothing
+answers the liveness probe meanwhile, the kubelet kills it a minute in, the
+next start waits for the same store, and a store outage becomes a crash loop
+that outlives it. Two things prevent that, and the manifests have both:
+
+- **Serve the probe endpoints first.** Listen before opening the store and
+  the namespaces; register the application's routes once they exist. The pod
+  is then alive and, until it has joined and caught up, unready — which is
+  true. `examples/shop` does this.
+- **A `startupProbe`.** It holds liveness off for its whole budget — ten
+  minutes in these manifests — so a start that is slow rather than stuck is
+  given the time. Measure your restore and set it above that.
+
+The StatefulSet also uses `podManagementPolicy: Parallel`. With
+`OrderedReady` each pod waited for the one before it to be Ready, and Ready
+means joined and caught up: a cluster starting cold caught up one pod at a
+time, and a pod that could not become ready held every pod after it
+uncreated. The policy governs creating and deleting pods only; rolling updates
+still replace one pod at a time.
+
+`membership.New` sets memberlist's `DeadNodeReclaimTime` to one second when
+it is zero. memberlist's zero means never: a pod that crashed and came back
+under its StatefulSet name from a new pod IP was refused as a conflicting
+address until the dead node was forgotten, thirty seconds later.
+
 ## What these manifests deliberately do not include
 
 **Resource limits.** Memory is the interesting one and it depends entirely on
@@ -170,14 +198,16 @@ against `peercache_memory_budget_bytes` is the margin; a rising
 `peercache_shed_owned_total` means the budget, or the cluster, is too small for
 the working set.
 
-**A PodDisruptionBudget.** You want one. `maxUnavailable: 1` is right for
-replication factor 2, and 2 for factor 3, but the correct value depends on
-whether you can tolerate the loss window, so it is a decision rather than a
-default.
-
 **Autoscaling.** Every scale event is a rebalance. That is cheap here —
 rendezvous hashing moves only the affected share — but it is not free, and an
 HPA that flaps will rebalance continuously.
+
+## What they include that you may want to change
+
+**A PodDisruptionBudget**, `maxUnavailable: 1`. Without one a node drain or a
+cluster upgrade evicts every pod on a machine together. One is right for
+replication factor 2; factor 3 tolerates two, if you can tolerate the loss
+window that leaves.
 
 ## Wiring it up
 

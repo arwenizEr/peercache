@@ -37,8 +37,27 @@ type Options struct {
 	// Config, if set, is used as the memberlist configuration base. It lets
 	// a caller pick LAN, WAN or local timing profiles without this package
 	// enumerating them.
+	//
+	// A zero DeadNodeReclaimTime is set to one second, so that a node that died
+	// may rejoin under its name from a new address at once rather than after
+	// memberlist forgets it: the shape of a StatefulSet pod rescheduled after
+	// a crash. memberlist reads zero as never.
 	Config *memberlist.Config
 }
+
+// deadNodeReclaimTime is how long after a node is declared dead its name may
+// return from a different address, when the memberlist configuration leaves
+// it at zero.
+//
+// memberlist's zero means never: a node that died and comes back under the
+// same name from a new address is refused as a conflict until the dead node
+// is forgotten, thirty seconds later on the LAN profile. That is the shape of
+// a StatefulSet pod that crashed and was rescheduled — same name, new pod IP —
+// and it spent those thirty seconds outside the cluster, unready, its share
+// held by the survivors and the restarted pod's capacity unused. A node that
+// left gracefully was never affected. One second keeps a node that is merely flapping from
+// being replaced mid-detection.
+const deadNodeReclaimTime = time.Second
 
 // Gossip is a [core.MembershipAuthority] backed by memberlist.
 type Gossip struct {
@@ -195,6 +214,9 @@ func New(opts Options) (*Gossip, error) {
 	// memberlist logs to the standard logger by default, which a library
 	// must not do; silence it and route what matters through our own Logger.
 	cfg.LogOutput = discard{}
+	if cfg.DeadNodeReclaimTime == 0 {
+		cfg.DeadNodeReclaimTime = deadNodeReclaimTime
+	}
 
 	if opts.BindAddr != "" {
 		host, port, err := net.SplitHostPort(opts.BindAddr)
