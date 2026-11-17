@@ -204,6 +204,13 @@ type Stats struct {
 	// counters above can be read as a rate, and so a test can wait for a
 	// membership change to have been *acted on* rather than merely observed.
 	PromotionRounds int64 `json:"promotionRounds"`
+	// PromotionScans counts passes that ranked every replica of a namespace
+	// for ownership: one per namespace on a membership change, on every
+	// tick while a view settles, and at the end of a catch-up. It is flat
+	// under stable membership even while PromotionRounds rises, because a
+	// round that runs only to hand off out-of-place copies does not scan.
+	// Rising under stable membership means the view is not settling.
+	PromotionScans int64 `json:"promotionScans"`
 
 	// ReplicasPulled counts keys obtained by catch-up, CatchUpRuns the
 	// number of times it ran, and CatchUpFailures the peers that could not

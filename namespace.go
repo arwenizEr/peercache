@@ -187,6 +187,9 @@ type namespace struct {
 	// demotedEpoch is the membership epoch whose ownership the owned store
 	// was last demoted to; see promoter.demote.
 	demotedEpoch atomic.Uint64
+	// promotedEpoch is the membership epoch under which this namespace's
+	// replicas were last scanned for promotion; see promoter.reconcileWith.
+	promotedEpoch atomic.Uint64
 	// negativeHits counts GetOrLoad calls answered from a remembered
 	// absence; see [WithNegativeCaching].
 	negativeHits atomic.Int64

@@ -17,7 +17,7 @@ import (
 // quietFabric is a settled three-node fabric with an RF=2 namespace "quiet"
 // holding a few hundred keys, its clock moved well past the last membership
 // change.
-func quietFabric(t *testing.T, opts ...fabricOption) *fabric {
+func quietFabric(t testing.TB, opts ...fabricOption) *fabric {
 	t.Helper()
 	f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1, opts...)
 	ctx := context.Background()
@@ -103,7 +103,7 @@ func TestAStrayReplicaIsHandedOnOnAQuietCluster(t *testing.T) {
 }
 
 // sendStray files a copy of key at stray as if owner had replicated it there.
-func sendStray(t *testing.T, f *fabric, owner, stray, key, value string) {
+func sendStray(t testing.TB, f *fabric, owner, stray, key, value string) {
 	t.Helper()
 	client, err := f.net.Transport(f.nodes[owner]).Dial(f.nodes[stray])
 	if err != nil {

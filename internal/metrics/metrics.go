@@ -174,6 +174,7 @@ func Collect(s core.Stats) []Metric {
 				"Memory rather than data loss, which is the safe direction — but a rising value under stable membership means hand-offs are failing and the cluster is not converging.",
 			float64(s.ReplicasRetained)},
 		{"peercache_promotion_rounds_total", Counter, "Reconciliations run. Movement under stable membership means the view is not settling.", float64(s.PromotionRounds)},
+		{"peercache_promotion_scans_total", Counter, "Passes that ranked every held replica of a namespace for ownership. Flat under stable membership; rising there means the view is not settling.", float64(s.PromotionScans)},
 		{"peercache_replicas_pulled_total", Counter, "Keys obtained by catch-up after a restart.", float64(s.ReplicasPulled)},
 		{"peercache_catchup_runs_total", Counter, "Catch-up invocations.", float64(s.CatchUpRuns)},
 		{"peercache_catchup_failures_total", Counter, "Peers unreachable during a catch-up. The replica set is thinner than configured.", float64(s.CatchUpFailures)},

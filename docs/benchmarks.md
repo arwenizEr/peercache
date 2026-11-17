@@ -1194,6 +1194,29 @@ so the difference between the rows is what a tick costs. Three runs of
 a pod, the shop ran at about 9,000 orders a minute against 140,000 on an empty
 store.
 
+## A stray tick — no promotion scan under a settled view
+
+`BenchmarkStrayTick`, Machine A, quiet (kind paused): three nodes on the
+in-process fabric, an RF=2 namespace, membership unchanged for longer than the
+settling window. Each op files one out-of-place copy at a node, advances the
+clock one tick and waits for the cluster to go quiet, so the hand-off and the
+same wait as `BenchmarkIdleTick` are in every op. Five runs of
+`-benchtime 50x`; medians, with the runs.
+
+| Keys | Dirty tick | scans/op | ns/op |
+|---|---|---|---|
+| 10,000 | scans for promotions | 1 | 31,251,166 (24,139,574, 30,953,388, 31,251,166, 32,309,510, 33,272,896) |
+| 10,000 | does not | 0 | 31,164,522 (24,766,718, 30,968,156, 31,164,522, 32,264,048, 32,407,980) |
+| 100,000 | scans for promotions | 1 | 41,719,218 (40,830,038, 41,555,352, 41,719,218, 42,277,480, 43,593,670) |
+| 100,000 | does not | 0 | 38,229,792 (37,062,440, 37,369,840, 38,229,792, 38,354,900, 38,696,496) |
+
+3.5 ms a tick at 100,000 keys, about 67,000 replicas on the node, held under
+the namespace's replica lock. It grows with what the node holds: on kind, at
+1.3 million replicas a pod, a third of a core went to it while a pod worked
+through a backlog of strays, and the shop's throughput at 3.2 million keys
+went from 25,731 and 28,615 orders a run to 69,749 and 73,160
+(docs/m16-results.md).
+
 ## A compressed write — framed once
 
 `BenchmarkPersistentSetCompressed`, Machine A: a persistent namespace with

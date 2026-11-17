@@ -74,7 +74,7 @@ MinIO. Fixed after v1.1.0: restored keys have a queue and senders of their
 own, and their drops are counted apart (`restoreReplicationsDropped`);
 `TestARestoreDoesNotCrowdOutLiveReplication` holds it.
 
-### The fix on kind, and a cliff past 2.6 million keys — open
+### The fix on kind, and a cliff past 2.6 million keys
 
 The same procedure with the fix (c4bdb82) accumulated five more runs on top,
 to about 597,000 owned keys and 1.2 million replicas a pod — some 3 million in
@@ -89,15 +89,54 @@ It showed something else:
 
 No order was lost in either. Both builds collapse alike, so the data, not the
 fix, is the cause: at 2.6 million keys the same cluster ran 108,000 to 120,000
-orders a minute with no churn. Membership stays at five, but the pods' views
-of it keep diverging (`epochSkew`), each new view opens a reconciliation
-window, and replicas move back and forth — about two promotion rounds a second
-on four of the five pods. The pods' logs show catch-up of `orders` timing out
-again and again ("catch-up incomplete, will retry: context deadline
-exceeded") and peer connections dropping. The suspicion is a loop: catch-up
-and reconciliation over 1.8 million entries a pod saturate it, gossip probes
-arrive late, a peer is suspected and refutes, the view moves, and the next
-reconciliation starts. To find next, on a cluster that reproduces it.
+orders a minute with no churn.
+
+### The cliff: a promotion scan on every tick — fixed
+
+The first reading was a gossip loop: views diverging (`epochSkew`), each new
+view opening a reconciliation. Measured on the cluster that reproduced it, that
+was wrong:
+
+- Membership had not moved since the rollout. Each pod's epoch stood still
+  (5, 7, 9, 11, 13). `epochSkew` counts requests whose caller's epoch differs
+  from the receiver's, and the epochs are local counters that drift apart
+  with every view each pod saw; it rises with traffic, not with churn.
+- Not CPU starvation and not GC: a 30-second profile of a pod under load
+  showed 0.74 of a core in use on a 20-core machine, mostly gRPC syscalls,
+  and the GC's share of CPU was 0.01–0.04%.
+- Idle, with no load at all, two pods were still handing off about 40,000
+  replicas a minute and reconciling every second. One held 1,345,226 replicas
+  against about 1,227,000 on the others: some 117,000 copies the rolling
+  restart had left out of place. The hand-off queue takes 4,096 a tick, so
+  every tick was dirty for minutes.
+- Every dirty tick ran a full reconciliation, whose promotion scan ranks every
+  replica the node holds for ownership under the namespace's replica lock. A
+  20-second profile of that pod idle: 6.5 seconds in it, most of that hashing
+  for rendezvous ranking. Every copy arriving for `orders` meanwhile waited on
+  the lock.
+
+A dirty tick under a settled view has nothing for that scan to find, so it no
+longer runs one; it runs on a view change, while a view settles, at the end of
+a catch-up, and once under each epoch for a namespace opened late
+(`TestAStrayTickDoesNotScanForPromotions`,
+`TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas`). Same cluster,
+redeployed with the fix, at about 642,000 owned keys and 1.28 million replicas
+a pod:
+
+| Build | Orders, two steady runs | Rehomed + evicted a run | Promotion rounds a run |
+|---|---|---|---|
+| v1.1.0 (1153e3d) | 25,731 · 28,615 | 131,994 · 197,922 | 392 · 471 |
+| the fix | 69,749 · 73,160 | 173,358 · 127,068 | 140 · 119 |
+
+No order was lost. It is not yet the 108,000 to 120,000 of 2.6 million keys:
+the backlog was still draining during both runs, at about 400 hand-offs a
+second from one pod, and the hand-off pass itself still scans for strays
+under the same lock. Those two are next.
+
+Found on the way, not the cause: the memory budget's accounting reads about
+two thirds of the live heap (311 MB accounted against 478 MB live after a
+GC, 1.83 million entries). The shop's 512 MiB budget therefore never shed,
+with the heap at 600–780 MB against a 920 MiB `GOMEMLIMIT`. Open.
 
 ## v1.0.0 candidates (2026-11-16), accumulated data
 
