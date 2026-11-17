@@ -205,3 +205,40 @@ func TestACopyAHandOffPutsBackIsTriedAgainOnAQuietCluster(t *testing.T) {
 		t.Fatalf("the owner %s reads %q, %v", owner, got, err)
 	}
 }
+
+// TestHandOffsRunInParallel: a node with many out-of-place copies hands
+// several of them on at once rather than one after another.
+//
+// One sender moved one key per round trip to each of its new holders: on kind,
+// about 400 a second from a pod a rolling restart had left with 117,000 strays,
+// five minutes to drain. Here the stray node's Replicate requests are held
+// where they stand, so the hand-offs in flight are counted.
+func TestHandOffsRunInParallel(t *testing.T) {
+	held := map[string]*heldReplicas{}
+	f := quietFabric(t, withWrappers(func(id string, tr core.Transport) core.Transport {
+		held[id] = newHeldReplicas(tr)
+		return held[id]
+	}, nil))
+	stray := f.ids[2]
+
+	sent := 0
+	for i := 0; sent < 64; i++ {
+		key := fmt.Sprintf("parallel/%d", i)
+		p, err := f.caches[stray].DescribeKey("quiet", key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(p.Holders, stray) {
+			continue
+		}
+		sendStray(t, f, p.Holders[0], stray, key, "v")
+		sent++
+	}
+
+	held[stray].hold()
+	defer held[stray].open()
+	f.clk.Advance(time.Second)
+	waitForCache(t, "two hand-offs to be in flight at once", func() bool {
+		return held[stray].inFlight.Load() >= 2
+	})
+}

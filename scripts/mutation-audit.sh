@@ -3240,6 +3240,14 @@ mutate "restored keys share the live replication queue" \
   '	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:' \
   'TestARestoreDoesNotCrowdOutLiveReplication$' ./tests
 
+# --- hand-offs run in parallel ---
+
+mutate "one hand-off at a time" \
+  handoff.go \
+  'const handoffWorkers = 8' \
+  'const handoffWorkers = 1' \
+  'TestHandOffsRunInParallel$' ./tests
+
 # --- a dirty tick under a settled view does not scan for promotions ---
 
 mutate "every dirty tick scans every replica for promotion" \

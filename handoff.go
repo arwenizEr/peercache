@@ -29,6 +29,20 @@ const handoffQueue = 4096
 // memory, not data.
 const handoffTimeout = 10 * time.Second
 
+// handoffWorkers is how many hand-offs are in flight at once.
+//
+// It was one. A hand-off is a round trip to each node that now ranks for the
+// key, so one sender moved a key per two round trips: on kind, about 400 a
+// second from a pod left with 117,000 out-of-place copies by a rolling
+// restart, which took five minutes to drain, every one of them with the
+// pod's copies of those keys held only where they no longer belong. Eight, as
+// for asynchronous replication (replicaWorkers). Hand-offs of different keys
+// are independent. Two of one key can overlap — a newer copy arriving while
+// one is in flight is drained by the next pass — and every receiver keeps the
+// newer of the two by order, as it does for any copy; a put-back of the older
+// is refused the same way.
+const handoffWorkers = 8
+
 // handoff moves replicas this node has stopped ranking for to the nodes that now
 // rank for them, and drops them only once they have landed.
 //
@@ -102,8 +116,10 @@ func newHandoff(c *cache) *handoff {
 		base:       base,
 		cancelBase: cancel,
 	}
-	h.wg.Add(1)
-	go h.run()
+	for i := 0; i < handoffWorkers; i++ {
+		h.wg.Add(1)
+		go h.run()
+	}
 	return h
 }
 
