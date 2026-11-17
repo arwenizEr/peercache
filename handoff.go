@@ -210,7 +210,7 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 	// sent it here.
 	from := w.entry.From
 	if from == "" {
-		from = c.self().ID
+		from = c.selfID()
 	}
 	left, live := w.entry.Remaining(c.opts.Clock.Now().UnixNano())
 	if !live {

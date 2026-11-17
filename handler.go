@@ -135,7 +135,7 @@ func (h *peerHandler) localNamespace(name string) (*namespace, bool) {
 // process down. The error wraps the validation failure, so a caller sees
 // ErrInvalidOption from the owner rather than a dropped connection.
 func (h *peerHandler) misconfigured(ns *namespace) error {
-	return fmt.Errorf("peercache: namespace %q is misconfigured on %s: %w", ns.name, h.cache.self().ID, ns.err)
+	return fmt.Errorf("peercache: namespace %q is misconfigured on %s: %w", ns.name, h.cache.selfID(), ns.err)
 }
 
 func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
@@ -581,7 +581,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 	case h.ownsKey(ns, in.Key):
 		h.cache.promoter.promoteKey(ns, in.Key)
 	case h.cache.guard != nil &&
-		!h.cache.stillReplicaFor(ns.groupKeyFor(in.Key), ns.opts.ReplicationFactor, h.cache.self().ID):
+		!h.cache.stillReplicaFor(ns.groupKeyFor(in.Key), ns.opts.ReplicationFactor, h.cache.selfID()):
 		// Out of place under this node's view: a sender's older view put
 		// it here. No membership change is coming to move it, so the
 		// next tick must.
@@ -765,7 +765,7 @@ func (h *peerHandler) ownsKey(ns *namespace, key string) bool {
 		return true
 	}
 	owner, _, err := h.cache.guard.Table().Owner(ns.groupKeyFor(key))
-	return err == nil && owner.ID == h.cache.self().ID
+	return err == nil && owner.ID == h.cache.selfID()
 }
 
 // assertOwned refuses a key this node does not own.

@@ -152,7 +152,7 @@ func (p *promoter) reconcile() {
 	defer p.mu.Unlock()
 	p.rounds.Add(1)
 
-	self := c.self().ID
+	self := c.selfID()
 	for _, name := range c.replicas.Namespaces() {
 		ns, ok := c.namespaceIfExists(name)
 		if !ok {

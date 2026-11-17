@@ -133,7 +133,7 @@ func (c *cache) replicaTargets(groupKey string, rf int) ([]core.Node, core.Epoch
 	if count == 0 {
 		return nil, epoch, fmt.Errorf("peercache: no members to replicate %q to: %w", groupKey, core.ErrNotFound)
 	}
-	self := c.self().ID
+	self := c.selfID()
 	out := make([]core.Node, 0, count)
 	for _, n := range ranked[:count] {
 		if n.ID == self {
@@ -207,7 +207,7 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		Value:     w.value,
 		TTLNanos:  int64(w.ttl),
 		Stamp:     w.stamp,
-		From:      r.cache.self().ID,
+		From:      r.cache.selfID(),
 		Deleted:   w.deleted,
 		Order:     w.order,
 		Prev:      w.prev,

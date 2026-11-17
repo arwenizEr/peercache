@@ -109,7 +109,7 @@ type KeyPlacement struct {
 }
 
 func (c *cache) Describe() Description {
-	d := Description{Node: Member{ID: c.self().ID, Addr: c.self().Addr}, Ready: c.Ready()}
+	d := Description{Node: Member{ID: c.selfID(), Addr: c.self().Addr}, Ready: c.Ready()}
 	if c.guard != nil {
 		table := c.guard.Table()
 		d.Epoch = uint64(table.Epoch())
@@ -190,7 +190,7 @@ func (c *cache) DescribeKey(namespace, key string) (KeyPlacement, error) {
 		return KeyPlacement{}, fmt.Errorf("namespace %q: %w", namespace, ns.err)
 	}
 	p := KeyPlacement{Namespace: namespace, Key: key, GroupKey: ns.groupKeyFor(key), Role: "none"}
-	self := c.self().ID
+	self := c.selfID()
 	if c.guard == nil {
 		p.Owner, p.Holders, p.Role = self, []string{self}, "owner"
 	} else {

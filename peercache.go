@@ -272,6 +272,7 @@ func New(opts ...Option) (Cache, error) {
 		stopped:    make(chan struct{}),
 		ticker:     resolved.Clock.NewTicker(sweepInterval),
 	}
+	c.id = c.self().ID
 	c.route = &router{cache: c}
 	c.invalidator = newInvalidator(c)
 	c.replicas = replication.NewStore()
@@ -374,6 +375,9 @@ func New(opts ...Option) (Cache, error) {
 // cache implements [Cache].
 type cache struct {
 	opts core.Options
+
+	// id is this node's ID, read once: see selfID.
+	id string
 
 	// groups is the actor runtime: the activation directory and every
 	// group's single goroutine.

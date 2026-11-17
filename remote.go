@@ -42,7 +42,7 @@ func (r *router) locate(groupKey string) (placement, error) {
 	if err != nil {
 		return placement{}, err
 	}
-	local := owner.ID == r.cache.self().ID
+	local := owner.ID == r.cache.selfID()
 	if local {
 		if err := r.cache.mayServeLocally(groupKey, epoch); err != nil {
 			return placement{}, err
@@ -139,6 +139,15 @@ func (c *cache) self() core.Node {
 	}
 	return c.opts.Membership.Self()
 }
+
+// selfID returns this node's ID.
+//
+// Read once, at New: a node's ID cannot change while its cache runs, since
+// every ranking it computes depends on it, and self clones the whole node —
+// its metadata map included — on every call. Writes asked for the ID a dozen
+// times each, and over gRPC those clones were 7% of a synchronous write's
+// allocations.
+func (c *cache) selfID() string { return c.id }
 
 // memberCount returns the size of this node's membership view, itself included.
 //

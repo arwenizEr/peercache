@@ -22,7 +22,7 @@ func (c *cache) traceRPC(ctx context.Context, method string, peer core.Node) (co
 	}
 	ctx, span := c.opts.Tracer.Start(ctx, "peercache.rpc "+method,
 		core.Attr{Key: "peercache.peer", Value: peer.ID},
-		core.Attr{Key: "peercache.node", Value: c.self().ID})
+		core.Attr{Key: "peercache.node", Value: c.selfID()})
 	carrier := make(map[string]string, 2)
 	c.opts.Tracer.Inject(ctx, carrier)
 	if len(carrier) > 0 {
@@ -42,7 +42,7 @@ func (c *cache) traceServe(ctx context.Context, method string, from core.Node) (
 	}
 	return c.opts.Tracer.Start(ctx, "peercache.serve "+method,
 		core.Attr{Key: "peercache.peer", Value: from.ID},
-		core.Attr{Key: "peercache.node", Value: c.self().ID})
+		core.Attr{Key: "peercache.node", Value: c.selfID()})
 }
 
 // traceLoad starts the span around one loader call of n keys.
@@ -53,5 +53,5 @@ func (c *cache) traceLoad(ctx context.Context, namespace string, n int) (context
 	return c.opts.Tracer.Start(ctx, "peercache.load",
 		core.Attr{Key: "peercache.namespace", Value: namespace},
 		core.Attr{Key: "peercache.keys", Value: strconv.Itoa(n)},
-		core.Attr{Key: "peercache.node", Value: c.self().ID})
+		core.Attr{Key: "peercache.node", Value: c.selfID()})
 }
