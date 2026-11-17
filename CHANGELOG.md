@@ -9,6 +9,12 @@ change the public API.
 
 ### Changed
 
+- A write to a compressed namespace compresses its value once. `Set` framed
+  it three times — for the owned store, the persister and the replica fan-out,
+  which all keep the same bytes — and catch-up and `Drain` decompressed every
+  entry they sent and compressed it again, although the stored form is what
+  the receiver stores. A persistent `Set` of a 1 KiB value with LZ4 went from
+  9 allocations and about 4,080 bytes to 5 and about 1,650.
 - A tick reconciles replicas only when something may be out of place: for ten
   seconds after a membership view, or after a copy arrived where this node's
   ranking does not put it, a hand-off put one back, a pass left work behind,

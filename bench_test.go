@@ -1,6 +1,7 @@
 package peercache_test
 
 import (
+	"bytes"
 	"context"
 	"runtime"
 	"sort"
@@ -214,6 +215,28 @@ func BenchmarkPersistentSet(b *testing.B) {
 	value := make([]byte, 64)
 
 	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ns.Set(ctx, ks[i%len(ks)], value, time.Minute); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+	}
+}
+
+// BenchmarkPersistentSetCompressed is BenchmarkPersistentSet with LZ4 on a
+// 1 KiB compressible value: the cost of compression on the write path, which
+// frames the value once for the store, the persister and the fan-out alike.
+func BenchmarkPersistentSetCompressed(b *testing.B) {
+	c := benchCache(b)
+	ns := c.Namespace("bench",
+		peercache.WithCompression("lz4", 128),
+		peercache.WithPersistence(persist.Memory()))
+	ctx := context.Background()
+	ks := benchKeys(1 << 16)
+	value := bytes.Repeat([]byte("peercache-"), 103)[:1024]
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(value)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := ns.Set(ctx, ks[i%len(ks)], value, time.Minute); err != nil {

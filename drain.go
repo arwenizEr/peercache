@@ -136,11 +136,6 @@ func (c *cache) handOff(ctx context.Context) error {
 					continue
 				}
 
-				value, err := ns.decode(e.Value)
-				if err != nil {
-					problems = errors.Join(problems, err)
-					continue
-				}
 				var ttl int64
 				if e.ExpiresAt != 0 {
 					ttl = e.ExpiresAt - c.opts.Clock.Now().UnixNano()
@@ -155,7 +150,9 @@ func (c *cache) handOff(ctx context.Context) error {
 				err = c.replicator.replicate(ctx, true, replicaWork{
 					namespace: name,
 					key:       e.Key,
-					value:     ns.encode(value),
+					// The stored form: framed already,
+					// and a replica stores what it is sent.
+					value: e.Value,
 					ttl:       durationFromNanos(ttl),
 					stamp:     ns.stamp(e.Version),
 					order:     e.Order,

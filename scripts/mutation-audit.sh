@@ -3157,6 +3157,20 @@ mutate "a budget without a memory limit is not warned about" \
   '	if _, _ = debug.SetMemoryLimit, math.MaxInt; false {' \
   'TestABudgetWithoutAMemoryLimitWarns$' ./tests
 
+# --- a write frames its value once ---
+
+mutate "the persister frames a written value again" \
+  namespace.go \
+  'n.persister.record(key, encoded, written.ExpiresAt, written.Order, false)' \
+  'n.persister.record(key, n.encode(val), written.ExpiresAt, written.Order, false)' \
+  'TestAWriteIsCompressedOnce$' ./tests
+
+mutate "the fan-out frames a written value again" \
+  namespace.go \
+  'err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)' \
+  'err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)' \
+  'TestAWriteIsCompressedOnce$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
