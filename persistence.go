@@ -222,7 +222,7 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	r := segment.Record{
 		Namespace: p.ns.name,
 		Key:       key,
-		Writer:    p.ns.cache.self().ID,
+		Writer:    p.ns.cache.selfID(),
 		Order:     order,
 		ExpiresAt: expiresAt,
 		Tombstone: tombstone,
@@ -390,7 +390,7 @@ func (p *persister) flush(ctx context.Context) error {
 		p.recBuf = records[:0]
 	}()
 	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
-	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
 	// Counted whether or not the write succeeded: PersistFlushes is flush
 	// attempts, and a waiter on it is waiting for the attempt to be over.
@@ -1043,7 +1043,7 @@ func (p *persister) owns(key string) bool {
 		return true
 	}
 	owner, _, err := c.guard.Table().Owner(p.ns.groupKeyFor(key))
-	return err == nil && owner.ID == c.self().ID
+	return err == nil && owner.ID == c.selfID()
 }
 
 // restoreShed brings back one key the memory budget shed, on its first access.
@@ -1116,7 +1116,7 @@ func (p *persister) compactsPartition(part int) bool {
 	}
 	key := fmt.Sprintf("persist/%s/%d", p.ns.name, part)
 	owner, _, err := c.guard.Table().Owner(key)
-	return err == nil && owner.ID == c.self().ID
+	return err == nil && owner.ID == c.selfID()
 }
 
 // compact folds part's snapshots and segments into one snapshot when at
@@ -1174,7 +1174,7 @@ func (p *persister) compact(ctx context.Context, part, threshold int) error {
 		records = append(records, *r)
 	}
 
-	name := fmt.Sprintf("%ssnap-%016x-%s.bin", prefix, maxOrder, hex.EncodeToString([]byte(p.ns.cache.self().ID)))
+	name := fmt.Sprintf("%ssnap-%016x-%s.bin", prefix, maxOrder, hex.EncodeToString([]byte(p.ns.cache.selfID())))
 	snap := segment.Encode(&segment.File{Kind: segment.KindSnapshot, Covered: sc.merged, Records: records})
 	if err := p.store.Put(ctx, name, snap); err != nil {
 		return fmt.Errorf("peercache: writing %s: %w", name, err)
@@ -1202,7 +1202,7 @@ func (p *persister) splitsLogs() bool {
 		return true
 	}
 	owner, _, err := c.guard.Table().Owner(fmt.Sprintf("persist/%s/log", p.ns.name))
-	return err == nil && owner.ID == c.self().ID
+	return err == nil && owner.ID == c.selfID()
 }
 
 // split moves every log's records into partition segments, then deletes the
@@ -1243,7 +1243,7 @@ func (p *persister) split(ctx context.Context) error {
 		_, _ = h.WriteString(name)
 	}
 	tag := fmt.Sprintf("%016x", h.Sum64())
-	writer := hex.EncodeToString([]byte(p.ns.cache.self().ID))
+	writer := hex.EncodeToString([]byte(p.ns.cache.selfID()))
 
 	var (
 		failed  error

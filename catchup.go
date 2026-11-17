@@ -112,7 +112,7 @@ func (cu *catchUp) run(ctx context.Context) error {
 	c := cu.cache
 	cu.runs.Add(1)
 
-	self := c.self().ID
+	self := c.selfID()
 	members := c.guard.Table().Members()
 
 	// Namespaces are per-node configuration, so this node can only ask for
@@ -192,7 +192,7 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 		var resp wire.CatchUpResponse
 		err := c.route.invoke(ctx, peer, transport.MethodCatchUp, &wire.CatchUpRequest{
 			Namespace:         ns.name,
-			Requester:         c.self().ID,
+			Requester:         c.selfID(),
 			ReplicationFactor: ns.opts.ReplicationFactor,
 			After:             after,
 			Limit:             catchUpPageSize,

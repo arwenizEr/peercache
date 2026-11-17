@@ -415,7 +415,7 @@ func (n *namespace) fetchHolder(ctx context.Context, p placement, key string) ([
 		age, left time.Duration
 		served    bool
 	)
-	if holder.ID == n.cache.self().ID {
+	if holder.ID == n.cache.selfID() {
 		val, stamp, age, left, served = n.replicaCopy(key)
 	} else {
 		resp, err := n.cache.route.replicaGet(ctx, holder, p.epoch, n.name, key)
@@ -458,7 +458,7 @@ func (n *namespace) holderFor(key string) (core.Node, bool) {
 	}
 	// One hash of the key and one of this node, then a mix per holder:
 	// hashing a concatenated string per holder allocated on every miss.
-	base := xxhash.Sum64String(key) ^ (xxhash.Sum64String(n.cache.self().ID) * 0x9E3779B97F4A7C15)
+	base := xxhash.Sum64String(key) ^ (xxhash.Sum64String(n.cache.selfID()) * 0x9E3779B97F4A7C15)
 	best, bestScore := 0, uint64(0)
 	for i := 0; i < count; i++ {
 		if score := fmix64(base ^ xxhash.Sum64String(holders[i].ID)); i == 0 || score > bestScore {
@@ -496,7 +496,7 @@ func (n *namespace) replicaCopy(key string) (val []byte, stamp core.Stamp, age, 
 		return nil, core.Stamp{}, 0, 0, false
 	}
 	holders, count, _ := n.cache.guard.Table().Holders(n.groupKeyFor(key), n.opts.ReplicationFactor)
-	self := n.cache.self().ID
+	self := n.cache.selfID()
 	ranked := false
 	for i := 1; i < count; i++ {
 		if holders[i].ID == self {

@@ -1245,6 +1245,19 @@ count what the three nodes do in the background meanwhile, spread over the
 writes: a first run taken while the race gate loaded the machine reported
 647 allocations for the same code, and is not used.
 
+## A synchronous write — the node's ID read once
+
+`BenchmarkSyncSetOverGRPC` again, same setup and method, quiet machine.
+
+| Node ID | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `Self()` on every use | 239,632 (227,486, 232,664, 239,632, 240,763, 263,664) | 60,355 | 827 |
+| read once at `New`; metadata read once per request | 228,439 (219,414, 226,512, 228,439, 229,075, 231,678) | 55,045 | 783 |
+
+About 5% of a write's time and 9% of its bytes. What remains is mostly gRPC's
+own per-call work — a stream, headers and metadata per unary call — which
+only fewer calls can remove.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

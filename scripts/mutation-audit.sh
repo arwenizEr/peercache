@@ -3211,6 +3211,14 @@ mutate "a write sends its copies one after another" \
   '		func(i int, node core.Node) {' \
   'TestASyncWriteSendsItsCopiesAtOnce$' ./tests
 
+# --- a node's ID is read once ---
+
+mutate "a node asks membership for its ID on every use" \
+  remote.go \
+  'func (c *cache) selfID() string { return c.id }' \
+  'func (c *cache) selfID() string { return c.self().ID }' \
+  'TestAWriteDoesNotAskMembershipWhoItIs$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

@@ -693,6 +693,7 @@ caught   compaction reads a partition before counting its segments          -- T
 caught   async fan-out sends one copy at a time                             -- TestAsyncFanOutRunsInParallel
 caught   one key's async copies travel on several senders                   -- TestAsyncFanOutKeepsOneKeysWritesInOrder
 caught   a write sends its copies one after another                         -- TestASyncWriteSendsItsCopiesAtOnce
+caught   a node asks membership for its ID on every use                     -- TestAWriteDoesNotAskMembershipWhoItIs
 caught   an idle tick reconciles in full                                    -- TestAnIdleTickDoesNotReconcile
 caught   a namespace without L1 sends hints                                 -- TestANamespaceWithoutL1SendsNoHints
 caught   a batched invalidation drops its entries                           -- TestHintsQueuedTogetherShareMessages

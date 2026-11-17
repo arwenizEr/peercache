@@ -79,7 +79,7 @@ type NodeShare struct {
 // not for scraping.
 func (c *cache) DescribeCluster(ctx context.Context, digests bool) ClusterDescription {
 	ctx = ctxOrBackground(ctx)
-	self := c.self().ID
+	self := c.selfID()
 	out := ClusterDescription{From: self}
 	members := []core.Node{c.self()}
 	if c.guard != nil {

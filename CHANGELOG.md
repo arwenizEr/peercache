@@ -9,6 +9,10 @@ change the public API.
 
 ### Changed
 
+- A cache reads its node's ID from membership once, when it is made, instead
+  of on every use. `Self` clones the whole node, metadata map included, and
+  fifty writes and reads on three nodes asked for it 552 times; over gRPC
+  those clones were 7% of a synchronous write's allocations.
 - A write to a compressed namespace compresses its value once. `Set` framed
   it three times — for the owned store, the persister and the replica fan-out,
   which all keep the same bytes — and catch-up and `Drain` decompressed every

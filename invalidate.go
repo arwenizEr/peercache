@@ -201,7 +201,7 @@ func (iv *invalidator) deliver(batch []invalidation) {
 	if c.transport == nil || c.guard == nil {
 		return
 	}
-	self := c.self().ID
+	self := c.selfID()
 	members := c.guard.Table().Members()
 	present := make(map[string]struct{}, len(members))
 	for _, node := range members {
