@@ -718,6 +718,7 @@ caught   a page emptied by removals ends the pass                           -- T
 caught   the persister frames a written value again                         -- TestAWriteIsCompressedOnce
 caught   the fan-out frames a written value again                           -- TestAWriteIsCompressedOnce
 caught   a dead node's name is never reclaimed                              -- TestADeadNodeRejoinsUnderItsNameFromANewAddress
+caught   restored keys share the live replication queue                     -- TestARestoreDoesNotCrowdOutLiveReplication
 caught   a pass sends keys the asker stopped being entitled to              -- TestAPassReappliesItsFilter
 caught   an L1 copy ignores its key's remaining lifetime                    -- TestANonOwnedCopyDoesNotOutliveItsKey
 caught   the owner's Get grants no remaining lifetime                       -- TestANonOwnedCopyDoesNotOutliveItsKey

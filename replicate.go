@@ -35,6 +35,25 @@ const replicaQueue = 4096
 // worker, so one key's copies still travel one at a time and in order.
 const replicaWorkers = 8
 
+// restoreQueue and restoreWorkers size the fan-out of restored keys, which
+// has a queue and senders of its own.
+//
+// It shared the live queue. A restart restores a node's whole share at once —
+// on kind, 249,000 keys in a minute on one pod — and every restored key went
+// out to its replicas through the queue live writes use: the burst filled it,
+// and for that minute it dropped live asynchronous copies along with restored
+// ones (224,622 drops, docs/m16-results.md). A restored key's replicas usually
+// still hold it, from before the restart, so losing that copy costs little;
+// losing a live write's copy is a write held by one node. So restored keys
+// queue apart, drops of them are counted apart (RestoreReplicationsDropped),
+// and live writes never wait behind them. A key's restored copy and a later
+// write's copy may then arrive in either order; a replica keeps the newer by
+// stamp, as it does for any copy.
+const (
+	restoreQueue   = 1024
+	restoreWorkers = 2
+)
+
 // replicaTimeout bounds one asynchronous fan-out attempt.
 //
 // Synchronous replication uses the caller's deadline instead — a caller that
@@ -60,8 +79,10 @@ type replicator struct {
 	// queues holds one channel per worker; a key's work always goes to
 	// queues[workerFor(namespace, key)].
 	queues []chan replicaWork
-	done   chan struct{}
-	wg     sync.WaitGroup
+	// restored is the queue for restored keys; see restoreQueue.
+	restored chan replicaWork
+	done     chan struct{}
+	wg       sync.WaitGroup
 
 	// base is cancelled by Close so an in-flight send returns at once
 	// rather than waiting out a deadline measured on the injected clock.
@@ -73,6 +94,9 @@ type replicator struct {
 	dropped   atomic.Int64
 	failed    atomic.Int64
 	conflicts atomic.Int64
+	// restoreDropped counts restored keys' copies dropped because their
+	// queue was full.
+	restoreDropped atomic.Int64
 }
 
 // replicaWork is one key's fan-out.
@@ -95,6 +119,7 @@ func newReplicator(c *cache) *replicator {
 	r := &replicator{
 		cache:      c,
 		queues:     make([]chan replicaWork, replicaWorkers),
+		restored:   make(chan replicaWork, restoreQueue),
 		done:       make(chan struct{}),
 		base:       base,
 		cancelBase: cancel,
@@ -104,7 +129,24 @@ func newReplicator(c *cache) *replicator {
 		r.wg.Add(1)
 		go r.run(r.queues[i])
 	}
+	for i := 0; i < restoreWorkers; i++ {
+		r.wg.Add(1)
+		go r.run(r.restored)
+	}
 	return r
+}
+
+// enqueueRestored schedules the fan-out of a restored key on the restore
+// queue. It never blocks: a restore has callers waiting for it.
+func (r *replicator) enqueueRestored(w replicaWork) {
+	if len(w.targets) == 0 {
+		return
+	}
+	select {
+	case r.restored <- w:
+	default:
+		r.restoreDropped.Add(1)
+	}
 }
 
 // targets returns the nodes that should hold a copy of this group key, not
@@ -287,3 +329,6 @@ func (r *replicator) Close() {
 func (r *replicator) counters() (sent, dropped, failed, conflicts int64) {
 	return r.sent.Load(), r.dropped.Load(), r.failed.Load(), r.conflicts.Load()
 }
+
+// restoreDrops reports restored keys' copies dropped; see enqueueRestored.
+func (r *replicator) restoreDrops() int64 { return r.restoreDropped.Load() }
