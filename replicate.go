@@ -195,7 +195,7 @@ func (r *replicator) run(queue chan replicaWork) {
 	}
 }
 
-// fanOut sends one key to every target, reporting the first failure.
+// fanOut sends one key to every target at once, reporting every failure.
 //
 // Every target is attempted even after one fails. A replica set exists so that
 // losing one node is survivable; abandoning the rest because the first was
@@ -213,32 +213,50 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		Prev:      w.prev,
 	}
 
-	var failures error
-	for _, node := range w.targets {
-		select {
-		case <-r.done:
-			return failures
-		default:
-		}
-
-		var resp wire.ReplicateResponse
-		if err := r.cache.route.invoke(ctx, node, transport.MethodReplicate, req, &resp); err != nil {
-			r.failed.Add(1)
-			failures = errors.Join(failures,
-				fmt.Errorf("peercache: replicating %q to %s: %w", w.key, node.ID, err))
-			continue
-		}
-		if resp.Conflict {
-			// Two nodes wrote this key in one epoch. Counted, never
-			// merged: the design rules it out, and picking a winner
-			// here would be a resolution policy invented on the spot.
-			r.conflicts.Add(1)
-			r.cache.opts.Logger.Warn("conflicting write detected by replica",
-				"namespace", w.namespace, "key", w.key, "replica", node.ID)
-		}
-		r.sent.Add(1)
+	// Every target at once. One after another, a synchronous write at
+	// replication factor 3 waited two round trips rather than one, and its
+	// second replica waited out the first's timeout when the first did not
+	// answer. Each key's copies still leave in order: a worker, or a
+	// synchronous caller, sends a key's next write only after this returns.
+	if len(w.targets) == 1 {
+		return r.sendTo(ctx, req, w.targets[0])
 	}
-	return failures
+	errs := make([]error, len(w.targets))
+	var wg sync.WaitGroup
+	for i, node := range w.targets[1:] {
+		wg.Add(1)
+		go func(i int, node core.Node) {
+			defer wg.Done()
+			errs[i] = r.sendTo(ctx, req, node)
+		}(i+1, node)
+	}
+	errs[0] = r.sendTo(ctx, req, w.targets[0])
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// sendTo sends one copy to one target, counting the outcome.
+func (r *replicator) sendTo(ctx context.Context, req *wire.ReplicateRequest, node core.Node) error {
+	select {
+	case <-r.done:
+		return nil
+	default:
+	}
+	var resp wire.ReplicateResponse
+	if err := r.cache.route.invoke(ctx, node, transport.MethodReplicate, req, &resp); err != nil {
+		r.failed.Add(1)
+		return fmt.Errorf("peercache: replicating %q to %s: %w", req.Key, node.ID, err)
+	}
+	if resp.Conflict {
+		// Two nodes wrote this key in one epoch. Counted, never
+		// merged: the design rules it out, and picking a winner
+		// here would be a resolution policy invented on the spot.
+		r.conflicts.Add(1)
+		r.cache.opts.Logger.Warn("conflicting write detected by replica",
+			"namespace", req.Namespace, "key", req.Key, "replica", node.ID)
+	}
+	r.sent.Add(1)
+	return nil
 }
 
 // replicate fans a write out, waiting only if the namespace asked for it.

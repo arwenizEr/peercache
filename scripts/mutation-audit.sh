@@ -3203,6 +3203,14 @@ mutate "a batched invalidation drops its entries" \
   '		for _, e := range in.Entries[:0] {' \
   'TestHintsQueuedTogetherShareMessages$' ./tests
 
+# --- a write's copies leave at once ---
+
+mutate "a write sends its copies one after another" \
+  replicate.go \
+  '		go func(i int, node core.Node) {' \
+  '		func(i int, node core.Node) {' \
+  'TestASyncWriteSendsItsCopiesAtOnce$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

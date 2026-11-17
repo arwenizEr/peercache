@@ -71,3 +71,40 @@ func BenchmarkAsyncFanOutOverGRPC(b *testing.B) {
 	b.StopTimer()
 	b.ReportMetric(float64(writer.cache.Stats().ReplicationsDropped-dropped)/float64(b.N), "dropped/op")
 }
+
+// BenchmarkSyncSetOverGRPC is a synchronous write at replication factor 3 over
+// real gRPC on loopback: the store write and both copies, acknowledged. ns/op
+// is one write; the copies leave at once, so it is about one round trip rather
+// than two.
+func BenchmarkSyncSetOverGRPC(b *testing.B) {
+	if testing.Short() {
+		b.Skip("binds loopback sockets")
+	}
+	nodes := newGRPCCluster(b, 3)
+	ctx := context.Background()
+	for _, n := range nodes {
+		n.cache.Namespace("sync", peercache.WithReplicationFactor(3), peercache.WithSyncReplication())
+	}
+	writer := nodes[0]
+	ns := writer.cache.Namespace("sync")
+	keys := make([]string, 0, 4096)
+	for i := 0; len(keys) < cap(keys); i++ {
+		k := fmt.Sprintf("sync/%d", i)
+		if p, err := writer.cache.DescribeKey("sync", k); err == nil && p.Owner == writer.id && len(p.Holders) == 3 {
+			keys = append(keys, k)
+		}
+	}
+	val := make([]byte, 64)
+	for _, k := range keys[:200] { // warm the connections
+		if err := ns.Set(ctx, k, val, 0); err != nil {
+			b.Fatalf("warm-up: %v", err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ns.Set(ctx, keys[i%len(keys)], val, 0); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+	}
+}
