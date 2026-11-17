@@ -134,33 +134,34 @@ func TestACompactionUnderItsThresholdReadsNothing(t *testing.T) {
 		writeThenFlush(t, c, fc, func() { _ = ns.Set(ctx, fmt.Sprintf("o%d", i), []byte("x"), 0) })
 	}
 	split(t, c, fc)
+	// A tick looks at the partitions in order, p000 to p063, one at a time,
+	// so once it has listed p063 it is done with every partition before it.
+	// Segments in p063 itself are left out: the tick may still be on them.
+	const last = "orders/p063/"
 	names, _ := store.BlobStore.List(ctx, "")
 	segments := 0
 	for _, n := range names {
-		if strings.Contains(n, "/seg-") && !strings.Contains(n, "/log/") {
+		if strings.Contains(n, "/seg-") && !strings.Contains(n, "/log/") && !strings.HasPrefix(n, last) {
 			segments++
 		}
 	}
 	if segments == 0 {
-		t.Fatalf("no partition segments to compact; the test would pass vacuously")
+		t.Fatalf("no partition segments before %s to compact; the test would pass vacuously", last)
 	}
 	store.reset()
 
-	// Two compaction ticks. The maintenance goroutine runs one at a time, so
-	// once the second has listed its first partition the first has finished.
-	first := "orders/p000/"
 	fc.Advance(compactInterval)
-	waitFor(t, "a compaction tick", func() bool {
+	waitFor(t, "a compaction tick to reach the last partition", func() bool {
 		_, lists := store.counts()
-		return lists[first] >= 1
-	})
-	fc.Advance(compactInterval)
-	waitFor(t, "a second compaction tick", func() bool {
-		_, lists := store.counts()
-		return lists[first] >= 2
+		return lists[last] >= 1
 	})
 
 	gets, _ := store.counts()
+	for name := range gets {
+		if strings.HasPrefix(name, last) {
+			delete(gets, name)
+		}
+	}
 	if len(gets) != 0 {
 		t.Fatalf("a compaction tick with %d segments, under the threshold of %d, read %d objects: %v",
 			segments, compactAfter, len(gets), gets)
