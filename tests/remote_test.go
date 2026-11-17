@@ -789,6 +789,10 @@ func TestAWriteDoesNotWaitOnAnUnreachablePeer(t *testing.T) {
 // to a silent peer blocks forever under context.Background(), and correctly so,
 // because a remote write cannot succeed without the peer. Only the hint is
 // best-effort, so only the hint is what this test may examine.
+//
+// More keys than a peer's hint buffer holds (hintPeerMax, 16,384), so that
+// the bound is reached and must drop: the writes complete, and the hints past
+// it are counted as dropped rather than held.
 func TestInvalidationBacklogIsDroppedNotQueued(t *testing.T) {
 	f := newFabric(t, 3)
 
@@ -796,15 +800,16 @@ func TestInvalidationBacklogIsDroppedNotQueued(t *testing.T) {
 	// Collect keys this node owns, so the writes below are all local and
 	// the only peer interaction left is the invalidation hint.
 	var mine []string
-	for i := 0; len(mine) < 2000 && i < 20000; i++ {
+	const writes = 20_000
+	for i := 0; len(mine) < writes && i < 20*writes; i++ {
 		k := fmt.Sprintf("flood/%d", i)
 		if f.probeOwns(owner, k) == nil {
 			mine = append(mine, k)
 		}
 	}
-	if len(mine) < 500 {
-		t.Fatalf("only %d of 20000 keys resolved to %s; the fabric is not distributing keys",
-			len(mine), owner)
+	if len(mine) < writes {
+		t.Fatalf("only %d of %d keys resolved to %s; the fabric is not distributing keys",
+			len(mine), 20*writes, owner)
 	}
 
 	// Every hint out of the owner vanishes into silence.
@@ -832,6 +837,10 @@ func TestInvalidationBacklogIsDroppedNotQueued(t *testing.T) {
 		case err := <-done:
 			if err != nil {
 				t.Fatalf("Set: %v", err)
+			}
+			if d := f.caches[owner].Stats().InvalidationsDropped; d == 0 {
+				t.Fatalf("%d hints to silent peers, more than a peer's buffer holds, "+
+					"and none dropped: the backlog is held without bound", len(mine))
 			}
 			return
 		default:

@@ -1221,6 +1221,10 @@ stops (a sentinel key written last, read by both peers). `-benchtime 20000x`.
 |---|---|---|---|
 | one message per hint per peer, peers in turn (3 runs) | 0.985 (0.985, 0.985, 0.986) | 0.0147 | 248,210 |
 | batched per peer, peers at once (5 runs) | 0.023 (0, 0.007, 0.023, 0.035, 0.047) | 0.00083 | 848 |
+| the same, a peer's buffer bounded at 16,384 hints (5 runs) | 0.027 (0, 0.022, 0.027, 0.036, 0.044) | 0.00045 | 813 |
+
+The last row bounds what waits for one peer in hints rather than in rounds of
+any size, which was no bound on memory; it costs nothing measurable here.
 
 msgs/hint is messages sent per hint per peer. Before, the queue of 256 in
 front of the single sender overflowed almost at once and the sentinel's own

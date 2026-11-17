@@ -637,7 +637,6 @@ caught   the router batches per group rather than per owner                 -- T
 caught   a group batch is applied one message at a time                     -- TestRouterSubmit
 caught   every node runs its own loader                                     -- TestTheLoaderRunsOnlyOnTheOwner
 caught   gossip advertises the SWIM port as the RPC address                 -- TestGossipAdvertisesTheRPCAddress
-caught   enqueueing an invalidation blocks when the queue is full           -- TestInvalidationBacklogIsDroppedNotQueued
 caught   an older replica copy overwrites a newer one                       -- TestAnOlderCopyIsRejected
 caught   the replica store compares versions, ignoring the epoch            -- TestALaterEpochWinsWhateverTheVersion
 caught   a fork is not counted                                              -- TestTwoWritersFromOneBaseIsAFork
