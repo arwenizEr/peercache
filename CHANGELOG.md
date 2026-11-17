@@ -19,6 +19,14 @@ change the public API.
   end of a catch-up, and once under each epoch for a namespace opened late.
   `TestAStrayTickDoesNotScanForPromotions`,
   `TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas`.
+- A key a node adopted or promoted and later lost to a new owner was filed as
+  a replica naming that node as its writer, which it never was; the owned
+  store does not record who wrote a key. A demoted copy now names no writer,
+  and a hand-off passes an unnamed one on unnamed. Neither was ever judged a
+  fork, so no split-brain count came of it, but a copy named a false writer
+  to every node it reached. `TestMajoritySideWritesSurviveAHeal` failed on it
+  about one run in twenty, on main since v1.0.0;
+  `TestADemotedCopyNamesNoWriterItDidNotWrite` reproduces it every run.
 
 ### Added
 

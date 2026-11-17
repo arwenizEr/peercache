@@ -412,7 +412,7 @@ func (p *promoter) counters() (promoted, evicted, rounds int64) {
 func (p *promoter) scanCount() int64 { return p.scans.Load() }
 
 // demote moves the owned-store entries of keys this node no longer owns into
-// the replica store, as copies this node wrote. See reconcile.
+// the replica store, naming no writer. See reconcile.
 func (p *promoter) demote(ns *namespace, self string) {
 	c := p.cache
 	if ns.store == nil {
@@ -448,7 +448,16 @@ func (p *promoter) demote(ns *namespace, self string) {
 			ExpiresAt:  e.ExpiresAt,
 			ReceivedAt: now,
 			Order:      e.Order,
-			From:       self,
+			// The writer is unknown, so none is named. The owned store
+			// does not record who wrote a key, and this node need not have:
+			// it may have adopted the key from a hand-off or promoted it from
+			// a replica, under a view in which it ranked first, before the
+			// view that demotes it. Naming itself claimed a write that never
+			// happened, and TestMajoritySideWritesSurviveAHeal caught it in
+			// about one run in twenty: a partitioned node, adopting during
+			// the heal under a view still missing nodes. An empty From is
+			// never judged a fork (replication.Forked); a demoted copy
+			// carries no Prev either, so it was never judged one before.
 		})
 	}
 }

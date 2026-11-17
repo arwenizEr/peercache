@@ -1986,3 +1986,20 @@ after the wait. Each refusal is `ErrNotOwner` or the activation delay's
 `ErrActivationPending`, answered before anything is applied.
 `TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves` reproduces the
 sequence exactly and failed before, for Increment and for Set.
+
+## 59. Demotion runs only for namespaces this node holds replicas of — found by a test, open
+
+**Found** writing `TestADemotedCopyNamesNoWriterItDidNotWrite`: reconciliation
+iterates `replicas.Namespaces()`, so a namespace with nothing in this node's
+replica store is never visited, and its owned store is never demoted. A key
+whose ownership moved away then stays in the owned store, the state demotion
+exists to prevent (`TestADemotedOwnerDoesNotResurrectAnOverwrittenValue`). At
+RF 2 and above a node almost always holds some replica of every namespace, so
+the window is a namespace's first moments. At RF 1 nothing is ever replicated,
+so it is every view change.
+
+**Leaning:** visit every open namespace for demotion, and only replicated ones
+for promotion and hand-off. Demotion is already once per epoch, so the added
+cost is one pass over the owned store per view, which RF 2 namespaces pay
+today. Needs a test at RF 1 first: whether a key left behind there can be
+served stale after ownership returns.
