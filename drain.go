@@ -152,11 +152,11 @@ func (c *cache) handOff(ctx context.Context) error {
 					key:       e.Key,
 					// The stored form: framed already,
 					// and a replica stores what it is sent.
-					value: e.Value,
-					ttl:       durationFromNanos(ttl),
-					stamp:     ns.stamp(e.Version),
-					order:     e.Order,
-					targets:   targets,
+					value:   e.Value,
+					ttl:     durationFromNanos(ttl),
+					stamp:   ns.stamp(e.Version),
+					order:   e.Order,
+					targets: targets,
 				})
 				if err != nil {
 					problems = errors.Join(problems,

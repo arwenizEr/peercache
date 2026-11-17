@@ -61,7 +61,7 @@ type replicator struct {
 	// queues[workerFor(namespace, key)].
 	queues []chan replicaWork
 	done   chan struct{}
-	wg    sync.WaitGroup
+	wg     sync.WaitGroup
 
 	// base is cancelled by Close so an in-flight send returns at once
 	// rather than waiting out a deadline measured on the injected clock.
