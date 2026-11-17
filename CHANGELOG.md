@@ -34,6 +34,13 @@ change the public API.
   backlog now moves at the queue's limit of 4,096 a tick.
   `TestHandOffsRunInParallel`, `BenchmarkStrayBacklogOverGRPC`.
 
+- A failed flush is counted in `PersistFailures` only after the attempt is
+  counted in `PersistFlushes` and its records are back in the pending set. The
+  attempt was counted on return, after the failure, so a caller that saw the
+  failure could read the attempt count before it moved and take the late
+  increment for the next flush. `TestAFailedFlushDoesNotUndoAWriteMadeDuringIt`
+  failed on it once under the race gate.
+
 ### Added
 
 - `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that

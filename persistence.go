@@ -394,12 +394,19 @@ func (p *persister) flush(ctx context.Context) error {
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
 	// Counted whether or not the write succeeded: PersistFlushes is flush
 	// attempts, and a waiter on it is waiting for the attempt to be over.
-	defer p.flushes.Add(1)
+	// A failure is counted last, after the attempt and after its records are
+	// back, so that a waiter on PersistFailures sees both. It was counted
+	// first, with the attempt deferred to the return: a waiter that saw the
+	// failure and then read PersistFlushes could read it before the failed
+	// attempt was added, and take that late addition for the next flush.
+	// TestAFailedFlushDoesNotUndoAWriteMadeDuringIt did, under the race gate.
 	if err := p.store.Put(ctx, name, data); err != nil {
-		p.failures.Add(1)
 		p.restorePending(records)
+		p.flushes.Add(1)
+		p.failures.Add(1)
 		return fmt.Errorf("peercache: persisting %s: %w", name, err)
 	}
+	defer p.flushes.Add(1)
 	p.mu.Lock()
 	if p.restoring > 0 {
 		p.flushedDuring = append(p.flushedDuring, batch)
