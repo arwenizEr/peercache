@@ -125,6 +125,11 @@ func TestAFlushIsNotHeldUpByARestore(t *testing.T) {
 		}
 	}
 	flushAll(t, f)
+	// Split, so each partition's restore reads its own segments. Unsplit,
+	// the first restore reads the shared logs and the others take them from
+	// it without touching the store (TestARestoreReadsEachLogOnce), so none
+	// would be caught reading.
+	splitAll(t, f)
 
 	owner := f.ids[0]
 	mine := keysOwnedBy(t, f, owner, keys)
