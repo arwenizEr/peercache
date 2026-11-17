@@ -3256,8 +3256,8 @@ mutate "a sweep stops at its share however much it finds expired" \
 
 mutate "a sweep that finds expired replicas goes on without bound" \
   internal/replication/replica.go \
-  '	for visited < most {' \
-  '	for visited < held {' \
+  '	share, most := held/SweepShare, held/sweepMostShare' \
+  '	share, most := held/SweepShare, held' \
   'TestASweepGoesOnWhileItFindsExpiredReplicas$' ./internal/replication
 
 # --- hand-offs run in parallel ---
