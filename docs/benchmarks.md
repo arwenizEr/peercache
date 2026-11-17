@@ -1237,6 +1237,26 @@ sender moved about 400 a second over a real network, and a pod's 117,000
 strays took five minutes; at the queue's limit they take about thirty
 seconds.
 
+## Replica expiry — a sample, not every entry
+
+`BenchmarkSweepExpired`, Machine A, quiet (kind paused): one sweep of one
+namespace's replicas, none expired. Five runs each; medians, with the runs.
+
+| Replicas | Sweep | ns/op | lock held at once |
+|---|---|---|---|
+| 100,000 | every entry | 1,067,968 (1,062,138, 1,067,498, 1,067,968, 1,077,560, 1,115,072) | the whole sweep |
+| 100,000 | a 32nd, in chunks of 1,024 | 44,171 (43,782, 43,951, 44,171, 44,247, 44,853) | one chunk |
+| 1,000,000 | every entry | 19,189,045 (18,609,883, 19,139,625, 19,189,045, 19,390,420, 19,449,470) | the whole sweep |
+| 1,000,000 | a 32nd, in chunks of 1,024 | 600,087 (598,597, 600,087, 600,339, 605,880, 608,525) | one chunk |
+
+The sweep runs once a second. Visiting every entry, it held the namespace's
+lock for 19 ms a second at a million replicas, and every copy arriving
+for that namespace waited behind it. On kind, at 1.35 million replicas a pod,
+it was a quarter of the pod's CPU under load. A sweep now visits a 32nd of a
+large namespace, plus more while over a quarter of what it visits has expired,
+up to a quarter; `TestRepeatedSweepsReclaimEveryExpiredReplica` holds that the
+sample still finds every expired replica.
+
 ## A compressed write — framed once
 
 `BenchmarkPersistentSetCompressed`, Machine A: a persistent namespace with

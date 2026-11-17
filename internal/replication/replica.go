@@ -465,13 +465,48 @@ func DeadlineFrom(now, ttlNanos int64) int64 {
 	return now + ttlNanos
 }
 
-// SweepExpired removes every replica whose deadline has passed and returns how
-// many it removed.
+// Sweep sizing; see [Store.SweepExpired].
+const (
+	// SweepWholeBelow is the size under which a namespace is swept whole.
+	SweepWholeBelow = 4096
+	// SweepChunk is how many entries one hold of a namespace's lock visits.
+	SweepChunk = 1024
+	// SweepShare is the fraction of a namespace one sweep visits at least:
+	// one in SweepShare.
+	SweepShare = 32
+	// sweepMoreAbove is the expired share of a chunk, as one in
+	// sweepMoreAbove, above which a sweep goes on past its share.
+	sweepMoreAbove = 4
+	// sweepMostShare bounds one sweep at one in sweepMostShare entries,
+	// however many it finds expired.
+	sweepMostShare = 4
+)
+
+// SweepExpired removes replicas whose deadline has passed and returns how many
+// it removed and how many entries it visited. It visits a sample, not every entry: an expired replica is never
+// served — every read checks the deadline — so a sweep reclaims memory, and
+// can take its time.
 //
 // The owned store sweeps its own expired entries; until this existed nothing
 // swept replicas, so under a TTL workload every replica a node had ever held
 // stayed resident after its key expired everywhere else.
-func (s *Store) SweepExpired(now int64) int {
+//
+// # Why a sample
+//
+// It visited every entry, every second, with the namespace's lock held, which
+// every copy arriving for that namespace waits on. On kind at 1.35 million
+// replicas a pod that was a quarter of the pod's CPU and a stall of tens of
+// milliseconds a second for every replicated write, which as the store grew
+// was most of the throughput the shop lost.
+//
+// It is Redis's active expiry, shaped to a Go map. A namespace under
+// [SweepWholeBelow] entries is swept whole, as before. A larger one is visited
+// [SweepChunk] entries at a time, the lock released between chunks, until a
+// [SweepShare]th of it has been seen; and on while a chunk finds more than a
+// quarter of what it visits expired, up to a quarter of the namespace. A range
+// over a Go map starts at a random place, so each chunk is a fresh sample, and
+// an expired replica is found within a few dozen sweeps.
+func (s *Store) SweepExpired(now int64) (removed, visited int) {
 	s.mu.RLock()
 	namespaces := make([]*namespaceReplicas, 0, len(s.ns))
 	for _, nr := range s.ns {
@@ -479,17 +514,53 @@ func (s *Store) SweepExpired(now int64) int {
 	}
 	s.mu.RUnlock()
 
-	removed := 0
 	for _, nr := range namespaces {
-		nr.mu.Lock()
-		for key, e := range nr.entries {
-			if !e.Live(now) {
-				nr.del(key)
-				s.bytes.Add(-size(key, e))
-				removed++
-			}
-		}
+		r, v := s.sweepNamespace(nr, now)
+		removed += r
+		visited += v
+	}
+	return removed, visited
+}
+
+// sweepNamespace is SweepExpired for one namespace.
+func (s *Store) sweepNamespace(nr *namespaceReplicas, now int64) (removed, visited int) {
+	nr.mu.Lock()
+	held := len(nr.entries)
+	if held < SweepWholeBelow {
+		removed = s.sweepChunk(nr, now, held)
 		nr.mu.Unlock()
+		return removed, held
+	}
+	nr.mu.Unlock()
+
+	share, most := held/SweepShare, held/sweepMostShare
+	for visited < most {
+		nr.mu.Lock()
+		found := s.sweepChunk(nr, now, SweepChunk)
+		nr.mu.Unlock()
+		removed += found
+		visited += SweepChunk
+		if visited >= share && found*sweepMoreAbove <= SweepChunk {
+			break
+		}
+	}
+	return removed, visited
+}
+
+// sweepChunk visits up to n entries from wherever the map's range starts and
+// removes the expired ones. Callers hold mu.
+func (s *Store) sweepChunk(nr *namespaceReplicas, now int64, n int) int {
+	removed, seen := 0, 0
+	for key, e := range nr.entries {
+		if seen == n {
+			break
+		}
+		seen++
+		if !e.Live(now) {
+			nr.del(key)
+			s.bytes.Add(-size(key, e))
+			removed++
+		}
 	}
 	return removed
 }
