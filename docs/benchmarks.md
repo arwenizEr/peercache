@@ -1231,16 +1231,19 @@ queued for its peer, up to 4,096, in one message per namespace.
 
 `BenchmarkSyncSetOverGRPC`, Machine A: three caches over real gRPC on
 loopback, an RF=3 namespace with synchronous replication, the writer writing
-4,096 keys it owns in rotation. Five runs each, taken while the race gate ran
-on the same machine; medians, with the runs.
+4,096 keys it owns in rotation. Five runs each on a quiet machine; medians,
+with the runs.
 
 | Copies | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| one target after another | 374,683 (206,771, 306,583, 374,683, 375,292, 391,232) | 60,500 | 830 |
-| every target at once | 233,896 (159,474, 228,908, 233,896, 234,581, 245,127) | 47,534 | 647 |
+| one target after another | 386,024 (375,347, 385,161, 386,024, 388,890, 401,577) | 61,414 | 838 |
+| every target at once | 239,632 (227,486, 232,664, 239,632, 240,763, 263,664) | 60,355 | 827 |
 
 About one round trip instead of two. The bytes and allocations per write are
-the next thing to look at: most of them are per call, not per copy.
+the next thing to look at: most of them are per call, not per copy. They also
+count what the three nodes do in the background meanwhile, spread over the
+writes: a first run taken while the race gate loaded the machine reported
+647 allocations for the same code, and is not used.
 
 ## What the test suite itself costs
 

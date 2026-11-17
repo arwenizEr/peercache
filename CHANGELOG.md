@@ -42,8 +42,8 @@ change the public API.
 - A write sends its replica copies to every target at once, instead of one
   after another. A synchronous write at replication factor 3 waited two round
   trips, and its second replica waited out the first's timeout when the first
-  did not answer; over gRPC on loopback such a write went from about 375 µs
-  to about 234 µs. One key's copies still leave in order.
+  did not answer; over gRPC on loopback such a write went from about 386 µs
+  to about 240 µs. One key's copies still leave in order.
 - A tick reconciles replicas only when something may be out of place: for ten
   seconds after a membership view, or after a copy arrived where this node's
   ranking does not put it, a hand-off put one back, a pass left work behind,
