@@ -1217,6 +1217,26 @@ through a backlog of strays, and the shop's throughput at 3.2 million keys
 went from 25,731 and 28,615 orders a run to 69,749 and 73,160
 (docs/m16-results.md).
 
+## A backlog of strays — handed on in parallel
+
+`BenchmarkStrayBacklogOverGRPC`, Machine A, quiet (kind paused): three caches
+over real gRPC on loopback, an RF=2 namespace, 20,000 out-of-place copies
+filed at the node that ranks for none of them. ns/op is from the first copy
+sent to the last handed on, over the copies. Five runs of `-benchtime 20000x`;
+medians, with the runs.
+
+| Hand-off senders | ns/op | copies a second |
+|---|---|---|
+| 1 | 335,933 (321,843, 323,865, 335,933, 347,436, 364,469) | about 3,000 |
+| 8 | 200,201 (195,465, 199,825, 200,201, 200,205, 200,319) | about 5,000 |
+
+Eight senders reach the next limit, which is why their runs barely spread:
+reconciliation drains no more than the queue's 4,096 a tick, so a backlog
+moves at most about 4,096 a second, and 20,000 take five ticks. On kind, one
+sender moved about 400 a second over a real network, and a pod's 117,000
+strays took five minutes; at the queue's limit they take about thirty
+seconds.
+
 ## A compressed write — framed once
 
 `BenchmarkPersistentSetCompressed`, Machine A: a persistent namespace with

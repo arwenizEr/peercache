@@ -28,6 +28,12 @@ change the public API.
   about one run in twenty, on main since v1.0.0;
   `TestADemotedCopyNamesNoWriterItDidNotWrite` reproduces it every run.
 
+- Out-of-place copies are handed on by eight senders instead of one. One
+  moved a copy per round trip to each new holder: on kind about 400 a second,
+  five minutes for the 117,000 strays a rolling restart left on one pod. A
+  backlog now moves at the queue's limit of 4,096 a tick.
+  `TestHandOffsRunInParallel`, `BenchmarkStrayBacklogOverGRPC`.
+
 ### Added
 
 - `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that
