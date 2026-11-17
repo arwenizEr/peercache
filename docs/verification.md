@@ -688,6 +688,8 @@ caught   a replica-read copy outlives its key                               -- T
 caught   a batch load drops keys that moved                                 -- TestACallerAsksAgainForMisroutedKeys
 caught   a fresh node first advertises no RPC address                       -- TestTheFirstAliveMessageAdvertisesTheRPCAddress
 caught   partitions restore one at a time                                   -- TestPartitionsRestoreInParallel
+caught   every partition reads every log for itself                         -- TestARestoreReadsEachLogOnce
+caught   compaction reads a partition before counting its segments          -- TestACompactionUnderItsThresholdReadsNothing
 caught   async fan-out sends one copy at a time                             -- TestAsyncFanOutRunsInParallel
 caught   one key's async copies travel on several senders                   -- TestAsyncFanOutKeepsOneKeysWritesInOrder
 caught   an idle tick reconciles in full                                    -- TestAnIdleTickDoesNotReconcile

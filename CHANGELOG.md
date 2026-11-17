@@ -15,6 +15,17 @@ change the public API.
   entry they sent and compressed it again, although the stored form is what
   the receiver stores. A persistent `Set` of a 1 KiB value with LZ4 went from
   9 allocations and about 4,080 bytes to 5 and about 1,650.
+- A persistent namespace reads far less from its store. Every partition's
+  restore read every unsplit log of the namespace, because logs hold records
+  of every partition: a restore of 64 partitions read each log 64 times. Now
+  the first scan to want a log reads it once and cuts it by partition, and
+  the scans after it take their share, until a listing no longer shows the
+  log or, at the split interval, no scan is under way; at most 16 MiB of
+  records per namespace, outside the memory budget, past which a log is read
+  for the scan that asked and not kept. And compaction, which once a minute
+  read each partition a node compacts in full — snapshots, segments and every
+  log — before seeing it had fewer than eight segments, now counts them from
+  the listing first and reads nothing below the threshold.
 - A tick reconciles replicas only when something may be out of place: for ten
   seconds after a membership view, or after a copy arrived where this node's
   ranking does not put it, a hand-off put one back, a pass left work behind,

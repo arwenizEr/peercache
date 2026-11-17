@@ -158,7 +158,34 @@ type persister struct {
 	rclosed         bool
 	restored        atomic.Int64
 	restoreFailures atomic.Int64
+
+	// logMu guards logs, logBytes and logUsers: the unsplit logs scans have
+	// read, decoded and cut by partition, shared by the scans after them,
+	// and how many scans and restores are under way. See logRecords.
+	logMu    sync.Mutex
+	logs     map[string]*logEntry
+	logBytes int
+	logUsers int
 }
+
+// logEntry is one unsplit log as scans share it: its records by partition,
+// or why it could not be read.
+type logEntry struct {
+	ready chan struct{} // closed once parts or err is set
+	parts [persistPartitions][]segment.Record
+	bytes int
+	err   error
+}
+
+// persistLogCacheBytes bounds the records the shared logs hold. Past it a
+// log is read for the scan that asked and not kept: the restore is no worse
+// than before the cache, one read of the log per partition.
+//
+// The memory budget does not count these bytes, which is why the bound is
+// small: logs are what the splitter has not moved yet, a few seconds of the
+// cluster's distinct keys written to the namespace, which past this bound
+// are better read again than held. Per persistent namespace.
+const persistLogCacheBytes = 16 << 20
 
 func newPersister(ns *namespace, store core.BlobStore) *persister {
 	p := &persister{
@@ -296,6 +323,7 @@ func (p *persister) maintain(compact, split clock.Ticker) {
 			p.compactOwned(ctx)
 			cancel()
 		case <-split.C():
+			p.dropIdleLogs()
 			if p.splitsLogs() {
 				ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
 				if err := p.split(ctx); err != nil {
@@ -569,6 +597,9 @@ var errPartitionUnrestored = errors.New("peercache: partition not restored from 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
 	defer p.rwg.Done()
+	// From before the slot is taken: restores queued behind the slots keep
+	// the logs that the ones running have read.
+	defer p.useLogs()()
 	ctx, cancel := clock.WithTimeout(p.rctx, p.clk, persistFlushTimeout)
 	err := p.restore(ctx, part)
 	cancel()
@@ -727,6 +758,7 @@ type scanned struct {
 // (decision 0030). They are not counted in merged or segments: compaction
 // neither folds nor deletes them, the splitter does.
 func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
+	defer p.useLogs()()
 	prefix := partitionPrefix(p.ns.name, part)
 	sc := &scanned{newest: map[string]*segment.Record{}}
 	merge := func(f *segment.File) {
@@ -801,11 +833,12 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 		if err != nil {
 			return nil, fmt.Errorf("peercache: listing the logs of %q: %w", p.ns.name, err)
 		}
+		p.pruneLogs(logs)
 		for _, name := range logs {
 			if loaded[name] {
 				continue
 			}
-			f, err := p.load(ctx, name)
+			records, err := p.logRecords(ctx, name, part)
 			if gone(err) {
 				vanished = true
 				continue
@@ -814,14 +847,7 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 				return nil, err
 			}
 			loaded[name] = true
-			kept := f.Records[:0]
-			for _, r := range f.Records {
-				if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
-					kept = append(kept, r)
-				}
-			}
-			f.Records = kept
-			merge(f)
+			merge(&segment.File{Records: records})
 		}
 		if !vanished {
 			return sc, nil
@@ -837,6 +863,136 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 // under it. Each pass reads only what is new, so it is cheap; the bound is for
 // a store that lists objects it cannot return.
 const scanPasses = 16
+
+// logRecords returns the records of the unsplit log name that fall in part.
+//
+// Logs hold records for every partition, so every partition's scan reads
+// every log. Read separately that was each log fetched and decoded once per
+// partition: a restore of all 64 after a membership change, with a few
+// hundred logs waiting for the splitter, made tens of thousands of reads of
+// the same few hundred objects. So the first scan to want a log reads it once
+// and cuts it by partition, and every scan running meanwhile takes its share
+// from that, and so does every scan after it until the log is gone.
+//
+// A log is immutable until the splitter deletes it, and a deleted log's
+// records are in the partition segments a scan lists as well, so a kept copy
+// is never wrong, only spare. Kept logs are dropped when a listing no longer
+// shows them (pruneLogs), and all of them at the split interval when no scan
+// or restore is under way (dropIdleLogs): a node that stopped restoring holds
+// none for longer than that.
+func (p *persister) logRecords(ctx context.Context, name string, part int) ([]segment.Record, error) {
+	p.logMu.Lock()
+	e := p.logs[name]
+	if e == nil {
+		e = &logEntry{ready: make(chan struct{})}
+		if p.logs == nil {
+			p.logs = map[string]*logEntry{}
+		}
+		p.logs[name] = e
+		p.logMu.Unlock()
+
+		f, err := p.load(ctx, name)
+		if err == nil {
+			for _, r := range f.Records {
+				i := persistPartition(p.ns.groupKeyFor(r.Key))
+				e.parts[i] = append(e.parts[i], r)
+				e.bytes += recordSize(&r)
+			}
+		}
+		p.logMu.Lock()
+		e.err = err
+		if p.logs[name] == e {
+			if err != nil || p.logBytes+e.bytes > persistLogCacheBytes {
+				// Failed — perhaps on this caller's context alone — or
+				// over the bound: the next asker reads it for itself.
+				delete(p.logs, name)
+			} else {
+				p.logBytes += e.bytes
+			}
+		}
+		p.logMu.Unlock()
+		close(e.ready)
+	} else {
+		p.logMu.Unlock()
+	}
+
+	select {
+	case <-e.ready:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if e.err != nil {
+		if errors.Is(e.err, ErrNotFound) {
+			return nil, e.err
+		}
+		// Another scan's failure, maybe its deadline: try for this one.
+		return p.loadLogPart(ctx, name, part)
+	}
+	return e.parts[part], nil
+}
+
+// loadLogPart reads the log name for one scan alone and keeps part's records.
+func (p *persister) loadLogPart(ctx context.Context, name string, part int) ([]segment.Record, error) {
+	f, err := p.load(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	kept := f.Records[:0]
+	for _, r := range f.Records {
+		if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
+			kept = append(kept, r)
+		}
+	}
+	return kept, nil
+}
+
+// useLogs marks a scan or restore under way, which keeps dropIdleLogs from
+// dropping the logs it reads, and returns the function that ends it.
+func (p *persister) useLogs() (done func()) {
+	p.logMu.Lock()
+	p.logUsers++
+	p.logMu.Unlock()
+	return func() {
+		p.logMu.Lock()
+		p.logUsers--
+		p.logMu.Unlock()
+	}
+}
+
+// pruneLogs drops the kept logs a listing of them no longer shows: split and
+// deleted. A listing older than a log just read drops it too, which costs that
+// log one more read.
+func (p *persister) pruneLogs(listed []string) {
+	p.logMu.Lock()
+	defer p.logMu.Unlock()
+	if len(p.logs) == 0 {
+		return
+	}
+	present := make(map[string]struct{}, len(listed))
+	for _, name := range listed {
+		present[name] = struct{}{}
+	}
+	for name, e := range p.logs {
+		if _, ok := present[name]; ok {
+			continue
+		}
+		select {
+		case <-e.ready:
+			p.logBytes -= e.bytes
+			delete(p.logs, name)
+		default: // still being read; its reader accounts for it
+		}
+	}
+}
+
+// dropIdleLogs drops every kept log when no scan or restore is under way.
+func (p *persister) dropIdleLogs() {
+	p.logMu.Lock()
+	defer p.logMu.Unlock()
+	if p.logUsers == 0 {
+		p.logs, p.logBytes = nil, 0
+	}
+}
 
 func (p *persister) load(ctx context.Context, name string) (*segment.File, error) {
 	data, err := p.store.Get(ctx, name)
@@ -936,6 +1092,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 // compactOwned compacts every partition this node is the compactor for that
 // has collected enough segments.
 func (p *persister) compactOwned(ctx context.Context) {
+	defer p.useLogs()() // the partitions compacted this round read the logs once
 	for part := 0; part < persistPartitions; part++ {
 		if ctx.Err() != nil {
 			return
@@ -966,6 +1123,26 @@ func (p *persister) compactsPartition(part int) bool {
 // least threshold segments are uncovered, then deletes what it folded.
 func (p *persister) compact(ctx context.Context, part, threshold int) error {
 	prefix := partitionPrefix(p.ns.name, part)
+	// Counted from the listing before anything is read. Every node looks at
+	// the partitions it compacts once a minute, and most minutes most of
+	// them are under the threshold; reading each in full — its snapshots,
+	// its segments and every unsplit log — to learn that was a minute's
+	// worth of a partition's reads, per partition, for nothing. A segment
+	// already covered by a snapshot is counted here too, so this can only
+	// read more often than needed, never less; the scan's count decides.
+	names, err := p.store.List(ctx, prefix)
+	if err != nil {
+		return fmt.Errorf("peercache: listing %s: %w", prefix, err)
+	}
+	listed := 0
+	for _, name := range names {
+		if strings.HasPrefix(name[len(prefix):], "seg-") {
+			listed++
+		}
+	}
+	if listed < threshold {
+		return nil
+	}
 	sc, err := p.scan(ctx, part)
 	if err != nil {
 		return err

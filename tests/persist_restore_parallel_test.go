@@ -33,6 +33,11 @@ func TestPartitionsRestoreInParallel(t *testing.T) {
 		}
 	}
 	flushAll(t, f)
+	// Split, so each partition's records are in its own segments. Unsplit,
+	// every partition reads the same few logs, and those are read once and
+	// shared (TestARestoreReadsEachLogOnce): the restores would all wait on
+	// one read, and how many run at once would not show at the store.
+	splitAll(t, f)
 
 	owner := f.ids[0]
 	mine := keysOwnedBy(t, f, owner, keys)
@@ -56,4 +61,19 @@ func TestPartitionsRestoreInParallel(t *testing.T) {
 	waitFor(t, "two partitions' restores to be reading storage at once", func() bool {
 		return store.waiting.Load() >= 2
 	})
+}
+
+// splitAll advances past a split interval and waits for the namespace's
+// splitter, whichever node it is, to finish a split.
+func splitAll(t *testing.T, f *fabric) {
+	t.Helper()
+	splits := func() (n int64) {
+		for _, id := range f.live() {
+			n += f.caches[id].Stats().PersistSplits
+		}
+		return n
+	}
+	before := splits()
+	f.clk.Advance(splitInterval)
+	waitFor(t, "a split", func() bool { return splits() > before })
 }
