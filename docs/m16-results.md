@@ -70,8 +70,34 @@ the same cluster earlier the same day, before #89, the first run dropped
 about 5,300. v1.0.0 dropped about 250,000 a run in steady state (fixed by #85),
 so this is not a regression against the last release. No acknowledged write
 was lost: the persistent namespaces replicate synchronously and are in
-MinIO. To fix next: restored keys on a queue of their own that yields to live
-writes.
+MinIO. Fixed after v1.1.0: restored keys have a queue and senders of their
+own, and their drops are counted apart (`restoreReplicationsDropped`);
+`TestARestoreDoesNotCrowdOutLiveReplication` holds it.
+
+### The fix on kind, and a cliff past 2.6 million keys — open
+
+The same procedure with the fix (c4bdb82) accumulated five more runs on top,
+to about 597,000 owned keys and 1.2 million replicas a pod — some 3 million in
+MinIO. It did not show the fix either way: by the measured runs the restores
+had finished during the warm-up, and `restoreReplicationsDropped` stayed 0.
+It showed something else:
+
+| Build, same cluster | Orders, two steady runs | epochSkew a run | Rehomed + evicted a run | Promotion rounds a run |
+|---|---|---|---|---|
+| fix (c4bdb82), after the restart | 6,819 · 8,437 | 17,000–70,000 per pod | ~60,000 | ~470 |
+| v1.1.0 (1153e3d), redeployed on it | 25,731 · 28,615 | 248,783 · 275,237 (sum) | 131,994 · 197,922 | 392 · 471 |
+
+No order was lost in either. Both builds collapse alike, so the data, not the
+fix, is the cause: at 2.6 million keys the same cluster ran 108,000 to 120,000
+orders a minute with no churn. Membership stays at five, but the pods' views
+of it keep diverging (`epochSkew`), each new view opens a reconciliation
+window, and replicas move back and forth — about two promotion rounds a second
+on four of the five pods. The pods' logs show catch-up of `orders` timing out
+again and again ("catch-up incomplete, will retry: context deadline
+exceeded") and peer connections dropping. The suspicion is a loop: catch-up
+and reconciliation over 1.8 million entries a pod saturate it, gossip probes
+arrive late, a peer is suspected and refutes, the view moves, and the next
+reconciliation starts. To find next, on a cluster that reproduces it.
 
 ## v1.0.0 candidates (2026-11-16), accumulated data
 
