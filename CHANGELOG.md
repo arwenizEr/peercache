@@ -7,6 +7,19 @@ change the public API.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-17
+
+Throughput and operations: fewer requests to the object store, fewer
+messages between peers, faster synchronous writes and restarts, and the
+deployment failures a staff review found — a crash loop on a slow start, a
+crashed pod refused for thirty seconds, a cold start serialised pod by pod.
+No API change; the wire format gains one field, which v1.0 peers ignore.
+Checked for this release: the full mutation audit (every entry caught, after
+retargeting what this release moved), the race-enabled suite, the
+cross-version job against v1.0.0, and the six M16 scenarios on kind with no
+acknowledged write lost, then the same cluster on accumulated data
+(docs/m16-results.md).
+
 ### Changed
 
 - A cache reads its node's ID from membership once, when it is made, instead
@@ -507,7 +520,8 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/arwenizEr/peercache/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/arwenizEr/peercache/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/arwenizEr/peercache/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/arwenizEr/peercache/compare/v0.2.1...v0.2.2

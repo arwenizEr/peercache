@@ -23,6 +23,56 @@ reads), MinIO, 32 load-generator workers.
 - **Forks:** `peercache_split_brain_detections_total`, summed over the pods at
   the check. A pod the scenario restarted reports only what it counted since.
 
+## v1.1.0 candidate (2026-11-17, main at 1cce4a4)
+
+### The six scenarios, on the data earlier runs left
+
+`up.sh` from main, then `scenarios.sh`. MinIO was not emptied: it held what
+two days of runs had written.
+
+| Scenario | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks |
+|---|---|---|---|---|---|
+| steady | 112,287 | 0 | 0 | 50 / 0 / 0 | 0 |
+| kill9 | 156,214 | 0 | 43 | 48 / 2 / 0 | 0 |
+| rolling | 249,989 | 0 | 382 | 36 / 14 / 0 | 0 |
+| partition | 130,508 | 0 | 231 | 38 / 12 / 0 | 1 |
+| coldstart | 35,540 | 0 | 0 | 50 / 0 / 0 | 0 |
+| minio, and the cold start after it | 219,011 | 0 | 0 | 50 / 0 / 0 | 0 |
+
+The partition's fork is the documented window — two activations of a group
+while gossip disagrees, detected by epoch, not prevented — and this run's
+writes raced inside it once; stock stayed within uncertainty. The v1.0.0
+candidates on accumulated data managed 6,000 to 17,000 orders in the
+scenarios that restart pods; restores now run in parallel (#81), read each
+log once (#89) and a quiet tick no longer reconciles (#86).
+
+### Accumulated data, then every pod restarted
+
+Five steady runs to accumulate (109,059 to 120,086 orders each, none lost),
+leaving each pod about 517,000 owned keys and 910,000 replicas — about 2.6
+million keys in MinIO. Then `rollout restart`, three minutes with no load,
+and steady twice:
+
+| Run | Orders | Lost | replicationsDropped |
+|---|---|---|---|
+| first after the restart | 111,755 | 0 | 224,622 |
+| second | 108,225 | 0 | 5,292 |
+
+**Open: a restore's fan-out starves live asynchronous replication.** 219,224
+of the first run's drops were on shop-4, which restored 248,997 keys in that
+minute — the first pod the rollout restarted, it sees four more membership
+views, and with no load during the warm-up its partitions restore when traffic
+first touches them. Every restored key is sent to its replicas through the
+same 4,096-entry asynchronous queue as live writes (`replicateRestored`), so
+the burst overflows it and drops restored copies and live asynchronous
+copies alike. Faster restores (#89) made the burst shorter and sharper; on
+the same cluster earlier the same day, before #89, the first run dropped
+about 5,300. v1.0.0 dropped about 250,000 a run in steady state (fixed by #85),
+so this is not a regression against the last release. No acknowledged write
+was lost: the persistent namespaces replicate synchronously and are in
+MinIO. To fix next: restored keys on a queue of their own that yields to live
+writes.
+
 ## v1.0.0 candidates (2026-11-16), accumulated data
 
 ### First candidate, ec5836b: two scenarios lost orders
