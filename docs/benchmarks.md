@@ -1227,6 +1227,20 @@ front of the single sender overflowed almost at once and the sentinel's own
 hint was dropped, so each run waited out the sentinel's five-second L1 TTL:
 that, not the writes, is the 248 µs. After, a sender carries every hint
 queued for its peer, up to 4,096, in one message per namespace.
+## A synchronous write — copies at once
+
+`BenchmarkSyncSetOverGRPC`, Machine A: three caches over real gRPC on
+loopback, an RF=3 namespace with synchronous replication, the writer writing
+4,096 keys it owns in rotation. Five runs each, taken while the race gate ran
+on the same machine; medians, with the runs.
+
+| Copies | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| one target after another | 374,683 (206,771, 306,583, 374,683, 375,292, 391,232) | 60,500 | 830 |
+| every target at once | 233,896 (159,474, 228,908, 233,896, 234,581, 245,127) | 47,534 | 647 |
+
+About one round trip instead of two. The bytes and allocations per write are
+the next thing to look at: most of them are per call, not per copy.
 
 ## What the test suite itself costs
 
