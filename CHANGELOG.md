@@ -13,6 +13,18 @@ change the public API.
   of on every use. `Self` clones the whole node, metadata map included, and
   fifty writes and reads on three nodes asked for it 552 times; over gRPC
   those clones were 7% of a synchronous write's allocations.
+- `membership.New` sets memberlist's `DeadNodeReclaimTime` to one second when
+  the configuration leaves it at zero, which memberlist reads as never. A
+  node that crashed and came back under the same name from a new address —
+  a StatefulSet pod rescheduled after a crash — was refused as a conflicting
+  address until the dead node was forgotten, thirty seconds later on the LAN
+  profile; now it rejoins on its next join attempt a second after its peers
+  declare it dead.
+- The deploy manifests add a `startupProbe`, a `PodDisruptionBudget` of one,
+  and, for the StatefulSet, `podManagementPolicy: Parallel`;
+  `deploy/README.md` has a sixth thing that must be right, on slow starts.
+  `examples/shop` serves its probe endpoints before waiting for its blob
+  store, so a store down at start no longer crash-loops it.
 - A write to a compressed namespace compresses its value once. `Set` framed
   it three times — for the owned store, the persister and the replica fan-out,
   which all keep the same bytes — and catch-up and `Drain` decompressed every

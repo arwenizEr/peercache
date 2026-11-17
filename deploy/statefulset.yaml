@@ -6,7 +6,7 @@
 # back exactly what it had; with random names it is a departure plus an
 # unrelated arrival, which is two rebalances instead of none.
 #
-# See deploy/README.md for the three things that must be right.
+# See deploy/README.md for the six things that must be right.
 ---
 # The headless service is how peers find each other.
 #
@@ -68,9 +68,18 @@ spec:
   selector:
     matchLabels:
       app: app
-  # Rolling updates one pod at a time. Parallel replacement would take out more
-  # than the replication factor tolerates.
-  podManagementPolicy: OrderedReady
+  # Parallel governs creating and deleting pods — the first start, a scale, a
+  # whole cluster coming back after a node pool upgrade — not updates. With
+  # OrderedReady each pod waited for the one before it to be Ready, and Ready
+  # here means joined and caught up: a cold start of N pods took N catch-ups
+  # in a row, and one pod that could not become ready (a store down at
+  # start) held every pod after it uncreated. Peers find each other through
+  # the headless service, which lists unready pods, so they can all start at
+  # once.
+  podManagementPolicy: Parallel
+  # Rolling updates still replace one pod at a time, highest ordinal first,
+  # each after the one before is Ready: that is updateStrategy, and Parallel
+  # does not change it.
   updateStrategy:
     type: RollingUpdate
   template:
@@ -154,6 +163,19 @@ spec:
             periodSeconds: 10
             failureThreshold: 6
 
+          # Holds liveness off until the process has started at all: opened its
+          # namespaces, restored what persistence brings back, reached its
+          # blob store. That can take minutes when the store is slow or down,
+          # and liveness alone would kill the pod a minute in, every time — a
+          # crash loop out of a slow start. Ten minutes here; measure yours.
+          # Serve /healthz before that work, not after it (examples/shop).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+
           lifecycle:
             preStop:
               httpGet:
@@ -173,17 +195,18 @@ spec:
           #   requests: {memory: 2Gi, cpu: 500m}
           #   limits:   {memory: 4Gi}
 ---
-# Recommended, not included by default: how much of the cluster may be
-# unavailable at once. At replication factor 2 that is one pod; at 3 it is two.
-# It is a decision about your tolerance for the loss window rather than a
-# default, which is why it is commented out.
-#
-# apiVersion: policy/v1
-# kind: PodDisruptionBudget
-# metadata:
-#   name: app
-# spec:
-#   maxUnavailable: 1
-#   selector:
-#     matchLabels:
-#       app: app
+# How much of the cluster a voluntary disruption — a node drain, a cluster
+# upgrade — may take at once. Without one, draining a node evicts every pod on
+# it together, and two draining at once at replication factor 2 can hand a
+# key's copies to each other and both stop. One is right at RF 2; RF 3 tolerates two, if you can tolerate
+# the loss window that leaves. It does not cover crashes, which are not
+# voluntary.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: app
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: app

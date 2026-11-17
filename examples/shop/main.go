@@ -118,27 +118,13 @@ func run(cfg config) error {
 	if err != nil {
 		return err
 	}
-	// Namespaces first, then the cluster. A node that joins before opening
-	// them is written to by its peers for namespaces it has no options for;
-	// the library refuses those requests until it opens them, and before
-	// that it created them with defaults: no replication, no persistence. On
-	// kind a pod restarted while MinIO was unreachable, waited for the bucket
-	// here after joining, and lost its share of every acknowledged order
-	// (docs/decisions/open.md question 32). Catch-up also waits: it pulls
-	// only for namespaces that are open.
-	store, err := blobStore(cfg)
-	if err != nil {
-		return err
-	}
-	s, err := newShop(cache, store)
-	if err != nil {
-		return err
-	}
-	go joinLoop(gossip, cfg)
-	go catchUpLoop(cache)
-
+	// The probes' endpoints first, before anything that can wait. Waiting
+	// for the bucket can take minutes when the store is down, and with
+	// nothing listening the liveness probe killed the pod a minute in: a
+	// store outage at start became a crash loop, each restart waiting for
+	// the bucket again. Listening, the pod is alive and, until it has joined
+	// and caught up, unready (/healthz is cache.Ready), which is the truth.
 	mux := http.NewServeMux()
-	s.routes(mux)
 	mux.Handle("GET /metrics", cache.MetricsHandler())
 	mux.Handle("/debug/peercache/", http.StripPrefix("/debug/peercache", cache.DebugHandler()))
 	// Profiles, because M16 is where the library first runs at a scale whose
@@ -158,6 +144,29 @@ func run(cfg config) error {
 
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
+
+	// Namespaces first, then the cluster. A node that joins before opening
+	// them is written to by its peers for namespaces it has no options for;
+	// the library refuses those requests until it opens them, and before
+	// that it created them with defaults: no replication, no persistence. On
+	// kind a pod restarted while MinIO was unreachable, waited for the bucket
+	// here after joining, and lost its share of every acknowledged order
+	// (docs/decisions/open.md question 32). Catch-up also waits: it pulls
+	// only for namespaces that are open.
+	store, err := blobStore(cfg)
+	if err != nil {
+		return err
+	}
+	s, err := newShop(cache, store)
+	if err != nil {
+		return err
+	}
+	// The shop's own routes once it exists. A ServeMux takes patterns while
+	// it serves; until now those paths answered 404 on a pod that was not
+	// ready, so no client was routed to them.
+	s.routes(mux)
+	go joinLoop(gossip, cfg)
+	go catchUpLoop(cache)
 	logf("shop %s serving on %s, peers on %s", cfg.nodeID, cfg.httpAddr, self.Addr)
 
 	sig := make(chan os.Signal, 1)

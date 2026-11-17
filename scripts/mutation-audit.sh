@@ -3219,6 +3219,14 @@ mutate "a node asks membership for its ID on every use" \
   'func (c *cache) selfID() string { return c.self().ID }' \
   'TestAWriteDoesNotAskMembershipWhoItIs$' ./tests
 
+# --- a dead node may rejoin under its name from a new address ---
+
+mutate "a dead node's name is never reclaimed" \
+  membership/gossip.go \
+  '	if cfg.DeadNodeReclaimTime == 0 {' \
+  '	if false {' \
+  'TestADeadNodeRejoinsUnderItsNameFromANewAddress$' ./membership
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

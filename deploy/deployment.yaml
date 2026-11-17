@@ -10,7 +10,7 @@
 # two rebalances where a StatefulSet would have none, because a stable name
 # hashes to the same place and reclaims the same share.
 #
-# See deploy/README.md for the three things that must be right.
+# See deploy/README.md for the six things that must be right.
 ---
 # Peer discovery. Headless so DNS returns every pod address: gossip seeding
 # needs to reach a specific peer, not whichever one a service IP picks.
@@ -143,6 +143,17 @@ spec:
             periodSeconds: 10
             failureThreshold: 6
 
+          # Holds liveness off while the process starts: opening namespaces,
+          # restoring what persistence brings back, reaching a blob store.
+          # Without it liveness kills a slow start a minute in, every time.
+          # See deploy/statefulset.yaml.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+
           lifecycle:
             preStop:
               httpGet:
@@ -160,3 +171,15 @@ spec:
           #   limits:   {memory: 4Gi}
           # env:
           #   - {name: GOMEMLIMIT, value: 3600MiB}
+---
+# How much of the cluster a voluntary disruption may take at once; see
+# deploy/statefulset.yaml.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: app
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: app
