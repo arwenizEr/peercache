@@ -7,6 +7,14 @@ change the public API.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-17
+
+One fix found by the v1.1.0 run on kind, and a test made deterministic.
+Checked: the race-enabled suite, the fix's mutation-audit entry, and kind on
+accumulated data with no acknowledged write lost (docs/m16-results.md, which
+also records a throughput cliff past about three million keys that v1.1.0 shows
+equally and that this release does not address).
+
 ### Fixed
 
 - A restore's fan-out no longer crowds out live asynchronous replication.
@@ -531,7 +539,8 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/arwenizEr/peercache/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/arwenizEr/peercache/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/arwenizEr/peercache/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/arwenizEr/peercache/compare/v0.2.2...v0.3.0
