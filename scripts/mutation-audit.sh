@@ -3100,6 +3100,20 @@ mutate "partitions restore one at a time" \
   'const restoreParallelism = 1' \
   'TestPartitionsRestoreInParallel$' ./tests
 
+# --- a restore reads each log once; compaction counts before it reads ---
+
+mutate "every partition reads every log for itself" \
+  persistence.go \
+  'records, err := p.logRecords(ctx, name, part)' \
+  'records, err := p.loadLogPart(ctx, name, part)' \
+  'TestARestoreReadsEachLogOnce$' ./tests
+
+mutate "compaction reads a partition before counting its segments" \
+  persistence.go \
+  '	if listed < threshold {' \
+  '	if listed < 0 {' \
+  'TestACompactionUnderItsThresholdReadsNothing$' ./tests
+
 # --- asynchronous fan-out runs several keys at once, one key in order ---
 
 mutate "async fan-out sends one copy at a time"   replicate.go   'const replicaWorkers = 8'   'const replicaWorkers = 1'   'TestAsyncFanOutRunsInParallel$' ./tests
