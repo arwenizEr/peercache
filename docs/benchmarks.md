@@ -1135,6 +1135,25 @@ store, not waiting on storage, is most of its cost. On kind this was the slow
 minute after each restart of a pod restoring about 400,000 keys
 (docs/m16-results.md).
 
+## Restore after a restart — each log read once
+
+`BenchmarkRestoreAfterRestart` again, Machine A, same method: three runs of
+`-benchtime 3x`, medians with the runs. The namespace is filled and closed
+without a split, so everything it holds is in unsplit logs, which every
+partition's restore reads.
+
+| Keys | Logs | Until every reader answers | First read p50 | First read max |
+|---|---|---|---|---|
+| 50,000 | read per partition | 263 ms (262, 263, 369) | 96 ms | 200 ms |
+| 50,000 | read once, shared | 70 ms (70, 70, 71) | 44 ms | 61 ms |
+| 200,000 | read per partition | 1,634 ms (1,606, 1,634, 1,641) | 567 ms | 1,199 ms |
+| 200,000 | read once, shared | 513 ms (419, 513, 554) | 245 ms | 420 ms |
+
+3.7× and 3.2×. The "per partition" rows are main at #88, not the rows above:
+encoding once and the quieter tick both landed in between. On an object
+store the saving is also in requests: each log is one GET per restore round
+rather than one per partition restored.
+
 ## Asynchronous fan-out — several keys at once
 
 `BenchmarkAsyncFanOutOverGRPC`, Machine A: three caches over real gRPC on
