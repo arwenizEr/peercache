@@ -125,9 +125,13 @@ type Stats struct {
 	// InvalidationsSent, InvalidationsDropped and InvalidationsFailed
 	// describe the best-effort invalidation broadcast.
 	//
-	// None of them is an error condition. Dropped counts hints discarded
-	// because the queue was full, which is the designed behaviour under
-	// write pressure; Failed counts peers that did not accept one. Both
+	// None of them is an error condition. Sent and Failed count messages
+	// to peers, and a message carries every hint queued for its peer and
+	// namespace, so under write pressure one message stands for many
+	// hints. Dropped counts hints discarded because a queue was full — the
+	// node's, once, or one peer's, once for that peer — which is the
+	// designed behaviour under write pressure; Failed counts messages a
+	// peer did not accept. Both
 	// mean some node will serve a stale copy until its TTL expires, which
 	// is the documented bound: correctness never depends on an
 	// invalidation arriving. They are

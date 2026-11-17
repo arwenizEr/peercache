@@ -367,6 +367,17 @@ type InvalidateRequest struct {
 	// cached copy only if what it holds is older, so an invalidation that
 	// arrives late cannot evict a value that is newer than it.
 	Stamp Stamp `msgpack:"stamp"`
+	// Entries are more keys of the same namespace, each with its own stamp:
+	// the hints a sender batched into one message. A release before them
+	// reads Keys and Stamp alone and ignores the rest, so a sender puts one
+	// hint there and the others here.
+	Entries []InvalidateEntry `msgpack:"entries"`
+}
+
+// InvalidateEntry is one key of an [InvalidateRequest] with its own stamp.
+type InvalidateEntry struct {
+	Key   string `msgpack:"key"`
+	Stamp Stamp  `msgpack:"stamp"`
 }
 
 // InvalidateResponse is empty.

@@ -177,14 +177,15 @@ func FuzzDecodeEveryMessage(f *testing.F) {
 		// received, which is the length-prefix defect and a remote OOM.
 		limit := len(data) + 1
 		for name, n := range map[string]int{
-			"BatchGetRequest.Keys":     len(bgReq.Keys),
-			"BatchGetResponse.Entries": len(bgResp.Entries),
-			"InvalidateRequest.Keys":   len(invReq.Keys),
-			"DescribeResponse.Digests": len(descResp.Digests),
-			"CatchUpResponse.Entries":  len(cuResp.Entries),
-			"SubmitRequest.Batches":    len(subReq.Batches),
-			"SubmitResponse.Failures":  len(subResp.Failures),
-			"GroupBatch.Messages":      len(batch.Messages),
+			"BatchGetRequest.Keys":      len(bgReq.Keys),
+			"BatchGetResponse.Entries":  len(bgResp.Entries),
+			"InvalidateRequest.Keys":    len(invReq.Keys),
+			"InvalidateRequest.Entries": len(invReq.Entries),
+			"DescribeResponse.Digests":  len(descResp.Digests),
+			"CatchUpResponse.Entries":   len(cuResp.Entries),
+			"SubmitRequest.Batches":     len(subReq.Batches),
+			"SubmitResponse.Failures":   len(subResp.Failures),
+			"GroupBatch.Messages":       len(batch.Messages),
 		} {
 			if n > limit {
 				t.Fatalf("%s decoded %d elements from %d bytes; the decoder sized "+

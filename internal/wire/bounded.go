@@ -207,8 +207,14 @@ func (r *BatchGetResponse) DecodeMsgpack(dec *msgpack.Decoder) error {
 }
 
 // EncodeMsgpack implements [msgpack.CustomEncoder].
+//
+// Without Entries it is the three fields every release reads, byte for byte.
 func (r InvalidateRequest) EncodeMsgpack(enc *msgpack.Encoder) error {
-	if err := enc.EncodeArrayLen(3); err != nil {
+	fields := 3
+	if len(r.Entries) > 0 {
+		fields = 4
+	}
+	if err := enc.EncodeArrayLen(fields); err != nil {
 		return err
 	}
 	if err := enc.EncodeString(r.Namespace); err != nil {
@@ -222,22 +228,101 @@ func (r InvalidateRequest) EncodeMsgpack(enc *msgpack.Encoder) error {
 			return err
 		}
 	}
-	return enc.Encode(&r.Stamp)
+	if err := enc.Encode(&r.Stamp); err != nil {
+		return err
+	}
+	if fields == 3 {
+		return nil
+	}
+	if err := enc.EncodeArrayLen(len(r.Entries)); err != nil {
+		return err
+	}
+	for i := range r.Entries {
+		if err := enc.EncodeArrayLen(2); err != nil {
+			return err
+		}
+		if err := enc.EncodeString(r.Entries[i].Key); err != nil {
+			return err
+		}
+		if err := enc.Encode(&r.Entries[i].Stamp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DecodeMsgpack implements [msgpack.CustomDecoder].
+//
+// Three fields are a request from a release before Entries, or one with none;
+// fields past the fourth are from a later release and are skipped.
 func (r *InvalidateRequest) DecodeMsgpack(dec *msgpack.Decoder) error {
-	if _, err := dec.DecodeArrayLen(); err != nil {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
 		return err
 	}
-	var err error
+	if n < 3 {
+		return fmt.Errorf("wire: an invalidate request of %d fields", n)
+	}
 	if r.Namespace, err = dec.DecodeString(); err != nil {
 		return err
 	}
 	if r.Keys, err = decodeStrings(dec); err != nil {
 		return err
 	}
-	return dec.Decode(&r.Stamp)
+	if err := dec.Decode(&r.Stamp); err != nil {
+		return err
+	}
+	if n >= 4 {
+		if r.Entries, err = decodeInvalidateEntries(dec); err != nil {
+			return err
+		}
+	}
+	for i := 4; i < n; i++ {
+		if err := dec.Skip(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// decodeInvalidateEntries reads a msgpack array of [key, stamp] pairs without
+// trusting its length, on the same rule as everything else in this file.
+func decodeInvalidateEntries(dec *msgpack.Decoder) ([]InvalidateEntry, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxSliceElements {
+		return nil, fmt.Errorf("wire: array of %d elements exceeds the %d cap: %w",
+			n, MaxSliceElements, core.ErrInvalidOption)
+	}
+	var out []InvalidateEntry
+	for i := 0; i < n; i++ {
+		m, err := dec.DecodeArrayLen()
+		if err != nil {
+			return nil, err
+		}
+		if m < 2 {
+			return nil, fmt.Errorf("wire: an invalidate entry of %d fields", m)
+		}
+		var e InvalidateEntry
+		if e.Key, err = dec.DecodeString(); err != nil {
+			return nil, err
+		}
+		if err := dec.Decode(&e.Stamp); err != nil {
+			return nil, err
+		}
+		for j := 2; j < m; j++ {
+			if err := dec.Skip(); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 // decodeMessages reads a msgpack array of byte strings without trusting its

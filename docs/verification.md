@@ -693,6 +693,9 @@ caught   compaction reads a partition before counting its segments          -- T
 caught   async fan-out sends one copy at a time                             -- TestAsyncFanOutRunsInParallel
 caught   one key's async copies travel on several senders                   -- TestAsyncFanOutKeepsOneKeysWritesInOrder
 caught   an idle tick reconciles in full                                    -- TestAnIdleTickDoesNotReconcile
+caught   a peer sender sends one round per message                          -- TestHintsQueuedTogetherShareMessages
+caught   a namespace without L1 sends hints                                 -- TestANamespaceWithoutL1SendsNoHints
+caught   a batched invalidation drops its entries                           -- TestHintsQueuedTogetherShareMessages
 caught   a stray replica is left for a membership change that never comes   -- TestAStrayReplicaIsHandedOnOnAQuietCluster
 caught   a hand-off backlog waits for a membership change                   -- TestAStrayBacklogLargerThanTheHandOffQueueIsHandedOn
 caught   a copy a hand-off puts back waits for a membership change          -- TestACopyAHandOffPutsBackIsTriedAgainOnAQuietCluster

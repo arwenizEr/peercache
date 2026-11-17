@@ -57,6 +57,13 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 		{"InvalidateRequest", &wire.InvalidateRequest{
 			Namespace: "n", Keys: []string{"x"}, Stamp: wire.Stamp{Epoch: 2, Version: 3},
 		}, func() any { return new(wire.InvalidateRequest) }},
+		{"InvalidateRequest batched", &wire.InvalidateRequest{
+			Namespace: "n", Keys: []string{"x"}, Stamp: wire.Stamp{Epoch: 2, Version: 3},
+			Entries: []wire.InvalidateEntry{
+				{Key: "y", Stamp: wire.Stamp{Epoch: 2, Version: 9}},
+				{Key: "z", Stamp: wire.Stamp{Epoch: 3, Version: 1}},
+			},
+		}, func() any { return new(wire.InvalidateRequest) }},
 		{"InvalidateResponse", &wire.InvalidateResponse{},
 			func() any { return new(wire.InvalidateResponse) }},
 		{"DescribeRequest", &wire.DescribeRequest{Digests: true},
@@ -266,7 +273,7 @@ func TestProtoDeclaresEveryMessage(t *testing.T) {
 		"CondSetRequest", "CondSetResponse", "IncrementRequest", "IncrementResponse",
 		"TouchRequest", "TouchResponse",
 		"BatchEntry", "CallRequest", "CallResponse", "InvalidateRequest",
-		"InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
+		"InvalidateEntry", "InvalidateResponse", "SubmitRequest", "SubmitResponse", "GroupBatch",
 		"GroupFailure", "DescribeRequest", "DescribeResponse", "NamespaceDigest",
 		"PartDigest",
 	}
@@ -299,7 +306,7 @@ func TestFieldNamesMatchTheProto(t *testing.T) {
 		&wire.ReplicaGetRequest{}, &wire.ReplicaGetResponse{},
 		&wire.SetRequest{}, &wire.SetResponse{}, &wire.DeleteRequest{},
 		&wire.BatchGetRequest{}, &wire.BatchGetResponse{}, &wire.BatchEntry{},
-		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{},
+		&wire.CallRequest{}, &wire.CallResponse{}, &wire.InvalidateRequest{}, &wire.InvalidateEntry{},
 		&wire.SubmitRequest{}, &wire.GroupBatch{}, &wire.GroupFailure{},
 		&wire.DescribeRequest{}, &wire.DescribeResponse{}, &wire.NamespaceDigest{}, &wire.PartDigest{},
 		&wire.LoadRequest{}, &wire.LoadResponse{}, &wire.ReplicateRequest{},
