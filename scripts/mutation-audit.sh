@@ -1134,12 +1134,27 @@ mutate "a hand-off that cannot be placed drops the copy" \
 # one counter the README says to investigate whenever it is non-zero.
 mutate "a hand-off claims to be the writer of what it forwards" \
   handoff.go \
-  'from := w.entry.From
-	if from == "" {
-		from = c.selfID()
-	}' \
+  'from := w.entry.From' \
   'from := c.selfID()' \
   'TestMajoritySideWritesSurviveAHeal$' ./tests
+
+# No entry for a hand-off filling in its own ID for a copy with no writer.
+# Reaching it takes a node that adopts a key, loses it, and then ranks for it
+# no longer — two view changes in a fixed order, which rendezvous ranking does
+# not produce from one. TestMajoritySideWritesSurviveAHeal reaches it in some
+# runs and not others, and an entry that passes when the run misses it is the
+# vacuous kind this script refuses.
+
+# Demotion names no writer: the owned store does not know one, and the
+# demoting node may have adopted the key rather than written it.
+mutate "a demoted copy names the demoting node as its writer" \
+  promote.go \
+  '			// carries no Prev either, so it was never judged one before.
+		})' \
+  '			// carries no Prev either, so it was never judged one before.
+			From: self,
+		})' \
+  'TestADemotedCopyNamesNoWriterItDidNotWrite$' ./tests
 
 # The degraded-write counter is the only signal separating a synchronous write
 # that placed RF copies from one that placed one. Question 37 is about it being
@@ -1456,8 +1471,8 @@ mutate "a fuzz pattern in CI goes back to being ambiguous" \
 # A derived figure in the operator-facing documentation, moved by one.
 mutate "the documented metric count drifts from the handler" \
   docs/api.md \
-  '64 series come out of it' \
-  '63 series come out of it' \
+  '66 series come out of it' \
+  '65 series come out of it' \
   'TestApiDocMetricCountsAreCorrect' ./tests/repo
 
 # A public-API file dropping out of the repository map, which is how twelve of
@@ -3114,8 +3129,8 @@ mutate "one key's async copies travel on several senders"   replicate.go   'case
 
 mutate "an idle tick reconciles in full" \
   promote.go \
-  'if p.dirty.Swap(false) || settling {' \
-  'if p.dirty.Swap(false) || settling || true {' \
+  'if p.dirty.Swap(false) {' \
+  'if true {' \
   'TestAnIdleTickDoesNotReconcile$' ./tests
 
 mutate "a stray replica is left for a membership change that never comes" \

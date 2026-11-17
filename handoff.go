@@ -157,22 +157,20 @@ func (h *handoff) run() {
 // first restores the replication factor in the same pass, which is what makes a
 // membership change self-healing instead of merely non-destructive.
 //
-// # Three of the restore paths here have no test, and this says which
+// # Two of the restore paths here have no test, and this says which
 //
 // `TestAHandOffThatCannotBePlacedKeepsTheCopy` covers the one that matters — a
-// peer that cannot be reached — and the three below are not covered:
+// peer that cannot be reached — and the two below are not covered:
 //
 //   - the namespace having disappeared. Namespaces are never removed, so this
 //     cannot happen today.
-//   - the entry carrying no From. Every path that files a replica sets it:
-//     replication, catch-up and drain all name their sender.
 //   - a full queue, in `enqueue`. It takes 4096 orphans outstanding at once.
 //
-// All three are guards on conditions the public API cannot currently produce,
-// and all three do the same thing as the covered path — put the copy back —
+// Both are guards on conditions the public API cannot currently produce,
+// and both do the same thing as the covered path — put the copy back —
 // which is why they are recorded here rather than reached through a test that
 // would have to contort the package to arrange them. Every root-package test is
-// an external one by convention, and breaking that for three defensive branches
+// an external one by convention, and breaking that for two defensive branches
 // is a worse trade than this paragraph.
 //
 // If a namespace ever becomes removable, the first of these stops being
@@ -206,12 +204,12 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 	// did not happen, and poison the one counter the README says deserves
 	// investigation whenever it is non-zero.
 	//
-	// The entry always has a From: it is in the replica store, so somebody
-	// sent it here.
+	// An empty From is passed on empty. It means the writer is unknown: a
+	// copy demoted from this node's owned store, which does not record who
+	// wrote a key it adopted or promoted (see promoter.demote). Naming this
+	// node instead was the very claim this paragraph warns against, made
+	// for the copies that had lost their writer.
 	from := w.entry.From
-	if from == "" {
-		from = c.selfID()
-	}
 	left, live := w.entry.Remaining(c.opts.Clock.Now().UnixNano())
 	if !live {
 		// Expired here, so expired on every other holder too: there is
