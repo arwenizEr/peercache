@@ -75,25 +75,29 @@ type invalidator struct {
 }
 
 // hintSender delivers hints to one peer, on its own goroutine, from its own
-// bounded queue: a peer that answers slowly or not at all backs up its own
-// queue, and the others' hints go on arriving.
+// buffer: a peer that answers slowly or not at all backs up its own buffer,
+// and the others' hints go on arriving.
 type hintSender struct {
-	rounds chan hintRound
+	mu sync.Mutex
+	// node is the peer at the address the latest round saw it at.
+	node core.Node
+	// pending is what waits for the peer, hints counts the keys in it, and
+	// closed is set when the peer leaves the view.
+	pending []invalidation
+	hints   int
+	closed  bool
+	// wake is signalled when pending grows or closed is set.
+	wake chan struct{}
 }
 
-// hintRound is what one pass of run took from the queue, for one peer at the
-// address the pass saw it at. The batch is shared by every peer's round and
-// read-only.
-type hintRound struct {
-	node  core.Node
-	batch []invalidation
-}
-
-// hintPeerQueue is how many rounds wait for one peer before its rounds are
-// dropped. A sender takes every round waiting when it sends, so the queue
-// fills only behind a peer that does not answer — one whose copies will
-// expire on their TTL before a backlog reaches them anyway.
-const hintPeerQueue = 1024
+// hintPeerMax bounds the hints waiting for one peer. Past it a round's hints
+// for that peer are dropped and counted. Bounded in hints rather than rounds,
+// as Redis bounds a client's output buffer in bytes rather than replies: a
+// round is anything from one hint to a few hundred, so a bound in rounds was
+// no bound on memory. A sender takes everything waiting each time it sends,
+// so the buffer fills only behind a peer that does not answer — one whose
+// copies expire on their TTL before a backlog this long would reach it.
+const hintPeerMax = 16384
 
 // invalidation is one pending hint.
 type invalidation struct {
@@ -193,8 +197,8 @@ func (iv *invalidator) run() {
 //
 // Each peer has its own. Sent one peer after another, as hints first were, a
 // peer that did not answer held every peer after it for its timeout, and every
-// hint after that. Now a slow peer backs up its own queue and, past
-// hintPeerQueue rounds, loses hints of its own, counted as dropped like a full
+// hint after that. Now a slow peer backs up its own buffer and, past
+// hintPeerMax hints, loses hints of its own, counted as dropped like a full
 // queue's here.
 func (iv *invalidator) deliver(batch []invalidation) {
 	c := iv.cache
@@ -202,6 +206,7 @@ func (iv *invalidator) deliver(batch []invalidation) {
 		return
 	}
 	self := c.selfID()
+	n := hintCount(batch)
 	members := c.guard.Table().Members()
 	present := make(map[string]struct{}, len(members))
 	for _, node := range members {
@@ -214,24 +219,67 @@ func (iv *invalidator) deliver(batch []invalidation) {
 			if iv.peers == nil {
 				iv.peers = map[string]*hintSender{}
 			}
-			s = &hintSender{rounds: make(chan hintRound, hintPeerQueue)}
+			s = &hintSender{wake: make(chan struct{}, 1)}
 			iv.peers[node.ID] = s
 			iv.wg.Add(1)
 			go iv.send(s)
 		}
-		select {
-		case s.rounds <- hintRound{node: node, batch: batch}:
-		default:
-			iv.dropped.Add(int64(hintCount(batch)))
+		s.mu.Lock()
+		s.node = node
+		if s.hints+n > hintPeerMax {
+			s.mu.Unlock()
+			iv.dropped.Add(int64(n))
+			continue
 		}
+		s.pending = append(s.pending, batch...)
+		s.hints += n
+		s.mu.Unlock()
+		s.signal()
 	}
 	// A departed peer's sender finishes what it holds and stops.
 	for id, s := range iv.peers {
 		if _, ok := present[id]; !ok {
-			close(s.rounds)
+			s.mu.Lock()
+			s.closed = true
+			s.mu.Unlock()
+			s.signal()
 			delete(iv.peers, id)
 		}
 	}
+}
+
+func (s *hintSender) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default: // already signalled; the sender will see everything pending
+	}
+}
+
+// take removes up to about hintMessageMax hints from the front of what is
+// pending, reporting the peer's address and whether the sender should stop.
+func (s *hintSender) take() (batch []invalidation, node core.Node, stop bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return nil, s.node, s.closed
+	}
+	k, hints := 0, 0
+	for k < len(s.pending) && hints < hintMessageMax {
+		hints += len(s.pending[k].keys)
+		k++
+	}
+	batch = append([]invalidation(nil), s.pending[:k]...)
+	if k == len(s.pending) {
+		s.pending = nil
+	} else {
+		// Copied down rather than resliced, so the front's keys are
+		// not held by the array behind the rest.
+		rest := copy(s.pending, s.pending[k:])
+		clear(s.pending[rest:])
+		s.pending = s.pending[:rest]
+	}
+	s.hints -= hints
+	return batch, s.node, false
 }
 
 func hintCount(batch []invalidation) int {
@@ -242,54 +290,47 @@ func hintCount(batch []invalidation) int {
 	return n
 }
 
-// send delivers one peer's hints until its queue is closed or Close: every
-// round waiting at once, up to about hintMessageMax hints, as one message per
+// send delivers one peer's hints until it leaves the view or Close: everything
+// waiting, up to about hintMessageMax hints a time, as one message per
 // namespace.
 func (iv *invalidator) send(s *hintSender) {
 	defer iv.wg.Done()
 	c := iv.cache
-	var merged []invalidation
 	for {
-		var node core.Node
 		select {
 		case <-iv.done:
-			// Shutting down. This peer loses what is queued for it and
+			// Shutting down. This peer loses what is waiting for it and
 			// falls back to its TTL, which is what it would have done
 			// had the messages been dropped in flight.
 			return
-		case r, ok := <-s.rounds:
-			if !ok {
+		case <-s.wake:
+		}
+		for {
+			batch, node, stop := s.take()
+			if stop {
 				return
 			}
-			node = r.node
-			merged = append(merged[:0], r.batch...)
-		}
-	more:
-		for len(merged) < hintMessageMax {
-			select {
-			case r, ok := <-s.rounds:
-				if !ok {
-					break more // closed: send what is held, then stop above
+			if batch == nil {
+				break
+			}
+			for _, req := range requests(batch) {
+				select {
+				case <-iv.done:
+					return
+				default:
 				}
-				node = r.node // the latest address
-				merged = append(merged, r.batch...)
-			default:
-				break more
+				ctx, cancel := clock.WithTimeout(iv.base, c.opts.Clock, invalidationTimeout)
+				err := c.route.invoke(ctx, node, transport.MethodInvalidate, req, nil)
+				cancel()
+				if err != nil {
+					iv.failed.Add(1)
+					c.opts.Logger.Debug("invalidation not delivered",
+						"node", node.ID, "namespace", req.Namespace, "error", err)
+					continue
+				}
+				iv.sent.Add(1)
 			}
 		}
-		for _, req := range requests(merged) {
-			ctx, cancel := clock.WithTimeout(iv.base, c.opts.Clock, invalidationTimeout)
-			err := c.route.invoke(ctx, node, transport.MethodInvalidate, req, nil)
-			cancel()
-			if err != nil {
-				iv.failed.Add(1)
-				c.opts.Logger.Debug("invalidation not delivered",
-					"node", node.ID, "namespace", req.Namespace, "error", err)
-				continue
-			}
-			iv.sent.Add(1)
-		}
-		clear(merged) // drop the keys the slice still points at
 	}
 }
 

@@ -740,15 +740,15 @@ mutate "gossip advertises the SWIM port as the RPC address" \
   'if false {
 				node.Addr = meta.RPCAddr' \
   'TestGossipAdvertisesTheRPCAddress' ./membership/
-mutate "enqueueing an invalidation blocks when the queue is full" \
-  invalidate.go \
-  '	select {
-	case iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}:
-	default:
-		iv.dropped.Add(1)
-	}' \
-  '	iv.queue <- invalidation{namespace: namespace, keys: owned, stamp: stamp}' \
-  'TestInvalidationBacklogIsDroppedNotQueued' ./tests
+# "enqueueing an invalidation blocks when the queue is full" was here until
+# hints were batched per peer (#90). Since then the goroutine draining the
+# queue rarely waits: it hands rounds to per-peer buffers without blocking, so
+# making the node's send blocking changes nothing a test can see. A backlog
+# is now bounded twice — the node's queue drops, and each peer's buffer drops
+# past hintPeerMax hints — and from outside the two drops are one counter, so
+# disabling either alone is not observable. Disabling both makes
+# TestInvalidationBacklogIsDroppedNotQueued fail (checked by hand when this
+# entry was retired: "none dropped: the backlog is held without bound").
 # ---------------------------------------------------------------- replication
 
 mutate "an older replica copy overwrites a newer one" \
@@ -1136,9 +1136,9 @@ mutate "a hand-off claims to be the writer of what it forwards" \
   handoff.go \
   'from := w.entry.From
 	if from == "" {
-		from = c.self().ID
+		from = c.selfID()
 	}' \
-  'from := c.self().ID' \
+  'from := c.selfID()' \
   'TestMajoritySideWritesSurviveAHeal$' ./tests
 
 # The degraded-write counter is the only signal separating a synchronous write
@@ -1781,10 +1781,10 @@ mutate "a replica decline is reported as a miss" \
 
 mutate "an invalidation deletes instead of leaving a floor" \
   handler.go \
-  '			if ns.opts.ReplicaReads {
-				ns.l1.Floor(' \
-  '			if false {
-				ns.l1.Floor(' \
+  '	if ns.opts.ReplicaReads {
+		ns.l1.Floor(' \
+  '	if false {
+		ns.l1.Floor(' \
   'TestAReplicaAnswerBelowAnInvalidationFloorIsDiscarded$' ./tests
 
 mutate "a replica answer below a floor is used" \

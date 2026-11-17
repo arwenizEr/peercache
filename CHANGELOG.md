@@ -47,7 +47,8 @@ change the public API.
   of 256: a burst of writes over loopback gRPC dropped 98.5% of its hints,
   and a peer that did not answer held every peer after it, and every hint
   after that, for the two-second timeout. Now every peer has its own sender
-  and queue, and a sender takes every hint queued for it while it was sending
+  and buffer, bounded at 16,384 hints — past it a silent peer's hints are
+  dropped and counted — and a sender takes every hint queued for it while it was sending
   as one message per namespace: the same burst drops 0 to 5% of its hints,
   at about one message per thousand. A namespace with a negative L1 TTL,
   which no node can hold a copy of, sends no hints at all.
