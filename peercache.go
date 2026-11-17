@@ -715,6 +715,7 @@ func (c *cache) Stats() Stats {
 		stats.ReplicaKeys = int64(c.replicas.Len())
 		stats.ReplicationsSent = rsent
 		stats.ReplicationsDropped = rdropped
+		stats.RestoreReplicationsDropped = c.replicator.restoreDrops()
 		stats.ReplicationsFailed = rfailed
 		stats.SplitBrainDetections = conflicts + c.splitBrain.Load()
 		promoted, evicted, rounds := c.promoter.counters()

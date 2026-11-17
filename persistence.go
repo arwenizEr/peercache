@@ -1298,7 +1298,8 @@ func (p *persister) split(ctx context.Context) error {
 // until its next write, and losing this node as well meant restoring from
 // storage again. Always asynchronous: a restore has no caller waiting for
 // durability, and it runs inside one, where waiting on a slow replica would
-// stall the read that triggered it.
+// stall the read that triggered it. On a queue of its own, apart from live
+// writes; see restoreQueue.
 func (p *persister) replicateRestored(key string, r *segment.Record, version uint64, now int64) {
 	ns := p.ns
 	if ns.opts.ReplicationFactor < 2 {
@@ -1319,5 +1320,5 @@ func (p *persister) replicateRestored(key string, r *segment.Record, version uin
 			w.ttl = time.Duration(r.ExpiresAt - now)
 		}
 	}
-	_ = ns.cache.replicator.replicate(context.Background(), false, w)
+	ns.cache.replicator.enqueueRestored(w)
 }

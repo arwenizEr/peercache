@@ -3217,6 +3217,14 @@ mutate "a dead node's name is never reclaimed" \
   '	if false {' \
   'TestADeadNodeRejoinsUnderItsNameFromANewAddress$' ./membership
 
+# --- restored keys fan out on a queue of their own ---
+
+mutate "restored keys share the live replication queue" \
+  replicate.go \
+  '	case r.restored <- w:' \
+  '	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:' \
+  'TestARestoreDoesNotCrowdOutLiveReplication$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

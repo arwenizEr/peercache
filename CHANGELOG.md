@@ -7,6 +7,17 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A restore's fan-out no longer crowds out live asynchronous replication.
+  Every key a restore brought back from storage was sent to its replicas
+  through the queue live writes use; a restart restores a node's whole share
+  at once, and on kind the burst filled that queue and dropped live copies
+  for a minute (224,622 drops, 98% on the pod restoring 249,000 keys). Restored
+  keys now have a queue and senders of their own, and their drops are counted
+  apart: `Stats().RestoreReplicationsDropped`,
+  `peercache_restore_replications_dropped_total`.
+
 ## [1.1.0] - 2026-11-17
 
 Throughput and operations: fewer requests to the object store, fewer
