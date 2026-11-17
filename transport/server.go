@@ -214,8 +214,11 @@ func dispatch(ctx context.Context, h core.Handler, method string, dec func(any) 
 		return nil, status.Errorf(codes.InvalidArgument, "decoding %s: %v", method, err)
 	}
 
-	from := core.Node{ID: callerID(ctx)}
-	if carrier := traceCarrier(ctx); carrier != nil {
+	// Read once: FromIncomingContext copies the whole metadata map, and
+	// both of these used to call it.
+	md, _ := metadata.FromIncomingContext(ctx)
+	from := core.Node{ID: callerID(md)}
+	if carrier := traceCarrier(md); carrier != nil {
 		ctx = core.WithCarrier(ctx, carrier)
 	}
 	out, err := h.Handle(ctx, from, method, in.payload)
@@ -227,11 +230,7 @@ func dispatch(ctx context.Context, h core.Handler, method string, dec func(any) 
 
 // traceCarrier reads the trace headers of a request back into a carrier, or
 // nil when there are none.
-func traceCarrier(ctx context.Context) map[string]string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil
-	}
+func traceCarrier(md metadata.MD) map[string]string {
 	var carrier map[string]string
 	for k, v := range md {
 		if len(v) == 0 || !strings.HasPrefix(k, metadataTracePrefix) {
@@ -248,11 +247,7 @@ func traceCarrier(ctx context.Context) map[string]string {
 // callerID reads the calling node's ID from the request metadata. An empty
 // result means the caller did not identify itself, which the handler is free to
 // treat as it likes; this layer does not invent an identity.
-func callerID(ctx context.Context) string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ""
-	}
+func callerID(md metadata.MD) string {
 	if v := md.Get(metadataFromNode); len(v) > 0 {
 		return v[0]
 	}
