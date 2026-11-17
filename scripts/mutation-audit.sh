@@ -1795,7 +1795,7 @@ mutate "a replica answer below a floor is used" \
 
 mutate "a self-replica reads over the network" \
   namespace.go \
-  '	if holder.ID == n.cache.self().ID {' \
+  '	if holder.ID == n.cache.selfID() {' \
   '	if false {' \
   'TestASelfReplicaServesWithoutAnRPC$' ./tests
 
@@ -1986,12 +1986,12 @@ mutate "a restore skips a corrupt log" \
 				return nil, err
 			}
 			loaded[name] = true
-			kept := f.Records[:0]' \
+			merge(&segment.File{Records: records})' \
   '			if err != nil {
 				continue
 			}
 			loaded[name] = true
-			kept := f.Records[:0]' \
+			merge(&segment.File{Records: records})' \
   'TestACorruptSegmentFailsTheRestore$' ./tests
 
 mutate "a failed restore is never retried" \
@@ -2127,31 +2127,31 @@ mutate "atomic writes are not replicated" \
 
 mutate "a failed synchronous Set skips its invalidation" \
   namespace.go \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
-  '	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
+  '	err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)
+	n.hint(key, stamp)' \
+  '	err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)
 	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+		n.hint(key, stamp)
 	}' \
   'TestAFailedSyncWriteStillInvalidates/Set$' ./tests
 
 mutate "a failed synchronous Delete skips its invalidation" \
   namespace.go \
   '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
-	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)' \
+	n.hint(key, tombstone)' \
   '	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
 	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
+		n.hint(key, tombstone)
 	}' \
   'TestAFailedSyncWriteStillInvalidates/Delete$' ./tests
 
 mutate "a failed synchronous atomic write skips its invalidation" \
   atomic.go \
   '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)' \
+	n.hint(key, stamp)' \
   '	err = n.fanOut(ctx, key, encoded, ttl, stamp, res.Order, res.Prev, false)
 	if err == nil {
-		n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+		n.hint(key, stamp)
 	}' \
   'TestAFailedSyncWriteStillInvalidates/Increment$' ./tests
 
@@ -2250,10 +2250,10 @@ mutate "a restore ignores logs not yet split" \
 
 mutate "a flush writes one object per partition" \
   persistence.go \
-  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
 	// Counted' \
-  '	name := logName(p.ns.name, maxOrder, p.ns.cache.self().ID)
+  '	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	for i := range records {
 		_ = p.store.Put(ctx, fmt.Sprintf("%s.%d", name, i), nil)
 	}
@@ -2944,10 +2944,10 @@ mutate "a restore past its deadline installs the key"   internal/store/store.go 
 
 mutate "a restore holds the flush lock while it reads" \
   persistence.go \
-  '	p.restoreMu.Lock()
-	defer p.restoreMu.Unlock()
+  '	defer p.releaseRestoreSlot()
 	// Registered before the read' \
-  '	p.flushMu.Lock()
+  '	defer p.releaseRestoreSlot()
+	p.flushMu.Lock()
 	defer p.flushMu.Unlock()
 	// Registered before the read' \
   'TestAFlushIsNotHeldUpByARestore$' ./tests
@@ -3013,22 +3013,12 @@ mutate "a drained node applies a peer's write" \
 
 mutate "a restore gives up on a log that moved" \
   persistence.go \
-  '			f, err := p.load(ctx, name)
+  '			records, err := p.logRecords(ctx, name, part)
 			if gone(err) {
 				vanished = true
 				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			loaded[name] = true
-			kept := f.Records[:0]' \
-  '			f, err := p.load(ctx, name)
-			if err != nil {
-				return nil, err
-			}
-			loaded[name] = true
-			kept := f.Records[:0]' \
+			}' \
+  '			records, err := p.logRecords(ctx, name, part)' \
   'TestARestoreOutlastsASplitterDeletingItsLogs$' ./tests
 mutate "an unrestored partition answers absent keys from memory" \
   namespace.go \
@@ -3063,8 +3053,8 @@ mutate "a Set is applied after its key moved" \
   '	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
 		return err
 	}
-	written := n.store.Put(key, n.encode(val), ttl)' \
-  '	written := n.store.Put(key, n.encode(val), ttl)' \
+	// Framed once.' \
+  '	// Framed once.' \
   'TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves$' ./tests
 
 # --- two read paths that had no test of their own ---
