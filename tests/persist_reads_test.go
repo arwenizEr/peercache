@@ -150,7 +150,11 @@ func TestACompactionUnderItsThresholdReadsNothing(t *testing.T) {
 	}
 	store.reset()
 
-	fc.Advance(compactInterval)
+	// To the tick exactly (see toCompactionTick): an advance of a whole
+	// interval went past it and could expire the tick's own deadline while
+	// the tick ran, stopping it after the first partition. One race-enabled
+	// run in forty did.
+	toCompactionTick(fc)
 	waitFor(t, "a compaction tick to reach the last partition", func() bool {
 		_, lists := store.counts()
 		return lists[last] >= 1
