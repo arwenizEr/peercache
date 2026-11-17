@@ -628,7 +628,7 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 		n.persister.record(key, encoded, written.ExpiresAt, written.Order, false)
 	}
 	err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)
-	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
+	n.hint(key, stamp)
 	if err != nil {
 		// Only synchronous replication can fail here: asynchronous
 		// fan-out is queued and returns nil. A synchronous caller asked
@@ -837,7 +837,7 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 	// replicated it at all.
 	// Invalidated whether or not the fan-out succeeded; see localSet.
 	err := n.fanOut(ctx, key, nil, 0, tombstone, order, 0, true)
-	n.cache.invalidator.enqueue(n.name, []string{key}, tombstone)
+	n.hint(key, tombstone)
 	if err != nil {
 		return err
 	}

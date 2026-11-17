@@ -737,18 +737,26 @@ func (h *peerHandler) invalidate(ctx context.Context, from core.Node, req []byte
 	// copies are most likely. Correctness does not depend on it either way.
 	if ns, ok := h.localNamespace(in.Namespace); ok && ns.l1 != nil {
 		for _, key := range in.Keys {
-			// With replica reads the next refill may come from a
-			// replica that has not yet received in.Stamp, so the
-			// copy is replaced by a floor rather than deleted. See
-			// docs/decisions/0028-hot-key-reads.md.
-			if ns.opts.ReplicaReads {
-				ns.l1.Floor(key, in.Stamp, ns.opts.L1TTL)
-				continue
-			}
-			ns.l1.InvalidateOlderThan(key, in.Stamp)
+			invalidateCopy(ns, key, in.Stamp)
+		}
+		for _, e := range in.Entries {
+			invalidateCopy(ns, e.Key, e.Stamp)
 		}
 	}
 	return wire.Encode(&wire.InvalidateResponse{})
+}
+
+// invalidateCopy drops this node's L1 copy of key if it is older than stamp.
+//
+// With replica reads the next refill may come from a replica that has not yet
+// received stamp, so the copy is replaced by a floor rather than deleted. See
+// docs/decisions/0028-hot-key-reads.md.
+func invalidateCopy(ns *namespace, key string, stamp wire.Stamp) {
+	if ns.opts.ReplicaReads {
+		ns.l1.Floor(key, stamp, ns.opts.L1TTL)
+		return
+	}
+	ns.l1.InvalidateOlderThan(key, stamp)
 }
 
 // ownsKey reports whether this node owns a key under the current view.

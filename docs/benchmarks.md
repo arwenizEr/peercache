@@ -1210,6 +1210,23 @@ too widely to rank by more than the bytes imply. Catch-up and `Drain` no
 longer unframe and frame each entry they send either, which costs a
 decompression and a compression per key transferred; that path has no
 benchmark of its own.
+## Invalidation hints under a burst of writes
+
+`BenchmarkHintsOverGRPC`, Machine A: three caches over real gRPC on
+loopback, one writing 20,000 keys it owns as fast as it can into a namespace
+with the default L1, and every hint delivered or dropped before the clock
+stops (a sentinel key written last, read by both peers). `-benchtime 20000x`.
+
+| Hints | dropped/hint | msgs/hint | ns/op |
+|---|---|---|---|
+| one message per hint per peer, peers in turn (3 runs) | 0.985 (0.985, 0.985, 0.986) | 0.0147 | 248,210 |
+| batched per peer, peers at once (5 runs) | 0.023 (0, 0.007, 0.023, 0.035, 0.047) | 0.00083 | 848 |
+
+msgs/hint is messages sent per hint per peer. Before, the queue of 256 in
+front of the single sender overflowed almost at once and the sentinel's own
+hint was dropped, so each run waited out the sentinel's five-second L1 TTL:
+that, not the writes, is the 248 µs. After, a sender carries every hint
+queued for its peer, up to 4,096, in one message per namespace.
 
 ## What the test suite itself costs
 

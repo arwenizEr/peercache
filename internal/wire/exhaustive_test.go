@@ -66,7 +66,7 @@ func everyMessage() []struct {
 		}},
 		{"InvalidateRequest", func() (any, func() int) {
 			v := new(wire.InvalidateRequest)
-			return v, func() int { return len(v.Keys) }
+			return v, func() int { return len(v.Keys) + len(v.Entries) }
 		}},
 		{"CatchUpResponse", func() (any, func() int) {
 			v := new(wire.CatchUpResponse)

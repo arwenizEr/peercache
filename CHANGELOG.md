@@ -26,6 +26,19 @@ change the public API.
   read each partition a node compacts in full — snapshots, segments and every
   log — before seeing it had fewer than eight segments, now counts them from
   the listing first and reads nothing below the threshold.
+- Invalidation hints are batched and sent to every peer at once. Each write's
+  hint was one message to each peer in turn, from one goroutine with a queue
+  of 256: a burst of writes over loopback gRPC dropped 98.5% of its hints,
+  and a peer that did not answer held every peer after it, and every hint
+  after that, for the two-second timeout. Now every peer has its own sender
+  and queue, and a sender takes every hint queued for it while it was sending
+  as one message per namespace: the same burst drops 0 to 5% of its hints,
+  at about one message per thousand. A namespace with a negative L1 TTL,
+  which no node can hold a copy of, sends no hints at all.
+  `InvalidationsSent` and `InvalidationsFailed` count messages, as they did,
+  and a message now carries many hints. The wire format adds `entries` to
+  `InvalidateRequest`; a v1.0 peer applies the first hint of each message
+  and lets its L1 TTL bound the rest, as for a dropped hint.
 - A tick reconciles replicas only when something may be out of place: for ten
   seconds after a membership view, or after a copy arrived where this node's
   ranking does not put it, a hand-off put one back, a pass left work behind,

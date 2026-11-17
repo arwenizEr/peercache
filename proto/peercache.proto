@@ -365,6 +365,14 @@ message InvalidateRequest {
   // stamp is the owner's stamp *after* the change. A receiver drops a
   // cached copy only if what it holds is older.
   Stamp stamp = 3;
+  // More keys, each with its own stamp: hints batched into one message. A
+  // release before this field applies keys and stamp alone.
+  repeated InvalidateEntry entries = 4;
+}
+
+message InvalidateEntry {
+  string key = 1;
+  Stamp stamp = 2;
 }
 
 message InvalidateResponse {}
