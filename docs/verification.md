@@ -710,6 +710,8 @@ caught   every page rebuilds and re-sorts the key list                      -- T
 caught   a finished pass keeps its key list                                 -- TestAPassSortsOnceAndCoversEveryKey
 caught   passes are not bounded                                             -- TestPassesAreBounded
 caught   a page emptied by removals ends the pass                           -- TestAPassSkipsKeysRemovedMidPassWithoutStopping
+caught   the persister frames a written value again                         -- TestAWriteIsCompressedOnce
+caught   the fan-out frames a written value again                           -- TestAWriteIsCompressedOnce
 caught   a pass sends keys the asker stopped being entitled to              -- TestAPassReappliesItsFilter
 caught   an L1 copy ignores its key's remaining lifetime                    -- TestANonOwnedCopyDoesNotOutliveItsKey
 caught   the owner's Get grants no remaining lifetime                       -- TestANonOwnedCopyDoesNotOutliveItsKey

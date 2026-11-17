@@ -1175,6 +1175,23 @@ so the difference between the rows is what a tick costs. Three runs of
 a pod, the shop ran at about 9,000 orders a minute against 140,000 on an empty
 store.
 
+## A compressed write — framed once
+
+`BenchmarkPersistentSetCompressed`, Machine A: a persistent namespace with
+LZ4 at a 128-byte threshold, a 1 KiB compressible value, 65,536 keys in
+rotation. Five runs each; medians, with the runs.
+
+| Frames per Set | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| 3 (store, persister, fan-out) | 1,784 (1,769, 1,780, 1,784, 1,794, 1,893) | 4,080 | 9 |
+| 1 | 1,629 (1,018, 1,219, 1,629, 1,786, 1,788) | 1,686 | 5 |
+
+The bytes and allocations are the result; the times on this machine spread
+too widely to rank by more than the bytes imply. Catch-up and `Drain` no
+longer unframe and frame each entry they send either, which costs a
+decompression and a compression per key transferred; that path has no
+benchmark of its own.
+
 ## What the test suite itself costs
 
 Measured on Machine A, because the CI timeout is set from it and a timeout

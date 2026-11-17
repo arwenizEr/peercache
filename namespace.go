@@ -611,7 +611,11 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	if err := n.cache.stillOwner(n.groupKeyFor(key)); err != nil {
 		return err
 	}
-	written := n.store.Put(key, n.encode(val), ttl)
+	// Framed once. With compression on every call compresses again, and the
+	// store, the persister and the fan-out keep the same bytes anyway: the
+	// stored form is what persists and what crosses the wire.
+	encoded := n.encode(val)
+	written := n.store.Put(key, encoded, ttl)
 	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
 
@@ -621,9 +625,9 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	// either way, and skipping the hint made a degraded write staler than
 	// an asynchronous one. Open question 45.
 	if n.persister != nil {
-		n.persister.record(key, n.encode(val), written.ExpiresAt, written.Order, false)
+		n.persister.record(key, encoded, written.ExpiresAt, written.Order, false)
 	}
-	err := n.fanOut(ctx, key, n.encode(val), ttl, stamp, written.Order, written.Prev, false)
+	err := n.fanOut(ctx, key, encoded, ttl, stamp, written.Order, written.Prev, false)
 	n.cache.invalidator.enqueue(n.name, []string{key}, stamp)
 	if err != nil {
 		// Only synchronous replication can fail here: asynchronous

@@ -660,10 +660,6 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		value, err := ns.decode(e.Value)
-		if err != nil {
-			return nil, err
-		}
 		// The remaining TTL, not the original. A key three seconds from
 		// expiry must not be handed over with a fresh full lifetime, or
 		// a slow transfer would keep resurrecting it.
@@ -674,9 +670,12 @@ func (h *peerHandler) catchUp(ctx context.Context, req []byte) ([]byte, error) {
 				continue
 			}
 		}
+		// The stored form, as held: it is framed already, and the asker
+		// stores it framed. Unframing and framing again here decompressed
+		// and recompressed every key of every page.
 		out.Entries = append(out.Entries, wire.CatchUpEntry{
 			Key:      e.Key,
-			Value:    ns.encode(value),
+			Value:    e.Value,
 			Stamp:    h.stamp(e.Version),
 			TTLNanos: ttl,
 			Order:    e.Order,
