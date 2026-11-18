@@ -96,6 +96,13 @@ func TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable(t *testing.T) 
 	refused := 0
 	for i := 0; i < counters; i++ {
 		key := fmt.Sprintf("item-%d", i)
+		// A read first: it has no second check under the shard lock, so it
+		// depends on the read-back's refusal alone. "Not found" for a key
+		// storage holds is the lie an Increment would then count from.
+		if _, err := stock.Get(ctx, key); errors.Is(err, peercache.ErrNotFound) {
+			t.Fatalf("Get(%s) with storage unreachable reported it absent; it was shed, "+
+				"not deleted, and storage holds it", key)
+		}
 		got, err := stock.Increment(ctx, key, -1, 0)
 		if err != nil {
 			if !errors.Is(err, peercache.ErrActivationPending) {
