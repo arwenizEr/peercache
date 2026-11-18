@@ -538,7 +538,15 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// replicated copy is; framing it again stored a frame inside a
 		// frame and handed the header back to the next reader.
 		h.cache.observeOrder(in.Order)
-		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {
+		adopted := ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order)
+		if h.cache.traced(in.Namespace, in.Key) {
+			kind := keytraceReplicaAccepted
+			if !adopted {
+				kind = keytraceReplicaRefused
+			}
+			h.cache.record(in.Namespace, in.Key, kind, in.Order, in.From, in.Stamp.Version, in.Value, "as owner")
+		}
+		if adopted {
 			h.cache.keysAdopted.Add(1)
 			if ns.persister != nil && in.Order != 0 {
 				ns.persister.record(in.Key, in.Value,
@@ -551,7 +559,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 
 	now := h.cache.opts.Clock.Now().UnixNano()
 	h.cache.observeOrder(in.Order)
-	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
+	accepted, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
 		Value:      in.Value,
 		Stamp:      in.Stamp,
 		ExpiresAt:  replication.DeadlineFrom(now, in.TTLNanos),
@@ -560,6 +568,9 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		From:       in.From,
 		Prev:       in.Prev,
 	})
+	if h.cache.traced(in.Namespace, in.Key) {
+		h.cache.recordCopy(in.Namespace, in.Key, accepted, conflict, in.Order, in.From, in.Stamp.Version, in.Value, "replicate")
+	}
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {
 		h.cache.splitBrain.Add(1)

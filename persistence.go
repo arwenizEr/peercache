@@ -1151,9 +1151,12 @@ func (p *persister) apply(newest map[string]*segment.Record) {
 		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
 			continue
 		}
-		_, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
+		version, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
 		if !merged {
 			continue
+		}
+		if c.traced(p.ns.name, key) {
+			c.record(p.ns.name, key, keytraceRestore, r.Order, r.Writer, version, r.Value, "")
 		}
 		p.restored.Add(1)
 		p.replicateRestored(key, r)
@@ -1277,7 +1280,7 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 	}
 	expired := !r.Tombstone && r.ExpiresAt != 0 && p.clk.Now().UnixNano() >= r.ExpiresAt
 	settled := true
-	_, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, func() bool {
+	version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if newer() {
@@ -1289,6 +1292,13 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 	})
 	if !settled {
 		return false
+	}
+	if p.ns.cache.traced(p.ns.name, key) {
+		detail := "memory held newer"
+		if merged {
+			detail = "installed"
+		}
+		p.ns.cache.record(p.ns.name, key, keytraceReadBack, r.Order, r.Writer, version, r.Value, detail)
 	}
 	p.ns.cache.observeOrder(r.Order)
 	if merged && !expired {

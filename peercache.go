@@ -18,6 +18,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/hotkeys"
+	"github.com/arwenizEr/peercache/internal/keytrace"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -145,6 +146,12 @@ type Cache interface {
 	// of it. The namespace must be open on this node; otherwise the error
 	// wraps ErrNotFound.
 	DescribeKey(namespace, key string) (KeyPlacement, error)
+
+	// KeyHistory returns this node's recorded history of key in namespace,
+	// oldest first: nil unless the key is traced with [WithKeyTrace]. A
+	// key's whole history is the union over the nodes that touched it,
+	// merged by time.
+	KeyHistory(namespace, key string) []KeyEvent
 
 	// DescribeCluster asks every member of this node's view for its
 	// Describe and reports them side by side, with whether their member
@@ -282,6 +289,7 @@ func New(opts ...Option) (Cache, error) {
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
 	c.pressure = newPressure(c, resolved.MemoryBudget)
+	c.trace = keytrace.New(resolved.Clock, resolved.KeyTrace)
 	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {
 		// Said, not fixed: the memory limit is the process's to set, and a
 		// library that set it would override the application's choice.
@@ -374,7 +382,9 @@ func New(opts ...Option) (Cache, error) {
 
 // cache implements [Cache].
 type cache struct {
-	opts core.Options
+	// trace records traced keys' histories; nil without WithKeyTrace.
+	trace *keytrace.Tracer
+	opts  core.Options
 
 	// id is this node's ID, read once: see selfID.
 	id string

@@ -207,8 +207,11 @@ func (p *pressure) relieve() {
 			if ns.persister != nil {
 				mark = ns.persister.noteShed
 			}
-			freed := ns.store.ShedMarked(share, mark, func(key string, _ uint64) {
+			freed := ns.store.ShedMarked(share, mark, func(key string, version uint64) {
 				p.shedOwned.Add(1)
+				if c.traced(ns.name, key) {
+					c.record(ns.name, key, keytraceShed, 0, "", version, nil, "")
+				}
 				ns.replicateShed(key)
 			})
 			if freed > 0 {

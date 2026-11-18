@@ -231,6 +231,9 @@ func (cu *catchUp) pages(ctx context.Context, ns *namespace, peer core.Node, rep
 			if conflict {
 				c.splitBrain.Add(1)
 			}
+			if c.traced(ns.name, e.Key) {
+				c.recordCopy(ns.name, e.Key, accepted, conflict, e.Order, from, e.Stamp.Version, e.Value, "catch-up from "+peer.ID)
+			}
 			after = e.Key
 		}
 

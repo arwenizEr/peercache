@@ -368,6 +368,9 @@ func (p *promoter) restore(ns *namespace, taken map[string]replication.Entry) {
 		// holder and is not restored.
 		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {
 			p.promoted.Add(1)
+			if p.cache.traced(ns.name, key) {
+				p.cache.record(ns.name, key, keytracePromote, e.Order, e.From, e.Stamp.Version, e.Value, "")
+			}
 			// The old owner may have died before flushing this write. The
 			// record is idempotent under the merge, so writing it again
 			// costs a duplicate at worst and closes that gap at best.
@@ -470,6 +473,9 @@ func (p *promoter) demote(ns *namespace, self string) {
 	}
 	now := c.opts.Clock.Now().UnixNano()
 	for _, e := range given {
+		if c.traced(ns.name, e.Key) {
+			c.record(ns.name, e.Key, keytraceDemote, e.Order, "", e.Version, e.Value, "")
+		}
 		c.replicas.Put(ns.name, e.Key, replication.Entry{
 			Value:      e.Value,
 			Stamp:      core.Stamp{Epoch: epoch, Version: e.Version},

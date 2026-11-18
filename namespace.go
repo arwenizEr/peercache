@@ -634,6 +634,9 @@ func (n *namespace) localSet(ctx context.Context, key string, val []byte, ttl ti
 	// stored form is what persists and what crosses the wire.
 	encoded := n.encode(val)
 	written := n.store.Put(key, encoded, ttl)
+	if n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceWrite, written.Order, n.cache.selfID(), written.Version, encoded, "set")
+	}
 	stamp := n.stamp(written.Version)
 	n.cache.pressure.noteWrite(len(val))
 
@@ -842,6 +845,9 @@ func (n *namespace) localDelete(ctx context.Context, key string) error {
 		return err
 	}
 	_, order := n.store.Remove(key)
+	if n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceDelete, order, n.cache.selfID(), 0, nil, "")
+	}
 	if n.persister != nil {
 		n.persister.record(key, nil, 0, order, true)
 	}

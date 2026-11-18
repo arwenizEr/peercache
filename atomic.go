@@ -231,6 +231,9 @@ func (n *namespace) localUpdateOnce(ctx context.Context, key string, fn func(cur
 		}
 	}
 	stamp := n.stamp(res.Version)
+	if n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceWrite, res.Order, n.cache.selfID(), res.Version, encoded, "update")
+	}
 	// Invalidated whether or not the fan-out succeeded; see localSet.
 	if n.persister != nil {
 		n.persister.record(key, encoded, res.ExpiresAt, res.Order, false)

@@ -264,6 +264,9 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 		h.restore(w)
 		return
 	}
+	if c.traced(w.namespace, w.key) {
+		c.record(w.namespace, w.key, keytraceHandOff, w.entry.Order, w.entry.From, w.entry.Stamp.Version, w.entry.Value, "")
+	}
 	h.rehomed.Add(1)
 }
 

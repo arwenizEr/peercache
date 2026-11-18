@@ -253,6 +253,16 @@ func (c *cache) DebugHandler() http.Handler {
 			return c.DescribeCluster(r.Context(), r.URL.Query().Get("digests") == "1"), http.StatusOK, nil
 		})
 	})
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, r, func() (any, int, error) {
+			q := r.URL.Query()
+			namespace, key := q.Get("namespace"), q.Get("key")
+			if namespace == "" || !q.Has("key") {
+				return nil, http.StatusBadRequest, errors.New("namespace and key are required")
+			}
+			return keyHistoryResponse{Node: c.selfID(), Events: c.KeyHistory(namespace, key)}, http.StatusOK, nil
+		})
+	})
 	mux.HandleFunc("/key", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, func() (any, int, error) {
 			q := r.URL.Query()
