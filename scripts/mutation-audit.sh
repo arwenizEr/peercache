@@ -1286,7 +1286,7 @@ mutate "the replica store ignores the floor it is given" \
 mutate "the budget keeps every replica of a persistent namespace" \
   pressure.go \
   '		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))' \
-  '		keep[ns.name] = 0' \
+  '		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli())) * 0' \
   'TestAFlushedWritesReplicaIsShedAsBefore$' ./tests
 
 mutate "the window is the flush interval alone, not its timeout too" \
