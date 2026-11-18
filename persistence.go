@@ -119,9 +119,6 @@ type persister struct {
 	// partition instead would bring every shed key back at once and undo
 	// the shedding that made room. Bounded by the owned keys shed.
 	shed map[string]shedMark
-	// shedSeq numbers the marks, so a read-back clears only the mark it
-	// answered and not one a later shed set while it ran.
-	shedSeq uint64
 
 	// inflight is the batch a flush has taken from pending and not yet
 	// finished writing; flushedDuring holds the batches flushes wrote while
@@ -276,10 +273,9 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	}
 }
 
-// shedMark is one key's shed: which shed it was, and the order of the value
-// memory held when it left.
+// shedMark is one key's shed: the order of the value memory held when it
+// left.
 type shedMark struct {
-	seq   uint64
 	order uint64
 }
 
@@ -303,8 +299,7 @@ func (p *persister) unflushedFor() time.Duration {
 
 func (p *persister) noteShed(key string, order uint64) {
 	p.mu.Lock()
-	p.shedSeq++
-	p.shed[key] = shedMark{seq: p.shedSeq, order: order}
+	p.shed[key] = shedMark{order: order}
 	p.mu.Unlock()
 }
 
@@ -1160,29 +1155,15 @@ func (p *persister) owns(key string) bool {
 // refused with errPartitionUnrestored; the next access tries again. Two
 // accesses racing may both read the partition; the merge makes that harmless.
 func (p *persister) restoreShed(ctx context.Context, key string) error {
-	for attempt := 0; ; attempt++ {
-		again, err := p.restoreShedOnce(ctx, key)
-		if err != nil || !again {
-			return err
-		}
-		if attempt == shedRetries {
-			return errPartitionUnrestored
-		}
-	}
-}
-
-// restoreShedOnce is one read-back of key. It reports again when the key was
-// shed anew, holding something newer than this read found, while it ran.
-func (p *persister) restoreShedOnce(ctx context.Context, key string) (again bool, err error) {
 	p.mu.Lock()
-	sm, shed := p.shed[key]
+	_, shed := p.shed[key]
 	p.mu.Unlock()
 	if !shed {
-		return false, nil
+		return nil
 	}
 
 	if err := p.takeRestoreSlot(ctx); err != nil {
-		return false, err
+		return err
 	}
 	defer p.releaseRestoreSlot()
 	mark := p.beginRestore()
@@ -1190,77 +1171,89 @@ func (p *persister) restoreShedOnce(ctx context.Context, key string) (again bool
 	sc, err := p.scan(ctx, persistPartition(p.ns.groupKeyFor(key)))
 	if err != nil {
 		if ctx.Err() != nil {
-			return false, ctx.Err()
+			return ctx.Err()
 		}
 		p.restoreFailures.Add(1)
 		// Not nil: memory does not hold a shed key, so answering from it
 		// would report the key absent, and an Increment would count from
 		// zero with a write that outranks the stored value. The same
 		// refusal a failed partition restore gives (open question 61).
-		return false, errPartitionUnrestored
+		return errPartitionUnrestored
 	}
 	defer sc.release()
 	newest := sc.newest
+	if !p.owns(key) {
+		return nil
+	}
 
-	// The newest write may not have been flushed when the key was shed, or
-	// even recorded: a write records its value after releasing the store, so
-	// the budget can shed it in between. The shed kept the order memory held;
-	// until a record of at least that order is pending, the value read back
-	// would be the one before that write, and the write would be lost. The
-	// writer is between two statements, so this waits for it briefly.
+	// The mark keeps the order of the value memory held when it was shed.
+	// What storage and this node's own records give must be at least that
+	// new, or the value installed is the one before a write and the write is
+	// lost (open question 62). Two ways to be older: the write had stored its
+	// value and not yet recorded it — it records after releasing the store,
+	// so the budget can shed in between — or the key was installed and shed
+	// again, newer, while this ran. Either way the newer record is this
+	// node's own, so it arrives in the overlay and storage need not be read
+	// again: the writer is between two statements.
 	want := func(k string) bool { return k == key }
-	p.overlay(newest, mark, want)
-	for i := 0; sm.order != 0 && (newest[key] == nil || newest[key].Order < sm.order); i++ {
+	for i := 0; ; i++ {
+		p.overlay(newest, mark, want)
+		if p.settleShed(key, newest[key]) {
+			return nil
+		}
 		if i == shedRecordWait {
-			return false, errPartitionUnrestored
+			return errPartitionUnrestored
 		}
 		runtime.Gosched()
-		p.overlay(newest, mark, want)
 	}
-	r := newest[key]
-	if r == nil {
-		// Nothing anywhere: the key is absent, truly. Unmarked unless a shed
-		// since marked it again.
-		p.mu.Lock()
-		if p.shed[key].seq == sm.seq {
-			delete(p.shed, key)
-		}
-		p.mu.Unlock()
-		return false, nil
-	}
-	if !p.owns(key) {
-		return false, nil
-	}
-	now := p.clk.Now().UnixNano()
-	expired := !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt
+}
 
-	// Decided and unmarked under the key's shard lock, where the budget marks
-	// a key before removing it (open question 62). Unmarked before the
-	// merge, or merged without looking, and a shed between the two either
-	// left the key in neither memory nor the marks, so an Increment counted
-	// from zero, or laid this read's older value over the newer one that
-	// shed just took out.
-	stale := false
+// settleShed installs r, the newest record found for the shed key, and clears
+// its mark, unless the mark names a newer value than r; then it reports false
+// and changes nothing.
+//
+// Decided and unmarked under the key's shard lock, where the budget marks a
+// key before removing it. Unmarked before the merge, or merged without
+// looking, and a shed between the two either left the key in neither memory
+// nor the marks, so an Increment counted from zero, or laid an older value over
+// the newer one that shed had just taken out.
+func (p *persister) settleShed(key string, r *segment.Record) bool {
+	newer := func() bool {
+		cur, marked := p.shed[key]
+		return marked && (r == nil || cur.order > r.Order)
+	}
+	if r == nil {
+		// Nothing anywhere. A key absent from memory cannot be shed, so
+		// this needs no shard lock.
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if newer() {
+			return false
+		}
+		delete(p.shed, key)
+		return true
+	}
+	expired := !r.Tombstone && r.ExpiresAt != 0 && p.clk.Now().UnixNano() >= r.ExpiresAt
+	settled := true
 	_, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		cur, marked := p.shed[key]
-		if marked && cur.order > r.Order {
-			stale = true
+		if newer() {
+			settled = false
 			return false
 		}
 		delete(p.shed, key)
 		return true
 	})
-	if stale {
-		return true, nil
+	if !settled {
+		return false
 	}
 	p.ns.cache.observeOrder(r.Order)
 	if merged && !expired {
 		p.restored.Add(1)
 		p.replicateRestored(key, r)
 	}
-	return false, nil
+	return true
 }
 
 // compactOwned compacts every partition this node is the compactor for that
