@@ -1987,7 +1987,7 @@ after the wait. Each refusal is `ErrNotOwner` or the activation delay's
 `TestAWriteWaitingOnARestoreIsRefusedIfOwnershipMoves` reproduces the
 sequence exactly and failed before, for Increment and for Set.
 
-## 59. Demotion runs only for namespaces this node holds replicas of — found by a test, open
+## 59. Demotion runs only for namespaces this node holds replicas of — found by a test, resolved
 
 **Found** writing `TestADemotedCopyNamesNoWriterItDidNotWrite`: reconciliation
 iterates `replicas.Namespaces()`, so a namespace with nothing in this node's
@@ -2003,6 +2003,18 @@ for promotion and hand-off. Demotion is already once per epoch, so the added
 cost is one pass over the owned store per view, which RF 2 namespaces pay
 today. Needs a test at RF 1 first: whether a key left behind there can be
 served stale after ownership returns.
+
+**Resolved** as leaned, on 2026-11-18.
+`TestADemotedOwnerAtReplicationFactorOneDoesNotResurrectAnOverwrittenValue`
+showed it could: at RF 1, a node that lost a key to a joining owner served
+the value that owner overwrote once it died. Reconciliation now visits every
+open namespace as well as every namespace in the replica store
+(`promoter.namespaces`). A demoted key at RF 1 is filed as a replica naming
+no writer and dropped by the RF 1 pass, as copies below RF 2 always were.
+That is not a new loss: RF 1 has no catch-up, so the joining owner never
+received the key either way, and requests route to it, not to the node that
+kept it. Keeping it bought only the stale read and an owned store holding
+keys twice. Reversible by returning the loop to the replica store's list.
 
 ## 60. The budget shed the only other copy of an unflushed write — found on kind, resolved
 

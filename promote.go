@@ -186,7 +186,7 @@ func (p *promoter) reconcileWith(full bool) {
 
 	self := c.selfID()
 	epoch := uint64(c.guard.Table().Epoch())
-	for _, name := range c.replicas.Namespaces() {
+	for _, name := range p.namespaces() {
 		ns, ok := c.namespaceIfExists(name)
 		if !ok {
 			// Opening the namespace marks the promoter dirty, so the
@@ -327,6 +327,34 @@ func (p *promoter) reconcileWith(full bool) {
 			c.handoff.enqueue(handoffWork{namespace: name, key: key, entry: e})
 		}
 	}
+}
+
+// namespaces lists what a reconciliation visits: every namespace this node
+// holds replicas of, and every namespace it has open.
+//
+// The replica store's list alone missed an open namespace with no replicas
+// here, so its owned store was never demoted. At replication factor 1 that is
+// every namespace on every view change, and a node that lost a key kept it
+// and, when ownership came back after the new owner died, served the value
+// the new owner had overwritten
+// (TestADemotedOwnerAtReplicationFactorOneDoesNotResurrectAnOverwrittenValue;
+// docs/decisions/open.md, question 59). Visiting a namespace with no replicas
+// costs its demotion pass, once per view, and an empty promotion drain.
+func (p *promoter) namespaces() []string {
+	c := p.cache
+	names := c.replicas.Namespaces()
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		seen[name] = struct{}{}
+	}
+	c.mu.RLock()
+	for _, name := range c.order {
+		if _, ok := seen[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	c.mu.RUnlock()
+	return names
 }
 
 // restore moves promoted replicas into the namespace's owned store, continuing
