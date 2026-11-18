@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -245,6 +246,79 @@ func TestShedKeysAreNeverReadAsAbsent(t *testing.T) {
 		key, want := fmt.Sprintf("p-%d", i), fmt.Sprintf("real-%d", i)
 		if got, err := ns.Get(ctx, key); err != nil || string(got) != want {
 			t.Fatalf("after the run %s = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}
+
+// TestALoadDoesNotStoreOverAShedWrite: a loader's result is stored only if the
+// key is still absent, because a Set that landed while it ran is newer. A Set
+// the budget then shed is still newer, and in storage; the load must not be
+// stored over it. Whatever the interleaving, every key ends at the value its
+// acknowledged Set wrote.
+func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
+	const (
+		budget = 128 << 10
+		keys   = 3000
+	)
+	c, _ := newCache(t, peercache.WithMemoryBudget(budget))
+	ns := c.Namespace("profiles",
+		peercache.WithPersistence(persist.Memory()),
+		peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+			for i := 0; i < 50; i++ {
+				runtime.Gosched() // a load takes a while; writes land meanwhile
+			}
+			return []byte("loaded"), 0, nil
+		}))
+	bulk := c.Namespace("bulk")
+	ctx := context.Background()
+
+	stop := make(chan struct{})
+	var filler sync.WaitGroup
+	filler.Add(1)
+	go func() {
+		defer filler.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = bulk.Set(ctx, fmt.Sprintf("b%d", i%4096), make([]byte, 1<<10), 0)
+		}
+	}()
+
+	var set [keys]atomic.Bool
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < keys; i++ {
+			_, _ = ns.GetOrLoad(ctx, fmt.Sprintf("p-%d", i))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < keys; i++ {
+			if ns.Set(ctx, fmt.Sprintf("p-%d", i), []byte("real"), 0) == nil {
+				set[i].Store(true)
+			}
+		}
+	}()
+	wg.Wait()
+	close(stop)
+	filler.Wait()
+
+	if c.Stats().ShedOwned == 0 {
+		t.Fatal("nothing was shed, so no load raced a shed")
+	}
+	for i := 0; i < keys; i++ {
+		if !set[i].Load() {
+			continue
+		}
+		key := fmt.Sprintf("p-%d", i)
+		got, err := ns.Get(ctx, key)
+		if err != nil || string(got) != "real" {
+			t.Fatalf("%s = %q, %v after an acknowledged Set of \"real\"; a load was stored over it", key, got, err)
 		}
 	}
 }
