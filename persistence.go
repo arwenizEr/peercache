@@ -1185,7 +1185,7 @@ func (p *persister) owns(key string) bool {
 // accesses racing may both read the partition; the merge makes that harmless.
 func (p *persister) restoreShed(ctx context.Context, key string) error {
 	p.mu.Lock()
-	_, shed := p.shed[key]
+	sm, shed := p.shed[key]
 	p.mu.Unlock()
 	if !shed {
 		return nil
@@ -1198,7 +1198,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	// and the failure count would measure the request rate.
 	part := persistPartition(p.ns.groupKeyFor(key))
 	if p.failedRecently(part) {
-		return errPartitionUnrestored
+		return p.settleFromOwnRecords(key, sm)
 	}
 	if err := p.takeRestoreSlot(ctx); err != nil {
 		return err
@@ -1222,8 +1222,9 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		// Not nil: memory does not hold a shed key, so answering from it
 		// would report the key absent, and an Increment would count from
 		// zero with a write that outranks the stored value. The same
-		// refusal a failed partition restore gives (open question 61).
-		return errPartitionUnrestored
+		// refusal a failed partition restore gives (open question 61),
+		// unless this node's own records hold what memory did.
+		return p.settleFromOwnRecords(key, sm)
 	}
 	defer sc.release()
 	newest := sc.newest
@@ -1251,6 +1252,38 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		}
 		runtime.Gosched()
 	}
+}
+
+// settleFromOwnRecords answers a shed key whose read-back failed from this
+// node's own unflushed records, or refuses it with errPartitionUnrestored.
+//
+// The mark keeps the order of the value memory held when the key was shed,
+// and memory was being served then. A record of this node's of at least that
+// order is that value or a later write of its own, so installing it is as
+// right as serving memory was before the shed; anything older, or nothing,
+// and storage may hold what memory did, so the key is refused (open question
+// 64). During an outage this keeps the keys written since it began available:
+// they are exactly the ones whose records stay pending.
+func (p *persister) settleFromOwnRecords(key string, sm shedMark) error {
+	if sm.order == 0 {
+		return errPartitionUnrestored
+	}
+	p.mu.Lock()
+	var r *segment.Record
+	for _, m := range []map[string]segment.Record{p.inflight, p.pending} {
+		if cur, ok := m[key]; ok && (r == nil || cur.Newer(r)) {
+			cur := cur
+			r = &cur
+		}
+	}
+	p.mu.Unlock()
+	if r == nil || r.Order < sm.order || !p.owns(key) {
+		return errPartitionUnrestored
+	}
+	if !p.settleShed(key, r) {
+		return errPartitionUnrestored
+	}
+	return nil
 }
 
 // settleShed installs r, the newest record found for the shed key, and clears

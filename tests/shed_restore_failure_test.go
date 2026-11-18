@@ -211,3 +211,55 @@ func TestAShedReadBackBacksOffWhileStorageIsDown(t *testing.T) {
 		}
 	}
 }
+
+// TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage is open question 64.
+// A key written during a store outage stays in this node's pending records,
+// unflushed; shed, its read-back fails. The shed's mark names the order of the
+// value memory held, and a record of this node's of at least that order is
+// that value or a later write of its own: as right to serve as memory was
+// before the shed. Refusing it made recently written keys unavailable for the
+// whole outage.
+func TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage(t *testing.T) {
+	const counters = 50
+	store := &cutOffStore{BlobStore: persist.Memory()}
+	c, fc := newCache(t, peercache.WithMemoryBudget(256<<10))
+	stock := c.Namespace("stock", peercache.WithPersistence(store))
+	ctx := context.Background()
+
+	// One decrement each with storage up, so the partitions are restored
+	// and the keys are this node's; then the outage, and two more each that
+	// stay pending, because every flush fails.
+	for i := 0; i < counters; i++ {
+		if _, err := stock.Increment(ctx, fmt.Sprintf("item-%d", i), -1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flushed(t, c, fc, 1)
+	store.cut.Store(true)
+	t.Cleanup(func() { store.cut.Store(false) }) // before Close flushes
+	for i := 0; i < counters; i++ {
+		for j := 0; j < 2; j++ {
+			if _, err := stock.Increment(ctx, fmt.Sprintf("item-%d", i), -1, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	bulk := c.Namespace("bulk")
+	for i := 0; i < 4000; i++ {
+		_ = bulk.Set(ctx, fmt.Sprintf("b%05d", i), make([]byte, 1<<10), 0)
+	}
+	if c.Stats().ShedOwned == 0 {
+		t.Fatal("nothing was shed")
+	}
+	for i := 0; i < counters; i++ {
+		key := fmt.Sprintf("item-%d", i)
+		got, err := stock.Increment(ctx, key, -1, 0)
+		if err != nil {
+			t.Fatalf("Increment(%s) during the outage: %v; this node holds the key's newest write "+
+				"in its own records and can answer", key, err)
+		}
+		if got != -4 {
+			t.Fatalf("Increment(%s) = %d, want -4", key, got)
+		}
+	}
+}
