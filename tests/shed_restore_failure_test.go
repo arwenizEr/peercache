@@ -263,3 +263,51 @@ func TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage(t *testing.T) {
 		}
 	}
 }
+
+// TestAShedLoadedOrExpiredKeyIsNotRefusedForever: two shed keys whose
+// read-back finds no record at all, legitimately. A value a loader stored is
+// never recorded — it can be loaded again — and a value whose TTL has passed
+// is dropped from storage by compaction. The shed mark keeps the order of the
+// value memory held; treating "no record" as older than it refused such a key
+// on every access, forever, and the loader could not store it again either.
+func TestAShedLoadedOrExpiredKeyIsNotRefusedForever(t *testing.T) {
+	c, fc := newCache(t, peercache.WithMemoryBudget(128<<10))
+	ns := c.Namespace("profiles",
+		peercache.WithPersistence(persist.Memory()),
+		peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
+			return []byte("loaded-" + key), 0, nil
+		}))
+	ctx := context.Background()
+	const keys = 40
+	for i := 0; i < keys; i++ {
+		if _, err := ns.GetOrLoad(ctx, fmt.Sprintf("loaded-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+		if err := ns.Set(ctx, fmt.Sprintf("expiring-%d", i), []byte("v"), time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bulk := c.Namespace("bulk")
+	for i := 0; i < 4000; i++ {
+		_ = bulk.Set(ctx, fmt.Sprintf("b%05d", i), make([]byte, 1<<10), 0)
+	}
+	if c.Stats().ShedOwned == 0 {
+		t.Fatal("nothing was shed")
+	}
+	// The expiring keys' records lapse; a compaction would drop them. The
+	// store here drops nothing, so expire them in memory's terms instead:
+	// past the deadline, every record of them is one a restore skips.
+	fc.Advance(2 * time.Second)
+
+	for i := 0; i < keys; i++ {
+		key := fmt.Sprintf("loaded-%d", i)
+		v, err := ns.GetOrLoad(ctx, key)
+		if err != nil || string(v) != "loaded-"+key {
+			t.Fatalf("GetOrLoad(%s) after a shed = %q, %v; the loader must answer it again", key, v, err)
+		}
+		key = fmt.Sprintf("expiring-%d", i)
+		if _, err := ns.Get(ctx, key); !errors.Is(err, peercache.ErrNotFound) {
+			t.Fatalf("Get(%s) past its TTL after a shed: %v; want ErrNotFound", key, err)
+		}
+	}
+}

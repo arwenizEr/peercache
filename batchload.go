@@ -187,8 +187,9 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 		resident, stored, held := n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)
 		if held {
 			// Shed while the loader ran: storage holds something newer
-			// than the load. Left out, as an unanswered key is.
-			continue
+			// than the load. Left out, the batch would report it absent;
+			// the batch is refused, as a single load is.
+			return nil, n.shedSinceRestore(key)
 		}
 		if !stored {
 			current, err := n.decode(resident)

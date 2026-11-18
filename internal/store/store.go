@@ -104,6 +104,22 @@ type entry struct {
 	writer string
 }
 
+// unrecordedBit marks, in an entry's prev, a value no persistence record will
+// ever hold: one a loader or a refresh stored. Orders come from a hybrid
+// logical clock of milliseconds and are far below 1<<63, so the bit is free.
+const unrecordedBit = uint64(1) << 63
+
+// ShedEntry is what a shed's mark learns of the entry it removes.
+type ShedEntry struct {
+	// Order is the value's order.
+	Order uint64
+	// ExpiresAt is its deadline in Unix nanoseconds, zero for none.
+	ExpiresAt int64
+	// Unrecorded reports a value a loader or a refresh stored, which no
+	// persistence record holds.
+	Unrecorded bool
+}
+
 // Lineage is where a value came from: the node that wrote it and the order of
 // the value its write replaced there. Zero values mean unknown, and an unknown
 // lineage is never judged a fork (replication.Forked).
@@ -407,7 +423,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 		version = sh.floor + 1
 	}
 	order := s.nextOrder()
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order, writer: s.writer})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.writer})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -465,34 +481,8 @@ func (s *Store) Peek(key string) (val []byte, version uint64, expiresAt int64, o
 // unconditional store would put the older value back over it. An expired entry
 // counts as absent, as it does to every reader.
 func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, bool) {
-	var expiresAt int64
-	now := s.clk.Now()
-	if ttl > 0 {
-		expiresAt = s.deadline(key, now, ttl)
-	}
-	stored := make([]byte, len(val))
-	copy(stored, val)
-
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	sh.forget(key)
-	old, had := sh.entries[key]
-	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
-		return old.val, false
-	}
-	version := old.version + 1
-	if !had && version <= sh.floor {
-		version = sh.floor + 1
-	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: old.order, writer: s.writer})
-	delta := size(key, stored)
-	if had {
-		delta -= size(key, old.val)
-	}
-	sh.bytes.Add(delta)
-	sh.sets.Add(1)
-	return stored, true
+	resident, stored, _ := s.SetIfAbsentGuarded(key, val, ttl, nil)
+	return resident, stored
 }
 
 // Snapshot returns up to limit unexpired entries whose keys sort after the
@@ -646,7 +636,7 @@ func (s *Store) LineageOf(key string) (order uint64, lin Lineage, ok bool) {
 	if !found {
 		return 0, Lineage{}, false
 	}
-	return e.order, Lineage{Writer: e.writer, Prev: e.prev}, true
+	return e.order, Lineage{Writer: e.writer, Prev: e.prev &^ unrecordedBit}, true
 }
 
 func (s *Store) restore(key string, val []byte, expiresAt int64, version, order uint64, lin Lineage) bool {
@@ -847,7 +837,7 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 // be able to tell a shed key from an absent one records it there: marked after
 // the lock is released, as visit is, a reader in between finds the key neither
 // present nor marked. mark must not call into this store.
-func (s *Store) ShedMarked(target int64, mark func(key string, order uint64), visit func(key string, version uint64)) int64 {
+func (s *Store) ShedMarked(target int64, mark func(key string, e ShedEntry), visit func(key string, version uint64)) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -867,7 +857,7 @@ func (s *Store) ShedMarked(target int64, mark func(key string, order uint64), vi
 				break
 			}
 			if mark != nil {
-				mark(key, e.order)
+				mark(key, ShedEntry{Order: e.order, ExpiresAt: e.expiresAt, Unrecorded: e.prev&unrecordedBit != 0})
 			}
 			s.deleteEntry(sh, key)
 			if e.version > sh.floor {

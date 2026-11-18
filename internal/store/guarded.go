@@ -11,16 +11,12 @@ import "time"
 // Called under the lock because that is where [Store.ShedMarked] marks a key
 // before removing it: a miss followed by a separate check could see the key
 // shed between the two and report it absent. held must not call into this
-// store. A nil held makes this Lookup.
+// store. A nil held asks nothing: this is then [Store.Lookup].
 func (s *Store) LookupGuarded(key string, held func(key string) bool) (val []byte, version uint64, left time.Duration, ok, isHeld bool) {
-	if held == nil {
-		val, version, left, ok = s.Lookup(key)
-		return val, version, left, ok, false
-	}
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	e, found := sh.entries[key]
-	if !found {
+	if !found && held != nil {
 		isHeld = held(key)
 	}
 	sh.mu.RUnlock()
@@ -44,10 +40,6 @@ func (s *Store) LookupGuarded(key string, held func(key string) bool) (val []byt
 // isHeld. A value stored over a key held elsewhere would outrank it. See
 // [Store.LookupGuarded].
 func (s *Store) SetIfAbsentGuarded(key string, val []byte, ttl time.Duration, held func(key string) bool) (resident []byte, stored, isHeld bool) {
-	if held == nil {
-		resident, stored = s.SetIfAbsent(key, val, ttl)
-		return resident, stored, false
-	}
 	var expiresAt int64
 	now := s.clk.Now()
 	if ttl > 0 {
@@ -60,7 +52,7 @@ func (s *Store) SetIfAbsentGuarded(key string, val []byte, ttl time.Duration, he
 	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
 		return old.val, false, false
 	}
-	if !had && held(key) {
+	if !had && held != nil && held(key) {
 		return nil, false, true
 	}
 	sh.forget(key)
@@ -70,7 +62,7 @@ func (s *Store) SetIfAbsentGuarded(key string, val []byte, ttl time.Duration, he
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	s.putEntry(sh, key, entry{val: copied, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: old.order, writer: s.writer})
+	s.putEntry(sh, key, entry{val: copied, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: old.order | unrecordedBit, writer: s.writer})
 	delta := size(key, copied)
 	if had {
 		delta -= size(key, old.val)

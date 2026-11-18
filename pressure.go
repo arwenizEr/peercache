@@ -7,6 +7,7 @@ import (
 
 	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // pressureCheckInterval is how many writes pass between two inline checks of
@@ -208,7 +209,7 @@ func (p *pressure) relieve() {
 			// in storage and comes back on its next access. It is marked
 			// before it leaves memory, so no access finds it in neither
 			// (open question 62).
-			var mark func(string, uint64)
+			var mark func(string, store.ShedEntry)
 			if ns.persister != nil {
 				mark = ns.persister.noteShed
 			}

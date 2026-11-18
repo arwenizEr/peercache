@@ -885,6 +885,15 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	if p.local {
+		if n.shedHeld == nil {
+			// store.Exists, as before the shed checks: an existence
+			// probe is not a read, and the hit and miss counters say
+			// how reads fare.
+			if err := n.awaitRestore(ctx, key); err != nil {
+				return false, err
+			}
+			return n.store.Exists(key), nil
+		}
 		_, ok, err := n.getResident(ctx, key)
 		return ok, err
 	}

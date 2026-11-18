@@ -20,6 +20,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/segment"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // Persistence defaults. See docs/decisions/0029-persistence-as-a-segment-log.md.
@@ -276,14 +277,23 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	}
 }
 
-// shedMark is one key's shed: the order of the value memory held when it
-// left.
+// shedMark is one key's shed: what the value memory held when it left was.
 type shedMark struct {
-	order uint64
+	order     uint64
+	expiresAt int64
+	// unrecorded is a value a loader or a refresh stored: no record will
+	// ever hold it, so a read-back has nothing of it to wait for.
+	unrecorded bool
 }
 
-// noteShed records that the memory budget dropped key from the owned store,
-// holding a value written at order.
+// awaitsRecord reports whether the value the mark names is one storage or this
+// node's records must give back before the key can be answered: a recorded
+// value, live at now. A loaded value is loaded again, and an expired one is
+// absent whatever record of it storage still keeps or has compacted away.
+func (m shedMark) awaitsRecord(now int64) bool {
+	return m.order != 0 && !m.unrecorded && (m.expiresAt == 0 || now < m.expiresAt)
+}
+
 // flushInterval is how often this namespace flushes.
 func (p *persister) flushInterval() time.Duration {
 	if d := p.ns.opts.PersistFlushInterval; d > 0 {
@@ -300,12 +310,14 @@ func (p *persister) unflushedFor() time.Duration {
 	return p.flushInterval() + persistFlushTimeout
 }
 
-func (p *persister) noteShed(key string, order uint64) {
+// noteShed records that the memory budget dropped key from the owned store,
+// and what it held. Called under the store's shard lock, before the key leaves.
+func (p *persister) noteShed(key string, e store.ShedEntry) {
 	p.mu.Lock()
 	if _, ok := p.shed[key]; !ok {
 		p.marks.Add(1)
 	}
-	p.shed[key] = shedMark{order: order}
+	p.shed[key] = shedMark{order: e.Order, expiresAt: e.ExpiresAt, unrecorded: e.Unrecorded}
 	p.mu.Unlock()
 }
 
@@ -609,6 +621,10 @@ type partitionState struct {
 	running chan struct{}
 	// failedAt is when the last restore failed, in Unix nanoseconds.
 	failedAt int64
+	// shedFailedAt is when a shed key's read-back from this partition last
+	// failed. Its own field: one key's failed read must not refuse the
+	// partition's restore, and every key in it, for the retry interval.
+	shedFailedAt int64
 }
 
 // await blocks until the partition holding key has been restored since the
@@ -671,7 +687,7 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 func (p *persister) failedRecently(part int) bool {
 	p.rmu.Lock()
 	defer p.rmu.Unlock()
-	at := p.parts[part].failedAt
+	at := p.parts[part].shedFailedAt
 	return at != 0 && p.clk.Now().UnixNano()-at < int64(restoreRetry)
 }
 
@@ -697,7 +713,7 @@ var errPartitionUnrestored = errors.New("peercache: partition not restored from 
 
 // shedRecordWait bounds how long a read-back of a shed key yields to the write
 // that has stored a newer value and not recorded it yet.
-const shedRecordWait = 10_000
+const shedRecordWait = 1_000
 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
@@ -1216,7 +1232,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 			return ctx.Err()
 		}
 		p.rmu.Lock()
-		p.parts[part].failedAt = p.clk.Now().UnixNano()
+		p.parts[part].shedFailedAt = p.clk.Now().UnixNano()
 		p.rmu.Unlock()
 		p.restoreFailures.Add(1)
 		// Not nil: memory does not hold a shed key, so answering from it
@@ -1229,6 +1245,11 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	defer sc.release()
 	newest := sc.newest
 	if !p.owns(key) {
+		// Not this node's to answer any more; the mark means nothing here,
+		// and left, it would send every access to read the partition again.
+		p.mu.Lock()
+		p.unmark(key)
+		p.mu.Unlock()
 		return nil
 	}
 
@@ -1247,7 +1268,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		if p.settleShed(key, newest[key]) {
 			return nil
 		}
-		if i == shedRecordWait {
+		if i == shedRecordWait || ctx.Err() != nil {
 			return errPartitionUnrestored
 		}
 		runtime.Gosched()
@@ -1265,8 +1286,13 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 // 64). During an outage this keeps the keys written since it began available:
 // they are exactly the ones whose records stay pending.
 func (p *persister) settleFromOwnRecords(key string, sm shedMark) error {
-	if sm.order == 0 {
-		return errPartitionUnrestored
+	if !sm.awaitsRecord(p.clk.Now().UnixNano()) {
+		// Nothing of it to give back: a loaded value is loaded again, and
+		// an expired one is absent. Settled as found nothing.
+		if !p.owns(key) || !p.settleShed(key, nil) {
+			return errPartitionUnrestored
+		}
+		return nil
 	}
 	p.mu.Lock()
 	var r *segment.Record
@@ -1296,9 +1322,10 @@ func (p *persister) settleFromOwnRecords(key string, sm shedMark) error {
 // nor the marks, so an Increment counted from zero, or laid an older value over
 // the newer one that shed had just taken out.
 func (p *persister) settleShed(key string, r *segment.Record) bool {
+	now := p.clk.Now().UnixNano()
 	newer := func() bool {
 		cur, marked := p.shed[key]
-		return marked && (r == nil || cur.order > r.Order)
+		return marked && cur.awaitsRecord(now) && (r == nil || cur.order > r.Order)
 	}
 	if r == nil {
 		// Nothing anywhere. A key absent from memory cannot be shed, so
@@ -1311,7 +1338,7 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 		p.unmark(key)
 		return true
 	}
-	expired := !r.Tombstone && r.ExpiresAt != 0 && p.clk.Now().UnixNano() >= r.ExpiresAt
+	expired := !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt
 	settled := true
 	version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, r.Writer, func() bool {
 		p.mu.Lock()

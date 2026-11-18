@@ -7,23 +7,8 @@ import "time"
 // from the clock read the expiry check already makes saves a second read on
 // every hit.
 func (s *Store) Lookup(key string) (val []byte, version uint64, left time.Duration, ok bool) {
-	sh := s.shardFor(key)
-	sh.mu.RLock()
-	e, found := sh.entries[key]
-	sh.mu.RUnlock()
-	if !found {
-		sh.misses.Add(1)
-		return nil, 0, 0, false
-	}
-	if e.expiresAt != 0 {
-		left = time.Duration(e.expiresAt - s.clk.Now().UnixNano())
-		if left <= 0 {
-			sh.misses.Add(1)
-			return nil, 0, 0, false
-		}
-	}
-	sh.hits.Add(1)
-	return e.val, e.version, left, true
+	val, version, left, ok, _ = s.LookupGuarded(key, nil)
+	return val, version, left, ok
 }
 
 // PutIfVersion stores val under key for ttl only if the key is live and still
@@ -48,7 +33,7 @@ func (s *Store) PutIfVersion(key string, val []byte, ttl time.Duration, version 
 		return false
 	}
 	sh.forget(key)
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version + 1, order: s.nextOrder(), prev: old.order, writer: s.writer})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version + 1, order: s.nextOrder(), prev: old.order | unrecordedBit, writer: s.writer})
 	sh.bytes.Add(size(key, stored) - size(key, old.val))
 	sh.sets.Add(1)
 	return true
