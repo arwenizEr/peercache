@@ -1725,7 +1725,7 @@ mutate "a load overwrites a write that raced it"   internal/store/store.go   '	i
 mutate "a stale tombstone deletes a newer replica" \
   internal/replication/replica.go \
   '	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {' \
-  '	if !held {' \
+  '	if !held || (Newer(e, Entry{Stamp: stamp, Order: order}) && false) {' \
   'TestAStaleTombstoneDoesNotDeleteANewerReplica$' ./tests
 
 # A timer whose turn could not be queued was dropped, its entry left behind.
