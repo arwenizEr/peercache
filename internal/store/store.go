@@ -789,6 +789,15 @@ func (s *Store) Bytes() int64 {
 // Sweep does not, because an expiry happens on every holder
 // at the same deadline and leaves no copy for a rewrite to have to outrank.
 func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64 {
+	return s.ShedMarked(target, nil, visit)
+}
+
+// ShedMarked is [Store.Shed] with mark called for each entry under its shard's
+// lock, before the entry is removed, with the entry's order. A caller that must
+// be able to tell a shed key from an absent one records it there: marked after
+// the lock is released, as visit is, a reader in between finds the key neither
+// present nor marked. mark must not call into this store.
+func (s *Store) ShedMarked(target int64, mark func(key string, order uint64), visit func(key string, version uint64)) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -806,6 +815,9 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 		for key, e := range sh.entries {
 			if freed+before-sh.bytes.Load()+int64(sh.high-len(sh.entries))*EntryOverhead >= target {
 				break
+			}
+			if mark != nil {
+				mark(key, e.order)
 			}
 			s.deleteEntry(sh, key)
 			if e.version > sh.floor {
@@ -912,6 +924,15 @@ func (s *Store) Close() error {
 // write would be, above the shard's floor; a tombstone removes an older live
 // entry and does nothing otherwise. The caller drops expired records first.
 func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint64, tombstone bool) (uint64, bool) {
+	return s.MergeIfNewerGuarded(key, val, expiresAt, order, tombstone, nil)
+}
+
+// MergeIfNewerGuarded is [Store.MergeIfNewer] with guard called first, under
+// the key's shard lock; false applies nothing. A caller whose decision to merge
+// depends on state that [Store.ShedMarked] changes under the same lock decides
+// there, so no shed lands between the decision and the merge. guard must not
+// call into this store.
+func (s *Store) MergeIfNewerGuarded(key string, val []byte, expiresAt int64, order uint64, tombstone bool, guard func() bool) (uint64, bool) {
 	var stored []byte
 	if !tombstone {
 		stored = make([]byte, len(val))
@@ -922,6 +943,9 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	defer sh.shrink(false)
+	if guard != nil && !guard() {
+		return 0, false
+	}
 	sh.forget(key)
 
 	old, had := sh.entries[key]

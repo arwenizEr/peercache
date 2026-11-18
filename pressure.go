@@ -199,14 +199,17 @@ func (p *pressure) relieve() {
 			if share < 1 {
 				share = excess
 			}
-			freed := ns.store.Shed(share, func(key string, _ uint64) {
+			// Shedding is memory relief, never a deletion: the key stays
+			// in storage and comes back on its next access. It is marked
+			// before it leaves memory, so no access finds it in neither
+			// (open question 62).
+			var mark func(string, uint64)
+			if ns.persister != nil {
+				mark = ns.persister.noteShed
+			}
+			freed := ns.store.ShedMarked(share, mark, func(key string, _ uint64) {
 				p.shedOwned.Add(1)
 				ns.replicateShed(key)
-				// Shedding is memory relief, never a deletion: the key
-				// stays in storage and comes back on its next access.
-				if ns.persister != nil {
-					ns.persister.noteShed(key)
-				}
 			})
 			if freed > 0 {
 				progress = true
