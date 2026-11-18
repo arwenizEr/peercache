@@ -3016,6 +3016,12 @@ mutate "a demoted owner keeps its keys in the owned store" \
   '' \
   'TestADemotedOwnerDoesNotResurrectAnOverwrittenValue$' ./tests
 
+mutate "a namespace with no replicas here is never demoted" \
+  promote.go \
+  '	for _, name := range p.namespaces() {' \
+  '	for _, name := range c.replicas.Namespaces() {' \
+  'TestADemotedOwnerAtReplicationFactorOneDoesNotResurrectAnOverwrittenValue$' ./tests
+
 mutate "a namespace with a loader is not marked" \
   cluster.go \
   '			loaded[name] = ns.opts.Loader != nil || ns.opts.BatchLoader != nil || ns.opts.TypedLoader != nil' \

@@ -7,6 +7,20 @@ change the public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A namespace this node holds no replicas of is now reconciled too. The
+  promoter visited only the namespaces in the replica store, so an open
+  namespace with nothing replicated here never had its owned store demoted:
+  at replication factor 1 that was every namespace on every view change, and
+  at 2 and above a namespace's first moments. A node that lost a key kept it
+  and, when ownership came back after the new owner died, served the value
+  the new owner had overwritten. Such a key is now let go of at replication
+  factor 1, as it already was above it, and the owned store no longer keeps
+  keys this node does not own.
+  `TestADemotedOwnerAtReplicationFactorOneDoesNotResurrectAnOverwrittenValue`
+  (docs/decisions/open.md, question 59).
+
 ## [1.1.2] - 2026-11-18
 
 Fixes for what kind found at 3.9 million keys: a throughput cliff, a startup

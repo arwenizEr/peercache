@@ -1217,6 +1217,20 @@ through a backlog of strays, and the shop's throughput at 3.2 million keys
 went from 25,731 and 28,615 orders a run to 69,749 and 73,160
 (docs/m16-results.md).
 
+Reconciling every open namespace, not only those with replicas here (open
+question 59), measured with the same benchmark on 2026-11-18, Machine A, quiet
+(kind scaled to zero), five runs of the default benchtime, medians:
+
+| Keys | Namespaces visited | ns/op |
+|---|---|---|
+| 10,000 | with replicas here | 23,696,542 |
+| 10,000 | every open one | 23,792,284 |
+| 100,000 | with replicas here | 27,436,575 |
+| 100,000 | every open one | 27,468,220 |
+
+No difference outside run-to-run noise: a namespace with nothing replicated
+here costs a demotion pass once per view and an empty drain.
+
 ## A backlog of strays — handed on in parallel
 
 `BenchmarkStrayBacklogOverGRPC`, Machine A, quiet (kind paused): three caches
