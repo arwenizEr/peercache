@@ -259,7 +259,13 @@ func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 	// Four independent rounds: the window is a shed landing between a Set
 	// and a load's store, and one round reaches it about four times in
 	// five. Four miss it together about once in six hundred.
-	for round := 0; round < 4; round++ {
+	rounds := 4
+	if raceEnabled {
+		// About 100 s a round under the race detector, whose job here is
+		// the code paths, not the window: one round runs them.
+		rounds = 1
+	}
+	for round := 0; round < rounds; round++ {
 		t.Run(fmt.Sprintf("round=%d", round), loadRacesShedWrite)
 	}
 }

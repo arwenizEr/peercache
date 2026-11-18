@@ -40,6 +40,12 @@ import (
 // twice.
 func TestDurableSimulation(t *testing.T) {
 	seeds := simSeeds(t)
+	if raceEnabled && seeds > 2 {
+		// Under the race detector a schedule costs about seventy seconds,
+		// and its job there is to run the code paths for the detector, not
+		// to search schedules: two do that. The search runs without it.
+		seeds = 2
+	}
 	base := testkit.Seed(t)
 	t.Logf("running %d durable schedules from base seed %d", seeds, base)
 	for i := 0; i < seeds; i++ {
