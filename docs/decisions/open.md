@@ -2177,3 +2177,60 @@ restored value's order, which an old pending record does not reach.
 `TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage` was refused on every
 key before; `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`
 still sees the refusals for keys whose records were flushed.
+
+## 65. An owner's shed dropped the only other copies of an unflushed write — found by the durable simulation, resolved
+
+**Found** by `TestDurableSimulation`, read from the key traces of decision
+0043: an owner wrote a counter during a store outage, the write reached its
+two replicas synchronously, and the owner's memory budget shed the key in the
+same moment. The shed told the replicas to drop their copies, as it does for a
+namespace without persistence, where a shed is a loss the replicas follow.
+The owner then died with its flush failing; the next owner had no copy to
+promote and restored the older stored value, and the replica that still held
+the write was not the owner and never promoted it. Open question 60 kept
+these copies from the replica node's own budget; the owner's shed reached them
+another way. `TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites` lost 40 of
+40 acknowledged decrements this way.
+
+**Picked:** a persistent namespace's shed leaves the replicas alone. Its key
+is not lost — it stays in storage and is read back — so the copies are still
+copies of it, and the version floor already makes the owner's next write
+outrank them. Nothing about a non-persistent namespace changes.
+
+## 66. A fork whose minority copy is demoted before the majority's arrives is not counted — found by the durable simulation, open
+
+**Found** by `TestDurableSimulation`: in a partition the cut-off node promoted
+its replica of a counter once its activation delay passed, as decision 5
+allows, and took a write there, while the majority's owner took two. The
+minority's write came later by the clock, so its order was higher. After the
+heal the minority's value was demoted into its replica store with no writer and
+no predecessor — the owned store records neither — and the majority's later
+copies arrived older by order and were refused as stale. The majority's
+acknowledged decrements were lost, which is the AP window decision 5 and the
+README describe, but `SplitBrainDetections` stayed at zero, and the README
+says conflicting writes are detected and counted.
+
+`replication.Forked` judges a fork from both copies' writers and predecessors.
+A demoted copy has neither: naming the demoting node as the writer invented
+forks (open question 50's follow-up, one run in twenty of
+`TestMajoritySideWritesSurviveAHeal`), so it names none, and an unnamed copy is
+never judged.
+
+**Options:**
+
+1. Keep each owned entry's writer and predecessor order, from the write or the
+   copy that installed it, and carry them through demotion and hand-off. About
+   24 bytes an entry, which the memory budget's measured per-entry cost must
+   then include.
+2. Judge at the owner instead: an incoming copy newer by order whose
+   predecessor is older than the value the owner holds was written without
+   seeing it. Needs the predecessor on the incoming copy, which a demoted copy
+   lacks too, so it is 1 for the predecessor alone (8 bytes an entry).
+3. Leave detection as it is and qualify the README: conflicting writes are
+   detected when both copies still name their writers.
+
+**Picked for now:** none in code. 3 weakens a stated guarantee, which decision
+0042 treats as a breaking change, and 1 or 2 change the owned store's entry
+and the budget's accounting; a decision between them is the owner's. Until
+then `TestDurableSimulation` excuses the keys that were also written on a
+minority side, the documented window, and reports the detections it saw.

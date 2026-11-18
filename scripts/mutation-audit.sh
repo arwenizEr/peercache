@@ -3579,6 +3579,12 @@ mutate "a shed key this node still holds is refused during an outage" \
   '	return errPartitionUnrestored' \
   'TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage$' ./tests
 
+mutate "an owner's shed of a persistent key drops its replicas" \
+  pressure.go \
+  '	if n.opts.ReplicationFactor < 2 || n.persister != nil {' \
+  '	if n.opts.ReplicationFactor < 2 {' \
+  'TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

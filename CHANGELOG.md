@@ -43,6 +43,11 @@ change the public API.
   `TestShedCountersRacingTheirWritersLoseNoDecrement`,
   `TestShedFreshKeysLoseNoFirstWrite`, `TestShedKeysAreNeverReadAsAbsent`,
   `TestALoadDoesNotStoreOverAShedWrite`.
+- An owner's memory-budget shed of a persistent key no longer tells the key's
+  replicas to drop their copies. While the owner had not flushed the key's
+  newest write those copies were its only other holders, and an owner dying
+  before its flush lost the write (open question 65).
+  `TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites`.
 - A memory-budget relief round no longer stalls every copy arriving for a
   namespace. A shed rebuilds the map it removed from, which is what frees its
   slots, and with one map a namespace that copied the whole remaining

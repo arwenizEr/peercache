@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -38,6 +39,20 @@ import (
 // Losing promised decrements is the failure kind showed as a stock count above
 // the order ledger; exceeding the upper bound would be a decrement applied
 // twice.
+//
+// Two more workloads share the schedule. Counters in a namespace without
+// persistence ("carts"), whose promise is replication alone: only a node killed
+// without draining can take their copies, so only those kills excuse a loss —
+// and the memory budget, whose shed of such a key is a documented loss. Which
+// keys were shed is read from the nodes' key traces after every step, before a
+// later kill can take a node's history with it; a shed counter is checked only
+// for decrements applied twice.
+// And order claims ("orders"), the shop's idempotency pattern: SetIfAbsent on
+// a few keys from many nodes. A claim acknowledged where the design keeps it
+// must read back with the value it claimed, and no key may be claimed twice
+// with different values while the first claim stands. A drain, the graceful
+// restart a rolling upgrade is made of, is among the faults; it excuses
+// nothing.
 func TestDurableSimulation(t *testing.T) {
 	seeds := simSeeds(t)
 	if raceEnabled && seeds > 2 {
@@ -73,6 +88,13 @@ type durLedger struct {
 	unknown    int
 }
 
+// durClaim is one acknowledged order claim and the destruction counts when it
+// was made.
+type durClaim struct {
+	val       string
+	crashesAt int
+}
+
 type durableSim struct {
 	t      *testing.T
 	f      *fabric
@@ -80,6 +102,20 @@ type durableSim struct {
 	stores map[string]*cutOffStore
 
 	ledger map[string]*durLedger
+	// carts is the non-persistent counters' ledger, judged against
+	// hardKills rather than unflushedCrashes.
+	carts map[string]*durLedger
+	// claims holds, per order key, the claim acknowledged where the design
+	// keeps it.
+	claims map[string]durClaim
+	// violations are failures found while the schedule ran: a key claimed
+	// twice. Reported with the rest at the end.
+	violations []string
+	// hardKills counts every node killed without a drain: what can take a
+	// non-persistent copy.
+	hardKills int
+	// cartsShed names the carts keys some node's budget shed.
+	cartsShed map[string]bool
 
 	partitioned bool
 	minority    map[string]bool
@@ -112,8 +148,23 @@ func (s *durableSim) openStock(id string) peercache.Namespace {
 		peercache.WithPersistence(s.stores[id]))
 }
 
+func (s *durableSim) openCarts(id string) peercache.Namespace {
+	return s.f.caches[id].Namespace("carts",
+		peercache.WithReplicationFactor(simRF),
+		peercache.WithSyncReplication())
+}
+
+func (s *durableSim) openOrders(id string) peercache.Namespace {
+	return s.f.caches[id].Namespace("orders",
+		peercache.WithReplicationFactor(simRF),
+		peercache.WithSyncReplication(),
+		peercache.WithPersistence(s.stores[id]))
+}
+
 func (s *durableSim) open(id string) {
 	s.openStock(id)
+	s.openCarts(id)
+	s.openOrders(id)
 	s.f.caches[id].Namespace("bulk")
 }
 
@@ -122,16 +173,19 @@ func runDurableSimulation(t *testing.T, seed int64) {
 		FailureTimeout: 300 * time.Millisecond,
 		JoinDelay:      200 * time.Millisecond,
 	}, ownership.DefaultActivationDelay,
-		withCacheOptions(peercache.WithMemoryBudget(durBudget)))
+		withCacheOptions(peercache.WithMemoryBudget(durBudget), peercache.WithKeyTrace("carts", ""), peercache.WithKeyTrace("stock", "")))
 
 	backing := persist.Memory()
 	s := &durableSim{
-		t:        t,
-		f:        f,
-		rng:      rand.New(rand.NewSource(seed)),
-		stores:   map[string]*cutOffStore{},
-		ledger:   map[string]*durLedger{},
-		minority: map[string]bool{},
+		t:         t,
+		f:         f,
+		rng:       rand.New(rand.NewSource(seed)),
+		stores:    map[string]*cutOffStore{},
+		ledger:    map[string]*durLedger{},
+		carts:     map[string]*durLedger{},
+		cartsShed: map[string]bool{},
+		claims:    map[string]durClaim{},
+		minority:  map[string]bool{},
 	}
 	for _, id := range f.ids {
 		s.stores[id] = &cutOffStore{BlobStore: backing}
@@ -144,6 +198,7 @@ func runDurableSimulation(t *testing.T, seed int64) {
 
 	for step := 0; step < durSteps; step++ {
 		s.step()
+		s.noteCartsShed()
 	}
 
 	// Repair everything, then judge.
@@ -169,18 +224,45 @@ func runDurableSimulation(t *testing.T, seed int64) {
 	}
 	f.settle(t)
 
-	keys := make([]string, 0, len(s.ledger))
-	for k := range s.ledger {
+	wrong := append([]string(nil), s.violations...)
+	checked := 0
+	wrong = append(wrong, s.judgeCounters("stock", s.ledger, s.unflushedCrashes, s.openStock, nil, &checked)...)
+	wrong = append(wrong, s.judgeCounters("carts", s.carts, s.hardKills, s.openCarts, s.cartsShed, &checked)...)
+	wrong = append(wrong, s.judgeClaims(&checked)...)
+	var forks int64
+	for _, id := range f.ids {
+		forks += f.caches[id].Stats().SplitBrainDetections
+	}
+	if len(wrong) > 0 {
+		t.Logf("split-brain detections counted by the nodes at the end: %d", forks)
+		t.Fatalf("seed %d: %d disagreements with the ledgers.\n"+
+			"Replay with PEERCACHE_SEED=%d.\n%v\nschedule:\n%s",
+			seed, len(wrong), seed, wrong, s.history())
+	}
+	var shed int64
+	for _, id := range f.ids {
+		shed += f.caches[id].Stats().ShedOwned
+	}
+	t.Logf("seed %d: %d counters and claims agree with their ledgers; %d owned keys shed, "+
+		"%d unflushed crashes, %d hard kills", seed, checked, shed, s.unflushedCrashes, s.hardKills)
+}
+
+// judgeCounters checks each counter of a ledger against its final value.
+// destroyed is the count that excuses a promised decrement once it has grown
+// by the replication factor since.
+func (s *durableSim) judgeCounters(name string, ledger map[string]*durLedger, destroyed int,
+	open func(string) peercache.Namespace, shed map[string]bool, checked *int) []string {
+	keys := make([]string, 0, len(ledger))
+	for k := range ledger {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	var wrong []string
-	checked := 0
 	for _, key := range keys {
-		l := s.ledger[key]
+		l := ledger[key]
 		promised, excused := 0, 0
 		for _, at := range l.promised {
-			if s.unflushedCrashes-at >= simRF {
+			if destroyed-at >= simRF {
 				excused++
 			} else {
 				promised++
@@ -189,63 +271,152 @@ func runDurableSimulation(t *testing.T, seed int64) {
 		if promised+excused+l.unpromised == 0 {
 			continue // never acknowledged: absent and present are both right
 		}
-		got, err := s.readCounter(key)
+		if shed[key] {
+			// Shed is lost, and the count started again from zero: only
+			// the upper bound still holds.
+			excused += promised
+			promised = 0
+		}
+		v, err := s.read(open, key)
+		if errors.Is(err, peercache.ErrNotFound) && promised == 0 {
+			continue // every acknowledgement excused or unpromised: absent is allowed
+		}
 		if err != nil {
-			wrong = append(wrong, fmt.Sprintf("%s: unreadable: %v", key, err))
+			wrong = append(wrong, fmt.Sprintf("%s/%s: unreadable: %v\n%s", name, key, err, s.keyHistory(name, key)))
 			continue
 		}
-		checked++
+		got, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			wrong = append(wrong, fmt.Sprintf("%s/%s holds %q", name, key, v))
+			continue
+		}
+		*checked++
 		lo, hi := int64(promised), int64(promised+excused+l.unpromised+l.unknown)
 		if -got < lo || -got > hi {
-			wrong = append(wrong, fmt.Sprintf("%s = %d: %d decrements applied, ledger allows %d..%d "+
-				"(promised %d, excused %d, unpromised %d, unknown %d)",
-				key, got, -got, lo, hi, promised, excused, l.unpromised, l.unknown))
+			wrong = append(wrong, fmt.Sprintf("%s/%s = %d: %d decrements applied, ledger allows %d..%d "+
+				"(promised %d, excused %d, unpromised %d, unknown %d)\n%s",
+				name, key, got, -got, lo, hi, promised, excused, l.unpromised, l.unknown, s.keyHistory(name, key)))
 		}
 	}
-	if len(wrong) > 0 {
-		t.Fatalf("seed %d: %d of %d counters disagree with their ledger.\n"+
-			"Replay with PEERCACHE_SEED=%d.\n%v\nschedule:\n%s",
-			seed, len(wrong), len(keys), seed, wrong, s.history())
-	}
-	var shed int64
-	for _, id := range f.ids {
-		shed += f.caches[id].Stats().ShedOwned
-	}
-	t.Logf("seed %d: %d counters agree with their ledger; %d owned keys shed, %d unflushed crashes",
-		seed, checked, shed, s.unflushedCrashes)
+	return wrong
 }
 
-// readCounter reads key from any live node, asking again while the answer is
-// "ask again".
-func (s *durableSim) readCounter(key string) (int64, error) {
+// keyHistory merges key's history from every live node by time: a failure's
+// sequence of events, as far as the nodes still alive remember it.
+func (s *durableSim) keyHistory(namespace, key string) string {
+	type ev struct {
+		node string
+		peercache.KeyEvent
+	}
+	var all []ev
+	for _, id := range s.f.live() {
+		for _, e := range s.f.caches[id].KeyHistory(namespace, key) {
+			all = append(all, ev{id, e})
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].At < all[j].At })
+	out := ""
+	for _, e := range all {
+		out += fmt.Sprintf("      %d %s %-16s order=%d writer=%s v=%d hash=%s %s\n",
+			e.At, e.node, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+	}
+	return out
+}
+
+// keepHistories writes into the schedule what victim remembers of each stock
+// key, before killing it takes that memory: a failure's history is otherwise
+// only what the survivors saw.
+func (s *durableSim) keepHistories(victim string) {
+	for key := range s.ledger {
+		for _, e := range s.f.caches[victim].KeyHistory("stock", key) {
+			s.logf("  [%s stock/%s] %d %s order=%d writer=%s v=%d hash=%s %s",
+				victim, key, e.At, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+		}
+	}
+}
+
+// noteCartsShed records the carts keys any live node's budget has shed, from
+// their key traces.
+func (s *durableSim) noteCartsShed() {
+	for key := range s.carts {
+		if s.cartsShed[key] {
+			continue
+		}
+		for _, id := range s.f.live() {
+			h := s.f.caches[id].KeyHistory("carts", key)
+			_, shed := lastOf(h, "shed")
+			_, replicaShed := lastOf(h, "replica-shed")
+			if shed || replicaShed {
+				s.cartsShed[key] = true
+				s.logf("carts/%s was shed on %s", key, id)
+				break
+			}
+		}
+	}
+}
+
+// judgeClaims checks that every standing claim reads back with its value.
+func (s *durableSim) judgeClaims(checked *int) []string {
+	keys := make([]string, 0, len(s.claims))
+	for k := range s.claims {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var wrong []string
+	for _, key := range keys {
+		c := s.claims[key]
+		if s.unflushedCrashes-c.crashesAt >= simRF {
+			continue
+		}
+		v, err := s.read(s.openOrders, key)
+		*checked++
+		if err != nil || v != c.val {
+			wrong = append(wrong, fmt.Sprintf("orders/%s = %q, %v; claimed as %q", key, v, err, c.val))
+		}
+	}
+	return wrong
+}
+
+// read reads key from any live node, asking again while the answer is "ask
+// again".
+func (s *durableSim) read(open func(string) peercache.Namespace, key string) (string, error) {
 	var last error
 	for attempt := 0; attempt < 50; attempt++ {
 		for _, id := range s.f.live() {
-			v, err := s.openStock(id).Get(context.Background(), key)
+			v, err := open(id).Get(context.Background(), key)
 			if err == nil {
-				return strconv.ParseInt(string(v), 10, 64)
+				return string(v), nil
+			}
+			if errors.Is(err, peercache.ErrNotFound) {
+				return "", err
 			}
 			last = err
 		}
 		s.f.clk.Advance(time.Second)
 		s.f.settle(s.t)
 	}
-	return 0, last
+	return "", last
 }
 
 func (s *durableSim) step() {
 	switch roll := s.rng.Intn(100); {
-	case roll < 45:
+	case roll < 32:
 		s.decrement()
-	case roll < 62:
+	case roll < 42:
+		s.decrementCart()
+	case roll < 52:
+		s.claim()
+	case roll < 64:
 		s.fill()
 	case roll < 69:
 		s.kill()
-	case roll < 76:
+	case roll < 73:
+		s.drain()
+	case roll < 80:
 		s.revive()
-	case roll < 85:
+	case roll < 88:
 		s.togglePartition()
-	case roll < 93:
+	case roll < 94:
 		s.setOutage(!s.outage)
 	default:
 		s.f.clk.Advance(flushInterval)
@@ -255,32 +426,113 @@ func (s *durableSim) step() {
 }
 
 func (s *durableSim) decrement() {
+	s.decrementIn("stock", s.ledger, s.unflushedCrashes, s.openStock)
+}
+
+func (s *durableSim) decrementCart() {
+	s.decrementIn("carts", s.carts, s.hardKills, s.openCarts)
+}
+
+// promisedVia reports whether a write acknowledged through via is one the
+// design promises to keep, and if not, why.
+func (s *durableSim) promisedVia(via string) (bool, string) {
+	switch {
+	case s.partitioned && s.minority[via]:
+		return false, "minority side"
+	case s.f.caches[via].Stats().Members < simRF:
+		return false, "view below RF"
+	}
+	return true, ""
+}
+
+func (s *durableSim) decrementIn(name string, ledger map[string]*durLedger, destroyed int, open func(string) peercache.Namespace) {
 	live := s.f.live()
 	if len(live) == 0 {
 		return
 	}
 	via := live[s.rng.Intn(len(live))]
 	key := fmt.Sprintf("item-%d", s.rng.Intn(durCounters))
-	l := s.ledger[key]
+	l := ledger[key]
 	if l == nil {
 		l = &durLedger{}
-		s.ledger[key] = l
+		ledger[key] = l
 	}
-	got, err := s.openStock(via).Increment(context.Background(), key, -1, 0)
+	got, err := open(via).Increment(context.Background(), key, -1, 0)
+	if err != nil {
+		l.unknown++
+		s.logf("decrement %s/%s via %s -> %v", name, key, via, err)
+		return
+	}
+	if ok, why := s.promisedVia(via); !ok {
+		l.unpromised++
+		s.logf("decrement %s/%s via %s -> %d (%s)", name, key, via, got, why)
+		return
+	}
+	l.promised = append(l.promised, destroyed)
+	s.logf("decrement %s/%s via %s -> %d", name, key, via, got)
+}
+
+// claim tries to claim one of a few order keys with a fresh value, as a
+// checkout claims its order ID.
+func (s *durableSim) claim() {
+	live := s.f.live()
+	if len(live) == 0 {
+		return
+	}
+	via := live[s.rng.Intn(len(live))]
+	key := fmt.Sprintf("order-%d", s.rng.Intn(durCounters))
+	val := fmt.Sprintf("by-%s-%d", via, s.rng.Intn(1_000_000))
+	stored, err := s.openOrders(via).SetIfAbsent(context.Background(), key, []byte(val), 0)
 	switch {
 	case err != nil:
-		l.unknown++
-		s.logf("decrement %s via %s -> %v", key, via, err)
-	case s.partitioned && s.minority[via]:
-		l.unpromised++
-		s.logf("decrement %s via %s -> %d (minority side)", key, via, got)
-	case s.f.caches[via].Stats().Members < simRF:
-		l.unpromised++
-		s.logf("decrement %s via %s -> %d (view below RF)", key, via, got)
-	default:
-		l.promised = append(l.promised, s.unflushedCrashes)
-		s.logf("decrement %s via %s -> %d", key, via, got)
+		s.logf("claim %s via %s -> %v", key, via, err)
+		return
+	case !stored:
+		s.logf("claim %s via %s -> already claimed", key, via)
+		return
 	}
+	ok, why := s.promisedVia(via)
+	if !ok {
+		s.logf("claim %s via %s -> %s (%s)", key, via, val, why)
+		return
+	}
+	if prev, had := s.claims[key]; had && s.unflushedCrashes-prev.crashesAt < simRF {
+		s.violations = append(s.violations, fmt.Sprintf("orders/%s claimed twice: %q, then %q via %s",
+			key, prev.val, val, via))
+	}
+	s.claims[key] = durClaim{val: val, crashesAt: s.unflushedCrashes}
+	s.logf("claim %s via %s -> %s", key, via, val)
+}
+
+// drain restarts a node gracefully: Drain hands its keys on, Close flushes.
+// It loses nothing the design keeps, so it excuses nothing — unless the store
+// is unreachable from the node, when the final flush fails as a crash's would.
+func (s *durableSim) drain() {
+	if len(s.f.live()) <= simRF {
+		return
+	}
+	s.healIfSplit()
+	live := s.f.live()
+	victim := live[s.rng.Intn(len(live))]
+	err := s.f.caches[victim].Drain(context.Background())
+	cut := s.stores[victim].cut.Load()
+	s.keepHistories(victim)
+	s.f.dead[victim] = true
+	_ = s.f.caches[victim].Close(context.Background())
+	s.f.memberships[victim].Close()
+	s.f.net.Unregister(victim)
+	if cut {
+		s.unflushedCrashes++
+	}
+	if err != nil {
+		// A drain that could not hand everything on is a kill for what
+		// it did not.
+		s.hardKills++
+	}
+	s.f.clk.Advance(2 * testkit.DefaultFailureTimeout)
+	s.f.convergeTo(s.t, len(s.f.live()))
+	s.f.settle(s.t)
+	s.logf("drain %s (drain error: %v, store unreachable: %v, %d live)", victim, err, cut, len(s.f.live()))
 }
 
 // fill writes enough unrelated data through one node to push it over its
@@ -315,6 +567,7 @@ func (s *durableSim) kill() {
 		s.stores[victim].cut.Store(true)
 		cut = true
 	}
+	s.keepHistories(victim)
 	s.f.dead[victim] = true
 	_ = s.f.caches[victim].Close(context.Background())
 	s.f.memberships[victim].Close()
@@ -322,6 +575,7 @@ func (s *durableSim) kill() {
 	if cut {
 		s.unflushedCrashes++
 	}
+	s.hardKills++
 	s.stores[victim].cut.Store(s.outage)
 	s.f.clk.Advance(2 * testkit.DefaultFailureTimeout)
 	s.f.convergeTo(s.t, len(s.f.live()))
