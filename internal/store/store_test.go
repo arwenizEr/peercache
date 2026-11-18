@@ -17,7 +17,7 @@ import (
 // newStore builds a store with the background sweeper disabled, so that expiry
 // is driven explicitly by the test rather than by a goroutine the test would
 // then have to synchronise with.
-func newStore(t *testing.T, opts ...func(*store.Options)) (*store.Store, *clock.Fake) {
+func newStore(t testing.TB, opts ...func(*store.Options)) (*store.Store, *clock.Fake) {
 	t.Helper()
 	fc := clock.NewFake(clock.Epoch)
 	fc.SetMisuseHandler(func(msg string) { t.Errorf("clock misuse: %s", msg) })

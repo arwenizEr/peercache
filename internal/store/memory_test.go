@@ -103,6 +103,13 @@ func TestBytesMatchesAModelUnderRandomOperations(t *testing.T) {
 		for k, n := range model {
 			want += int64(len(k)+n) + store.EntryOverhead
 		}
+		// And the slots removals left, which a map keeps until it is
+		// rebuilt: at most a third more than it holds, per shard.
+		slots, held := s.Slots(), int64(len(model))
+		if slots < held || slots*3 > held*4+3*int64(s.Shards()) {
+			t.Fatalf("op %d: %d slots charged for %d entries", i, slots, held)
+		}
+		want += (slots - held) * store.EntryOverhead
 		if got := s.Bytes(); got != want {
 			t.Fatalf("op %d: Bytes = %d, model says %d", i, got, want)
 		}

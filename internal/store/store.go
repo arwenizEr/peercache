@@ -45,6 +45,10 @@ const (
 // TestAccountedBytesCoverTheLiveHeap holds the figure to it. It was 96, an
 // estimate that called itself high and was a third too low, and on kind a
 // pod budgeted by it at half its container limit was OOM-killed.
+//
+// It is charged per slot a shard's map keeps, which deleting does not give
+// back: one per entry, and one per entry removed since the map was last
+// rebuilt; see shard.shrink and [Store.Slots].
 const EntryOverhead int64 = 160
 
 // Options configures a [Store].
@@ -106,9 +110,13 @@ type shard struct {
 	shed    atomic.Int64
 
 	// bytes is the shard's accounted size: every resident entry's key and
-	// value plus [EntryOverhead]. Written only under mu, read without it by
-	// [Store.Bytes], hence atomic.
+	// value, plus [EntryOverhead] per slot the map keeps — one per entry and
+	// one per entry removed since the map was last built (see shrink).
+	// Written only under mu, read without it by [Store.Bytes], hence atomic.
 	bytes atomic.Int64
+	// high is the most entries the map has held since it was last built,
+	// guarded by mu.
+	high int
 
 	// floor is the highest version this shard has shed, guarded by mu. A
 	// first write to an absent key starts above it, so a key shed and then
@@ -651,6 +659,7 @@ func (s *Store) Remove(key string) (bool, uint64) {
 		if e.version > sh.floor {
 			sh.floor = e.version
 		}
+		sh.shrink(false)
 	}
 	sh.mu.Unlock()
 
@@ -723,6 +732,19 @@ func (s *Store) Stats() Counters {
 	return c
 }
 
+// Slots returns how many map slots the store charges [EntryOverhead] for: one
+// per resident entry, and one per entry removed from a shard since its map was
+// last rebuilt, which a Go map keeps until then.
+func (s *Store) Slots() int64 {
+	var n int64
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		n += int64(sh.high)
+		sh.mu.RUnlock()
+	}
+	return n
+}
+
 // Bytes returns the store's accounted size: every resident entry's key and
 // value, plus [EntryOverhead] each.
 //
@@ -780,19 +802,22 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 		sh := s.shards[(start+uint64(i))&s.mask]
 		var out []removed
 		sh.mu.Lock()
+		before := sh.bytes.Load()
 		for key, e := range sh.entries {
-			if freed >= target {
+			if freed+before-sh.bytes.Load()+int64(sh.high-len(sh.entries))*EntryOverhead >= target {
 				break
 			}
 			s.deleteEntry(sh, key)
 			if e.version > sh.floor {
 				sh.floor = e.version
 			}
-			n := size(key, e.val)
-			sh.bytes.Add(-n)
-			freed += n
+			sh.bytes.Add(-size(key, e.val))
 			out = append(out, removed{key, e.version})
 		}
+		// Rebuilt whatever share was shed: shedding is for memory, and a
+		// map gives none of its slots back until it is rebuilt.
+		sh.shrink(true)
+		freed += before - sh.bytes.Load()
 		sh.mu.Unlock()
 		sh.shed.Add(int64(len(out)))
 		if visit != nil {
@@ -838,6 +863,7 @@ func (s *Store) Sweep(n int) int {
 			}
 		}
 		sh.dropExpiredAbsences(now)
+		sh.shrink(false)
 		sh.mu.Unlock()
 		if fromShard > 0 {
 			sh.expired.Add(int64(fromShard))
@@ -895,6 +921,7 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	defer sh.shrink(false)
 	sh.forget(key)
 
 	old, had := sh.entries[key]

@@ -35,6 +35,7 @@ func (s *Store) TakeWhere(take func(key string) bool) []SnapshotEntry {
 			sh.bytes.Add(-size(key, e.val))
 			s.deleteEntry(sh, key)
 		}
+		sh.shrink(false)
 		sh.mu.Unlock()
 	}
 	return out

@@ -1292,6 +1292,28 @@ mutate "a replica is charged per live entry, not per slot kept" \
   '	freed := int64(0)' \
   'TestReplicaBytesTracksEveryPath$' ./internal/replication/
 
+mutate "an owned shard's map is never rebuilt" \
+  internal/store/digest.go \
+  '	if n == sh.high || (!force && n*4 >= sh.high*3) {' \
+  '	if true || n == sh.high || (!force && n*4 >= sh.high*3) {' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/store/
+
+mutate "a removed owned entry's slot is not charged" \
+  internal/store/digest.go \
+  '		sh.bytes.Add(EntryOverhead)
+	}
+}' \
+  '	}
+}' \
+  'TestBytesMatchesAModelUnderRandomOperations$' ./internal/store/
+
+mutate "a demotion never rebuilds the shards it took from" \
+  internal/store/take.go \
+  '		sh.shrink(false)
+		sh.mu.Unlock()' \
+  '		sh.mu.Unlock()' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/store/
+
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
   '			if e.Order >= floor {

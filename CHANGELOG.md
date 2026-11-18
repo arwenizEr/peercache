@@ -84,7 +84,9 @@ change the public API.
   heap for 136 MB accounted, and pods were OOM-killed with the budget reading
   460 MB of 512. Each namespace's map is now rebuilt once it holds under three
   quarters of what it held, and after every shed, and charged for the slots it
-  keeps until then. `TestAccountedBytesCoverTheLiveHeapAfterRemovals`.
+  keeps until then. The owned store's shards are treated the same way, which
+  matters after a demotion takes a returning owner's share out of them.
+  `TestAccountedBytesCoverTheLiveHeapAfterRemovals`, in both stores.
 
 - The memory budget no longer sheds a replica of a persistent write its owner
   may not have flushed yet: for one flush interval and the flush timeout after
