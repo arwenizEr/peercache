@@ -22,8 +22,11 @@ change the public API.
   when the key was neither in memory nor marked as shed, so an `Increment`
   counted from zero; a stress test applied 30 of 749 acknowledged decrements.
   The mark and memory now change together under the key's shard lock (open
-  question 62). `TestShedCountersRacingTheirWritersLoseNoDecrement`,
-  `TestShedFreshKeysLoseNoFirstWrite`.
+  question 62). Reads no longer report such a key absent, and a loader's
+  result is no longer stored over a write the budget shed while it ran.
+  `TestShedCountersRacingTheirWritersLoseNoDecrement`,
+  `TestShedFreshKeysLoseNoFirstWrite`, `TestShedKeysAreNeverReadAsAbsent`,
+  `TestALoadDoesNotStoreOverAShedWrite`.
 - A memory-budget relief round no longer stalls every copy arriving for a
   namespace. A shed rebuilds the map it removed from, which is what frees its
   slots, and with one map a namespace that copied the whole remaining

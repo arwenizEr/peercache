@@ -2110,8 +2110,10 @@ wrote it. `TestShedCountersRacingTheirWritersLoseNoDecrement` and
 order. Its tests catch its removal in about seven runs of ten, and the
 first-write case in one of ten; a deterministic test needs a hook between a
 write's store and its record, which this code base does not use. Reads (`Get`,
-`BatchGet`, `Exists`, a loader's store) still check the mark only in
-`awaitRestore`; a shed racing them reports a key absent that storage holds,
-which is wrong but loses nothing, and a loader's `SetIfAbsent` there can lay a
-loaded value over a newer stored one. Recorded as the next step rather than
-fixed here.
+`BatchGet`, `Exists`, a loader's store) checked the mark only in
+`awaitRestore` at first, so a shed racing them reported a key absent that
+storage holds, and a loader's `SetIfAbsent` could lay a loaded value over a
+newer stored one. They now ask under the shard lock too, on a miss only
+(`Store.LookupGuarded`, `Store.SetIfAbsentGuarded`), and a namespace with
+nothing shed takes no lock for it. `TestShedKeysAreNeverReadAsAbsent` and
+`TestALoadDoesNotStoreOverAShedWrite` fail without them.

@@ -3479,6 +3479,34 @@ mutate "an update does not look at the shed mark under the shard lock" \
   '		if false && !ok && n.persister != nil && n.persister.isShed(key) {' \
   'TestShedCountersRacingTheirWritersLoseNoDecrement$' ./tests
 
+mutate "a read checks the shed mark outside the shard lock" \
+  namespace.go \
+  '		val, version, left, ok, held := n.store.LookupGuarded(key, n.shedHeld)' \
+  '		val, version, left, ok, held := n.store.LookupGuarded(key, nil)' \
+  'TestShedKeysAreNeverReadAsAbsent$' ./tests
+
+mutate "a load is stored over a write the budget shed" \
+  namespace.go \
+  'n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)' \
+  'n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, nil)' \
+  'TestALoadDoesNotStoreOverAShedWrite$' ./tests
+
+mutate "a guarded lookup does not ask about a miss" \
+  internal/store/guarded.go \
+  '	if !found {
+		isHeld = held(key)
+	}' \
+  '	if false {
+		isHeld = held(key)
+	}' \
+  'TestLookupGuardedAsksOnlyOnAMiss$' ./internal/store/
+
+mutate "a guarded SetIfAbsent stores over a held key" \
+  internal/store/guarded.go \
+  '	if !had && held(key) {' \
+  '	if false && !had && held(key) {' \
+  'TestSetIfAbsentGuardedStoresNothingOverAHeldKey$' ./internal/store/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
