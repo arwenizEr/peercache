@@ -3522,6 +3522,54 @@ mutate "a failed shed read-back leaves no retry interval" \
 		p.restoreFailures.Add(1)' \
   'TestAShedReadBackBacksOffWhileStorageIsDown$' ./tests
 
+# --- a key's history (decision 0043) ---
+mutate "the owner's write is not traced" \
+  namespace.go \
+  '	if n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceWrite, written.Order' \
+  '	if false && n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceWrite, written.Order' \
+  'TestATracedKeyRecordsItsWritesAndAnUntracedOneNothing$' ./tests
+
+mutate "a replica copy is not traced" \
+  handler.go \
+  '	if h.cache.traced(in.Namespace, in.Key) {
+		h.cache.recordCopy(' \
+  '	if false && h.cache.traced(in.Namespace, in.Key) {
+		h.cache.recordCopy(' \
+  'TestAKeysHistoryFollowsItAcrossNodes$' ./tests
+
+mutate "a promotion is not traced" \
+  promote.go \
+  '			if p.cache.traced(ns.name, key) {
+				p.cache.record(ns.name, key, keytracePromote' \
+  '			if false && p.cache.traced(ns.name, key) {
+				p.cache.record(ns.name, key, keytracePromote' \
+  'TestAKeysHistoryFollowsItAcrossNodes$' ./tests
+
+mutate "a shed is not traced" \
+  pressure.go \
+  '				if c.traced(ns.name, key) {
+					c.record(ns.name, key, keytraceShed' \
+  '				if false && c.traced(ns.name, key) {
+					c.record(ns.name, key, keytraceShed' \
+  'TestAShedAndItsReadBackAreTraced$' ./tests
+
+mutate "a read-back is not traced" \
+  persistence.go \
+  '	if p.ns.cache.traced(p.ns.name, key) {
+		detail := "memory held newer"' \
+  '	if false && p.ns.cache.traced(p.ns.name, key) {
+		detail := "memory held newer"' \
+  'TestAShedAndItsReadBackAreTraced$' ./tests
+
+mutate "a key's ring keeps the oldest events instead of the newest" \
+  internal/keytrace/keytrace.go \
+  '	out = append(out, r.events[r.next:]...)
+	return append(out, r.events[:r.next]...)' \
+  '	return append(out, r.events[:]...)' \
+  'TestAHistoryKeepsTheNewestEventsOldestFirst$' ./internal/keytrace/
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
