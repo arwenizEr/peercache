@@ -204,6 +204,10 @@ type namespace struct {
 	// persister writes this namespace's owned changes behind to its blob
 	// store. Nil unless the namespace was opened with WithPersistence.
 	persister *persister
+	// shedHeld reports a key the memory budget shed and storage holds;
+	// nil without persistence. Kept as a field so that passing it to the
+	// store allocates nothing.
+	shedHeld func(key string) bool
 }
 
 // status returns the error every operation on this handle should report, or nil
@@ -292,10 +296,10 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 
 // localGet reads from this node's owned store.
 func (n *namespace) localGet(ctx context.Context, key string) ([]byte, error) {
-	if err := n.awaitRestore(ctx, key); err != nil {
+	stored, _, _, ok, err := n.lookupResident(ctx, key)
+	if err != nil {
 		return nil, err
 	}
-	stored, _, ok := n.store.Get(key)
 	if !ok {
 		// The bare sentinel, not a wrapped one. A miss is routine — it is
 		// most of what GetOrLoad and BatchGet see — and formatting the
@@ -864,10 +868,8 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	if p.local {
-		if err := n.awaitRestore(ctx, key); err != nil {
-			return false, err
-		}
-		return n.store.Exists(key), nil
+		_, _, _, ok, err := n.lookupResident(ctx, key)
+		return ok, err
 	}
 
 	// No dedicated RPC: existence is a Get whose value is discarded. Adding
@@ -946,10 +948,10 @@ func (n *namespace) localBatchGet(ctx context.Context, keys []string, out map[st
 				return err
 			}
 		}
-		if err := n.awaitRestore(ctx, key); err != nil {
+		stored, _, _, ok, err := n.lookupResident(ctx, key)
+		if err != nil {
 			return err
 		}
-		stored, _, ok := n.store.Get(key)
 		if !ok {
 			// Absent keys are omitted, not reported. A batch read
 			// where half the keys are cold is the normal case, not
@@ -1057,19 +1059,17 @@ func (n *namespace) GetOrLoad(ctx context.Context, key string) ([]byte, error) {
 
 // localGetOrLoad is the single-node path: resident, or loaded under the flight.
 func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, error) {
-	if err := n.awaitRestore(ctx, key); err != nil {
+	stored, version, left, ok, err := n.lookupResident(ctx, key)
+	if err != nil {
 		return nil, err
 	}
 	if n.opts.Loader == nil {
 		return nil, fmt.Errorf("namespace %q: %w", n.name, ErrNoLoader)
 	}
-
-	if n.opts.RefreshAhead > 0 {
-		if stored, version, left, ok := n.store.Lookup(key); ok {
+	if ok {
+		if n.opts.RefreshAhead > 0 {
 			n.maybeRefresh(key, version, left)
-			return n.decode(stored)
 		}
-	} else if stored, _, ok := n.store.Get(key); ok {
 		return n.decode(stored)
 	}
 	if n.knownAbsent(key) {
@@ -1084,7 +1084,11 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		// the key — or found nothing, and remembered that; loading it
 		// again would be a pointless round trip to whatever the loader
 		// talks to.
-		if stored, _, ok := n.store.Get(key); ok {
+		stored, _, _, ok, held := n.store.LookupGuarded(key, n.shedHeld)
+		if held {
+			return nil, 0, n.shedSinceRestore(key)
+		}
+		if ok {
 			val, err := n.decode(stored)
 			return val, 0, err
 		}
@@ -1117,9 +1121,14 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		// still absent. A Set that landed while the loader ran is newer than
 		// what the loader read, and storing over it unconditionally, as an
 		// earlier version did, lost that write until the key's TTL. In that
-		// case the newer value is the answer.
-		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)
-		if !stored {
+		// case the newer value is the answer. Guarded too: a key the budget
+		// shed while the loader ran is in storage, newer than what the
+		// loader read, and must not be stored over.
+		resident, wrote, shed := n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)
+		if shed {
+			return nil, 0, n.shedSinceRestore(key)
+		}
+		if !wrote {
 			current, err := n.decode(resident)
 			return current, 0, err
 		}
@@ -1175,6 +1184,32 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 }
 
 var _ Namespace = (*namespace)(nil)
+
+// lookupResident reads key from the owned store once its restore is done,
+// reading it back first if the memory budget shed it, including when the shed
+// lands between the restore and the read (open question 62). ok false is an
+// absence storage agrees with.
+func (n *namespace) lookupResident(ctx context.Context, key string) (val []byte, version uint64, left time.Duration, ok bool, err error) {
+	for attempt := 0; ; attempt++ {
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return nil, 0, 0, false, err
+		}
+		val, version, left, ok, held := n.store.LookupGuarded(key, n.shedHeld)
+		if !held {
+			return val, version, left, ok, nil
+		}
+		if attempt == shedRetries {
+			return nil, 0, 0, false, n.shedSinceRestore(key)
+		}
+	}
+}
+
+// shedSinceRestore is the refusal for a key the budget keeps shedding faster
+// than it can be read back.
+func (n *namespace) shedSinceRestore(key string) error {
+	return fmt.Errorf("peercache: namespace %q: %q is being shed faster than it "+
+		"can be read back; ask again shortly: %w", n.name, key, ErrActivationPending)
+}
 
 // awaitRestore waits, in a persistent namespace, for key's partition to be
 // restored since the last membership change; see persister.await. Elsewhere it

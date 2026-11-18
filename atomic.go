@@ -155,8 +155,7 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 			return wrote, err
 		}
 		if attempt == shedRetries {
-			return false, fmt.Errorf("peercache: namespace %q: %q is being shed faster than it "+
-				"can be read back; ask again shortly: %w", n.name, key, ErrActivationPending)
+			return false, n.shedSinceRestore(key)
 		}
 	}
 }
@@ -195,7 +194,7 @@ func (n *namespace) localUpdateOnce(ctx context.Context, key string, fn func(cur
 		// marks a key under this lock before removing it. Absent and
 		// marked is "not in memory", not "not there"; counted from zero,
 		// the write outranked the stored value (open question 62).
-		if !ok && n.persister != nil && n.persister.isShed(key) {
+		if !ok && n.shedHeld != nil && n.shedHeld(key) {
 			return store.Mutation{}, false, errShedSinceRestore
 		}
 		var cur []byte

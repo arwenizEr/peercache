@@ -628,6 +628,7 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 	ns.store = st
 	if opts.Persistence != nil {
 		ns.persister = newPersister(ns, opts.Persistence)
+		ns.shedHeld = ns.persister.isShed
 	}
 	if opts.HotKeys > 0 {
 		ns.hot = hotkeys.New(c.opts.Clock, opts.HotKeys)

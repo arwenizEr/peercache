@@ -71,10 +71,11 @@ func (n *namespace) localBatchGetOrLoad(ctx context.Context, keys []string, out 
 				return err
 			}
 		}
-		if err := n.awaitRestore(ctx, key); err != nil {
+		stored, _, _, ok, err := n.lookupResident(ctx, key)
+		if err != nil {
 			return err
 		}
-		if stored, _, ok := n.store.Get(key); ok {
+		if ok {
 			val, err := n.decode(stored)
 			if err != nil {
 				return err
@@ -183,7 +184,12 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 			}
 			continue
 		}
-		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)
+		resident, stored, held := n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)
+		if held {
+			// Shed while the loader ran: storage holds something newer
+			// than the load. Left out, as an unanswered key is.
+			continue
+		}
 		if !stored {
 			current, err := n.decode(resident)
 			if err != nil {

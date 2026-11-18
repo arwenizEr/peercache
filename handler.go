@@ -156,10 +156,10 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 
-	if err := ns.awaitRestore(ctx, in.Key); err != nil {
+	stored, version, left, found, err := ns.lookupResident(ctx, in.Key)
+	if err != nil {
 		return nil, err
 	}
-	stored, version, left, found := ns.store.Lookup(in.Key)
 	if !found {
 		return wire.Encode(&wire.GetResponse{})
 	}
@@ -378,10 +378,10 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			}
 			continue
 		}
-		if err := ns.awaitRestore(ctx, key); err != nil {
+		stored, version, left, found, err := ns.lookupResident(ctx, key)
+		if err != nil {
 			return nil, err
 		}
-		stored, version, left, found := ns.store.Lookup(key)
 		if !found {
 			if in.Load {
 				missing = append(missing, key)

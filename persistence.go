@@ -119,6 +119,9 @@ type persister struct {
 	// partition instead would bring every shed key back at once and undo
 	// the shedding that made room. Bounded by the owned keys shed.
 	shed map[string]shedMark
+	// marks is len(shed), read without the lock so a miss in a namespace
+	// with nothing shed costs no lock at all.
+	marks atomic.Int64
 
 	// inflight is the batch a flush has taken from pending and not yet
 	// finished writing; flushedDuring holds the batches flushes wrote while
@@ -299,6 +302,9 @@ func (p *persister) unflushedFor() time.Duration {
 
 func (p *persister) noteShed(key string, order uint64) {
 	p.mu.Lock()
+	if _, ok := p.shed[key]; !ok {
+		p.marks.Add(1)
+	}
 	p.shed[key] = shedMark{order: order}
 	p.mu.Unlock()
 }
@@ -306,10 +312,21 @@ func (p *persister) noteShed(key string, order uint64) {
 // isShed reports whether key is marked as shed and not yet read back. Called
 // under the owned store's shard lock, which is the order noteShed takes them in.
 func (p *persister) isShed(key string) bool {
+	if p.marks.Load() == 0 {
+		return false
+	}
 	p.mu.Lock()
 	_, shed := p.shed[key]
 	p.mu.Unlock()
 	return shed
+}
+
+// unmark clears key's shed mark. Called with p.mu held.
+func (p *persister) unmark(key string) {
+	if _, ok := p.shed[key]; ok {
+		delete(p.shed, key)
+		p.marks.Add(-1)
+	}
 }
 
 // pendingBytes is what the dirty map holds, for the memory budget.
@@ -1230,7 +1247,7 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 		if newer() {
 			return false
 		}
-		delete(p.shed, key)
+		p.unmark(key)
 		return true
 	}
 	expired := !r.Tombstone && r.ExpiresAt != 0 && p.clk.Now().UnixNano() >= r.ExpiresAt
@@ -1242,7 +1259,7 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 			settled = false
 			return false
 		}
-		delete(p.shed, key)
+		p.unmark(key)
 		return true
 	})
 	if !settled {
