@@ -130,6 +130,19 @@ type restoreBacklog struct {
 	// wake has room for one signal: a sender asleep on it is woken by the
 	// next push, and pushes while nobody sleeps leave one signal behind.
 	wake chan struct{}
+	// bytes is what the queued keys are charged; the memory budget counts
+	// it. On kind a failover's restores queued enough keys to hold 80 MB.
+	bytes atomic.Int64
+}
+
+// restoredKeySlot is the size of a restoredKey on 64-bit: a pointer, a
+// string header, an order and a padded bool.
+const restoredKeySlot = 40
+
+// restoredKeyCharge is what one queued key is charged: its slot, twice over
+// for the slice's growth by doubling, and its key.
+func restoredKeyCharge(k restoredKey) int64 {
+	return 2*restoredKeySlot + int64(len(k.key))
 }
 
 // push appends k unless the backlog is at max, and reports whether it did.
@@ -140,6 +153,7 @@ func (b *restoreBacklog) push(k restoredKey, max int) bool {
 		return false
 	}
 	b.items = append(b.items, k)
+	b.bytes.Add(restoredKeyCharge(k))
 	b.mu.Unlock()
 	select {
 	case b.wake <- struct{}{}:
@@ -157,6 +171,7 @@ func (b *restoreBacklog) pop() (restoredKey, bool) {
 		return restoredKey{}, false
 	}
 	k := b.items[b.head]
+	b.bytes.Add(-restoredKeyCharge(k))
 	b.items[b.head] = restoredKey{}
 	b.head++
 	if b.head == len(b.items) {

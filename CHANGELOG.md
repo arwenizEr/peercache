@@ -84,7 +84,21 @@ change the public API.
   heap for 136 MB accounted, and pods were OOM-killed with the budget reading
   460 MB of 512. Each namespace's map is now rebuilt once it holds under three
   quarters of what it held, and after every shed, and charged for the slots it
-  keeps until then. `TestAccountedBytesCoverTheLiveHeapAfterRemovals`.
+  keeps until then. The owned store's shards are treated the same way, which
+  matters after a demotion takes a returning owner's share out of them.
+  `TestAccountedBytesCoverTheLiveHeapAfterRemovals`, in both stores.
+
+- The memory budget counts what a persistent namespace's restores and
+  compactions have read and not yet applied, the logs kept for them, and the
+  restored keys waiting to be sent to their replicas. None of it was counted:
+  on kind, in a partition, a pod's restores held 150 to 200 MB of decoded
+  records and its restore backlog 80 MB while the budget read 440 MB of 512,
+  and the pod was OOM-killed at 1 GiB. A scan asks the budget for room once it
+  has read, before it applies. The logs kept for restores are bounded at
+  48 MiB by the measured charge, the 16 MiB they were bounded at by an
+  estimate a sixth of it. `TestARestoreCountsWhatItReadsAgainstTheBudget`,
+  `TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget`,
+  `TestDecodedSizeCoversTheLiveHeap`.
 
 - The memory budget no longer sheds a replica of a persistent write its owner
   may not have flushed yet: for one flush interval and the flush timeout after

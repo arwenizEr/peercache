@@ -1292,6 +1292,58 @@ mutate "a replica is charged per live entry, not per slot kept" \
   '	freed := int64(0)' \
   'TestReplicaBytesTracksEveryPath$' ./internal/replication/
 
+mutate "what restores have read is outside the budget" \
+  pressure.go \
+  '			total += ns.persister.transientBytes()' \
+  '			_ = ns.persister.transientBytes()' \
+  'TestARestoreCountsWhatItReadsAgainstTheBudget$' ./tests
+
+mutate "a scan never gives back what it held" \
+  persistence.go \
+  '	sc.p.transient.Add(-sc.held)' \
+  '	_ = sc.held' \
+  'TestARestoreCountsWhatItReadsAgainstTheBudget$' ./tests
+
+mutate "the restore backlog is outside the budget" \
+  pressure.go \
+  '	total += c.replicator.restored.bytes.Load()' \
+  '	_ = c.replicator.restored.bytes.Load()' \
+  'TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget$' ./tests
+
+mutate "a sent restored key stays charged" \
+  replicate.go \
+  '	b.bytes.Add(-restoredKeyCharge(k))' \
+  '	_ = k' \
+  'TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget$' ./tests
+
+mutate "decoded records are charged their strings alone" \
+  internal/segment/segment.go \
+  '	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + DecodedOverhead' \
+  '	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + 0*DecodedOverhead' \
+  'TestDecodedSizeCoversTheLiveHeap$' ./internal/segment/
+
+mutate "an owned shard's map is never rebuilt" \
+  internal/store/digest.go \
+  '	if n == sh.high || (!force && n*4 >= sh.high*3) {' \
+  '	if true || n == sh.high || (!force && n*4 >= sh.high*3) {' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/store/
+
+mutate "a removed owned entry's slot is not charged" \
+  internal/store/digest.go \
+  '		sh.bytes.Add(EntryOverhead)
+	}
+}' \
+  '	}
+}' \
+  'TestBytesMatchesAModelUnderRandomOperations$' ./internal/store/
+
+mutate "a demotion never rebuilds the shards it took from" \
+  internal/store/take.go \
+  '		sh.shrink(false)
+		sh.mu.Unlock()' \
+  '		sh.mu.Unlock()' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/store/
+
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
   '			if e.Order >= floor {
@@ -2050,12 +2102,12 @@ mutate "a restore skips a corrupt log" \
 				return nil, err
 			}
 			loaded[name] = true
-			merge(&segment.File{Records: records})' \
+			// Records from the shared logs are counted there, once.' \
   '			if err != nil {
 				continue
 			}
 			loaded[name] = true
-			merge(&segment.File{Records: records})' \
+			// Records from the shared logs are counted there, once.' \
   'TestACorruptSegmentFailsTheRestore$' ./tests
 
 mutate "a failed restore is never retried" \
@@ -3077,12 +3129,12 @@ mutate "a drained node applies a peer's write" \
 
 mutate "a restore gives up on a log that moved" \
   persistence.go \
-  '			records, err := p.logRecords(ctx, name, part)
+  '			records, shared, err := p.logRecords(ctx, name, part)
 			if gone(err) {
 				vanished = true
 				continue
 			}' \
-  '			records, err := p.logRecords(ctx, name, part)' \
+  '			records, shared, err := p.logRecords(ctx, name, part)' \
   'TestARestoreOutlastsASplitterDeletingItsLogs$' ./tests
 mutate "an unrestored partition answers absent keys from memory" \
   namespace.go \
@@ -3158,8 +3210,8 @@ mutate "partitions restore one at a time" \
 
 mutate "every partition reads every log for itself" \
   persistence.go \
-  'records, err := p.logRecords(ctx, name, part)' \
-  'records, err := p.loadLogPart(ctx, name, part)' \
+  'records, shared, err := p.logRecords(ctx, name, part)' \
+  'records, err := p.loadLogPart(ctx, name, part); shared := false' \
   'TestARestoreReadsEachLogOnce$' ./tests
 
 mutate "compaction reads a partition before counting its segments" \

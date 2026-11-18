@@ -58,6 +58,27 @@ func (r *Record) Newer(other *Record) bool {
 	return r.Writer > other.Writer
 }
 
+// DecodedOverhead is what a record read by [Decode] takes beyond its strings
+// and value: its slot in the file's slice, the string and slice headers, the
+// separate allocation each string and the value get, and a share of a map
+// entry keeping the newest record per key, which every reader of a partition
+// builds. TestDecodedSizeCoversTheLiveHeap holds it to the live heap.
+const DecodedOverhead = 200
+
+// DecodedSize is what r is charged while a reader holds it.
+func (r *Record) DecodedSize() int64 {
+	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + DecodedOverhead
+}
+
+// DecodedSize is [Record.DecodedSize] over records.
+func DecodedSize(records []Record) int64 {
+	var n int64
+	for i := range records {
+		n += records[i].DecodedSize()
+	}
+	return n
+}
+
 // File is a decoded segment or snapshot.
 type File struct {
 	Kind    Kind

@@ -1291,6 +1291,27 @@ rebuilds the namespace's map after it, which is what frees them, at about
 replicas, once per relief round, not per write. Each round sheds to nine tenths
 of the budget, so rounds are a tenth of the budget's worth of inflow apart.
 
+## Owned store and restores — counting what the budget missed
+
+Machine A, median of five runs. The owned store charges spare map slots and
+rebuilds a shard once it holds under three quarters of them; restores charge
+what they decode to the budget.
+
+| Benchmark | before | after |
+|---|---|---|
+| `BenchmarkSet` | 160 ns | 150 ns |
+| `BenchmarkSetDeleteChurn` (100,000 keys) | 245 ns | 237 ns |
+| `BenchmarkOwnedShed` (a tenth of 100,000, `-benchtime 20x`) | 1.24 ms | 1.34 ms |
+| `BenchmarkRestoreAfterRestart`, 50,000 keys | 68.5 ms | 68.3 ms |
+| `BenchmarkRestoreAfterRestart`, 200,000 keys | 415 ms | 272 ms |
+
+A shard is a 256th of the store, so its rebuild after a shed is a few
+thousand entries; churn and writes do not move. The restore at 200,000 keys
+first went to 718 ms: the kept logs are bounded in bytes, and counted by
+`segment.DecodedSize` the old 16 MiB bound kept a third as many records, so
+partitions read the logs for themselves again. The bound is 48 MiB now,
+counted in the budget, and keeps every log this benchmark writes.
+
 ## Invalidation hints under a burst of writes
 
 `BenchmarkHintsOverGRPC`, Machine A: three caches over real gRPC on
