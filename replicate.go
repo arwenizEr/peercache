@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,23 +36,35 @@ const replicaQueue = 4096
 // worker, so one key's copies still travel one at a time and in order.
 const replicaWorkers = 8
 
-// restoreQueue and restoreWorkers size the fan-out of restored keys, which
-// has a queue and senders of its own.
+// restoreBacklogMax and restoreWorkers size the fan-out of restored keys,
+// which has a backlog and senders of its own.
 //
-// It shared the live queue. A restart restores a node's whole share at once —
-// on kind, 249,000 keys in a minute on one pod — and every restored key went
-// out to its replicas through the queue live writes use: the burst filled it,
-// and for that minute it dropped live asynchronous copies along with restored
-// ones (224,622 drops, docs/m16-results.md). A restored key's replicas usually
-// still hold it, from before the restart, so losing that copy costs little;
-// losing a live write's copy is a write held by one node. So restored keys
-// queue apart, drops of them are counted apart (RestoreReplicationsDropped),
-// and live writes never wait behind them. A key's restored copy and a later
-// write's copy may then arrive in either order; a replica keeps the newer by
-// stamp, as it does for any copy.
+// It shared the live queue first. A restart restores a node's whole share at
+// once — on kind, 249,000 keys in a minute on one pod — and the burst filled
+// the queue live writes use and dropped live copies along with restored ones
+// (224,622 drops, docs/m16-results.md). So restored keys were given a queue of
+// their own, of 1,024, and its drops were counted apart, on the reasoning that
+// a restored key's replicas usually still hold it from before the restart.
+//
+// Under a rolling restart they do not: the nodes holding those replicas were
+// restarted too, and hold nothing. On kind at 3.7 million keys, 98% of every
+// pod's restored keys had their copies dropped — 1.37 million keys, about 2.7
+// million missing copies, a third of the cluster's redundancy gone with no
+// write lost and nothing to show for it but this counter.
+//
+// So a restored key is never dropped for want of room. It is noted — its
+// namespace, key and order, not its value — in a backlog the senders work
+// through at the network's pace, and its value is read from the owned store
+// when its turn comes. The backlog is bounded only as a guard, far above any
+// share a node restores; past it a key is dropped and counted in
+// RestoreReplicationsDropped, which otherwise stays zero.
+//
+// A key's restored copy and a later write's copy may arrive in either order; a
+// replica keeps the newer, as it does for any copy. A key written since it was
+// restored is skipped: the write replicated it.
 const (
-	restoreQueue   = 1024
-	restoreWorkers = 2
+	restoreBacklogMax = 4 << 20
+	restoreWorkers    = 8
 )
 
 // replicaTimeout bounds one asynchronous fan-out attempt.
@@ -79,8 +92,8 @@ type replicator struct {
 	// queues holds one channel per worker; a key's work always goes to
 	// queues[workerFor(namespace, key)].
 	queues []chan replicaWork
-	// restored is the queue for restored keys; see restoreQueue.
-	restored chan replicaWork
+	// restored is the backlog of restored keys; see restoreBacklogMax.
+	restored restoreBacklog
 	done     chan struct{}
 	wg       sync.WaitGroup
 
@@ -95,8 +108,67 @@ type replicator struct {
 	failed    atomic.Int64
 	conflicts atomic.Int64
 	// restoreDropped counts restored keys' copies dropped because their
-	// queue was full.
+	// backlog was at restoreBacklogMax.
 	restoreDropped atomic.Int64
+}
+
+// restoredKey is one restored key waiting to go to its replicas.
+type restoredKey struct {
+	ns    *namespace
+	key   string
+	order uint64
+	// tombstone is a restored deletion, sent as one; anything else is sent
+	// as the owned store holds it when its turn comes.
+	tombstone bool
+}
+
+// restoreBacklog is a first-in first-out list of restored keys.
+type restoreBacklog struct {
+	mu    sync.Mutex
+	items []restoredKey
+	head  int
+	// wake has room for one signal: a sender asleep on it is woken by the
+	// next push, and pushes while nobody sleeps leave one signal behind.
+	wake chan struct{}
+}
+
+// push appends k unless the backlog is at max, and reports whether it did.
+func (b *restoreBacklog) push(k restoredKey, max int) bool {
+	b.mu.Lock()
+	if len(b.items)-b.head >= max {
+		b.mu.Unlock()
+		return false
+	}
+	b.items = append(b.items, k)
+	b.mu.Unlock()
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// pop takes the oldest key, if any. The slice is released once drained, so a
+// burst's backing array does not outlive it.
+func (b *restoreBacklog) pop() (restoredKey, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.head == len(b.items) {
+		return restoredKey{}, false
+	}
+	k := b.items[b.head]
+	b.items[b.head] = restoredKey{}
+	b.head++
+	if b.head == len(b.items) {
+		b.items, b.head = nil, 0
+	} else {
+		// Another sender may be asleep with work left.
+		select {
+		case b.wake <- struct{}{}:
+		default:
+		}
+	}
+	return k, true
 }
 
 // replicaWork is one key's fan-out.
@@ -119,7 +191,7 @@ func newReplicator(c *cache) *replicator {
 	r := &replicator{
 		cache:      c,
 		queues:     make([]chan replicaWork, replicaWorkers),
-		restored:   make(chan replicaWork, restoreQueue),
+		restored:   restoreBacklog{wake: make(chan struct{}, 1)},
 		done:       make(chan struct{}),
 		base:       base,
 		cancelBase: cancel,
@@ -131,22 +203,86 @@ func newReplicator(c *cache) *replicator {
 	}
 	for i := 0; i < restoreWorkers; i++ {
 		r.wg.Add(1)
-		go r.run(r.restored)
+		go r.runRestored()
 	}
 	return r
 }
 
-// enqueueRestored schedules the fan-out of a restored key on the restore
-// queue. It never blocks: a restore has callers waiting for it.
-func (r *replicator) enqueueRestored(w replicaWork) {
-	if len(w.targets) == 0 {
-		return
-	}
-	select {
-	case r.restored <- w:
-	default:
+// enqueueRestored notes a restored key for its replicas. It never blocks: a
+// restore has callers waiting for it.
+func (r *replicator) enqueueRestored(k restoredKey) {
+	if !r.restored.push(k, restoreBacklogMax) {
 		r.restoreDropped.Add(1)
 	}
+}
+
+// runRestored sends restored keys to their replicas until Close.
+func (r *replicator) runRestored() {
+	defer r.wg.Done()
+	for {
+		k, ok := r.restored.pop()
+		if !ok {
+			select {
+			case <-r.done:
+				return
+			case <-r.restored.wake:
+			}
+			continue
+		}
+		select {
+		case <-r.done:
+			return
+		default:
+		}
+		w, send := r.restoredWork(k)
+		if !send {
+			continue
+		}
+		ctx, cancel := clock.WithTimeout(r.base, r.cache.opts.Clock, replicaTimeout)
+		r.fanOut(ctx, w)
+		cancel()
+	}
+}
+
+// restoredWork builds the fan-out of a restored key as things stand now,
+// and reports false when there is nothing to send: the key is no longer this
+// node's, has been written since it was restored, has expired, or has no
+// replicas to go to.
+func (r *replicator) restoredWork(k restoredKey) (replicaWork, bool) {
+	ns := k.ns
+	if g := r.cache.guard; g != nil {
+		owner, _, err := g.Table().Owner(ns.groupKeyFor(k.key))
+		if err != nil || owner.ID != r.cache.selfID() {
+			return replicaWork{}, false
+		}
+	}
+	w := replicaWork{namespace: ns.name, key: k.key, order: k.order}
+	if k.tombstone {
+		if order, live := ns.store.Order(k.key); live && order > k.order {
+			return replicaWork{}, false
+		}
+		w.stamp = ns.stamp(math.MaxUint64)
+		w.deleted = true
+	} else {
+		val, version, expiresAt, order, live := ns.store.Peek(k.key)
+		if !live || order != k.order {
+			return replicaWork{}, false
+		}
+		w.value = val
+		w.stamp = ns.stamp(version)
+		if expiresAt != 0 {
+			w.ttl = time.Duration(expiresAt - r.cache.opts.Clock.Now().UnixNano())
+			if w.ttl <= 0 {
+				return replicaWork{}, false
+			}
+		}
+	}
+	targets, _, err := r.cache.replicaTargets(ns.groupKeyFor(k.key), ns.opts.ReplicationFactor)
+	if err != nil || len(targets) == 0 {
+		return replicaWork{}, false
+	}
+	w.targets = targets
+	return w, true
 }
 
 // targets returns the nodes that should hold a copy of this group key, not

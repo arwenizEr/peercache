@@ -50,6 +50,21 @@ change the public API.
   the deadline, so this changes how soon memory comes back, never what is
   served. `BenchmarkSweepExpired`: 19.2 ms to 0.6 ms at a million replicas.
 
+- Restored keys are no longer dropped on their way to their replicas. They
+  went through a queue of 1,024, dropped when full, on the reasoning that a
+  restored key's replicas still hold it from before the restart. After a
+  rolling restart they do not, since they restarted too. On kind at 3.7
+  million keys, 98% of every pod's restored keys had their copies dropped:
+  about 2.7 million missing copies, a third of the cluster's redundancy, with
+  no write lost and only `restoreReplicationsDropped` to show it. A restored
+  key now waits in a backlog of its own, its key and order kept rather than
+  its value, and eight senders send it as the owned store holds it when its
+  turn comes, skipping it if it was written or moved since.
+  `TestEveryRestoredKeyReachesItsReplicasAfterAColdStart`.
+- `RestoreReplicationsDropped` and `peercache_restore_replications_dropped_total`
+  now count only keys refused by the backlog's guard bound of four million,
+  and are zero in an ordinary restart.
+
 ### Added
 
 - `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that

@@ -1589,10 +1589,14 @@ implementation found it needed — the last two added when a partition heal turn
 out to move replicas that the reconciler had been discarding.
 
 `peercache_restore_replications_dropped_total` is not among them on purpose. It
-counts copies of keys a restore brought back from storage, dropped when a
-restart's burst filled their queue; their replicas usually still hold them from
-before. It has a queue apart from live writes so that such a burst cannot
-reach `peercache_replications_dropped_total`, which stays the one to alert on.
+counts keys a restore brought back from storage that were never sent to their
+replicas, and it stays zero unless four million restored keys are waiting to
+go at once: a restored key waits in a backlog of its own, apart from live
+writes, for as long as the network takes. That backlog is kept apart so that a
+restart's burst cannot reach `peercache_replications_dropped_total`, which
+stays the one to alert on. Before 1.1.2 it held 1,024 and dropped the rest,
+on the reasoning that a restored key's replicas still held it; after a rolling
+restart they do not, because they restarted too.
 
 `peercache_promotion_scans_total` is not among them either; it is a health
 signal, not a correctness one. It counts passes that ranked every replica of a

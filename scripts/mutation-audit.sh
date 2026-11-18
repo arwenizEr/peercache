@@ -3232,13 +3232,29 @@ mutate "a dead node's name is never reclaimed" \
   '	if false {' \
   'TestADeadNodeRejoinsUnderItsNameFromANewAddress$' ./membership
 
-# --- restored keys fan out on a queue of their own ---
+# --- restored keys fan out from a backlog of their own, dropping none ---
 
 mutate "restored keys share the live replication queue" \
   replicate.go \
-  '	case r.restored <- w:' \
-  '	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:' \
+  '	if !r.restored.push(k, restoreBacklogMax) {
+		r.restoreDropped.Add(1)
+	}' \
+  '	if w, ok := r.restoredWork(k); ok {
+		r.enqueue(w)
+	}' \
   'TestARestoreDoesNotCrowdOutLiveReplication$' ./tests
+
+mutate "restored keys are dropped once a queue's worth is waiting" \
+  replicate.go \
+  'r.restored.push(k, restoreBacklogMax)' \
+  'r.restored.push(k, 1024)' \
+  'TestEveryRestoredKeyReachesItsReplicasAfterAColdStart$' ./tests
+
+mutate "a restored key is never sent" \
+  replicate.go \
+  '		if !live || order != k.order {' \
+  '		if !live || order == k.order {' \
+  'TestEveryRestoredKeyReachesItsReplicasAfterAColdStart$' ./tests
 
 # --- replica expiry samples a large namespace ---
 

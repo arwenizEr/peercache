@@ -51,6 +51,9 @@ type fabric struct {
 	// included, and nodeOptions to one node each.
 	cacheOptions []peercache.Option
 	nodeOptions  map[string][]peercache.Option
+	// wrapTransport, when set, wraps every node's transport, revived ones
+	// included.
+	wrapTransport func(id string, tr core.Transport) core.Transport
 }
 
 // hardKill removes a node the way an ungraceful termination does: no
@@ -98,11 +101,15 @@ func (f *fabric) revive(t *testing.T, id string) {
 		t.Fatalf("rejoining %s: %v", id, err)
 	}
 
+	var tr core.Transport = f.net.Transport(info)
+	if f.wrapTransport != nil {
+		tr = f.wrapTransport(id, tr)
+	}
 	c, err := peercache.New(append([]peercache.Option{
 		peercache.WithNodeID(id),
 		peercache.WithClock(f.clk),
 		peercache.WithMembership(m),
-		peercache.WithTransport(f.net.Transport(info)),
+		peercache.WithTransport(tr),
 		peercache.WithActivationDelay(f.activationDelay),
 	}, append(append([]peercache.Option(nil), f.cacheOptions...), f.nodeOptions[id]...)...)...)
 	if err != nil {
@@ -300,6 +307,7 @@ func newFabricFull(t testing.TB, n int, counting bool, mcfg testkit.MembershipCo
 	f.mcfg = mcfg
 	f.activationDelay = activationDelay
 	f.cacheOptions = hooks.cacheOptions
+	f.wrapTransport = hooks.wrapTransport
 	f.nodeOptions = hooks.nodeOptions
 
 	memberships := make(map[string]*testkit.Membership, n)
