@@ -29,7 +29,10 @@ change the public API.
   refusal waits out the restore retry interval before storage is read again,
   rather than reading a partition on every access during the outage and
   counting a restore failure each time.
-  `TestAShedReadBackBacksOffWhileStorageIsDown`.
+  `TestAShedReadBackBacksOffWhileStorageIsDown`. A shed key whose newest
+  write this node still holds unflushed is answered from that record rather
+  than refused, which keeps keys written during an outage available (open
+  question 64). `TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage`.
 - A persistent counter under memory pressure no longer loses decrements with
   storage reachable. Shedding a key and reading it back each left a moment
   when the key was neither in memory nor marked as shed, so an `Increment`

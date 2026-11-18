@@ -2148,7 +2148,7 @@ an outage most batches against an over-budget owner fail.
 absent. 3 is the answer if batches during outages matter to someone; it is an
 addition, reversible in the sense that it breaks nobody.
 
-## 64. A refused shed key may be newer here than anything storage holds — found by review, open
+## 64. A refused shed key may be newer here than anything storage holds — found by review, resolved
 
 When a shed key's read-back fails, the access is refused even if this node's
 own unflushed records hold the key's newest write: during an outage flushes
@@ -2164,6 +2164,16 @@ are refused for the whole outage though the overlay would answer them.
    here under the current ownership means, and false after a move this node
    cannot see.
 
-**Picked for now:** 1. Availability for a short window against a correctness
-argument that needs care about ownership history. Revisit with a test that
-pins down the ownership condition.
+**Picked:** 2, with the condition made exact by the shed's mark rather than by
+ownership history. The mark keeps the order of the value memory held when the
+key was shed, and memory was being served then. A record of this node's, still
+pending or being flushed, of at least that order is that value or a later
+write of its own; installing it is as right as serving memory was before the
+shed. Anything older, or nothing, and storage may hold what memory did, so the
+key is refused as before. The ownership worry is answered by the same order:
+a value this node held before losing the key and regaining it would have been
+replaced in memory by the restore that followed, and the mark would name the
+restored value's order, which an old pending record does not reach.
+`TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage` was refused on every
+key before; `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`
+still sees the refusals for keys whose records were flushed.
