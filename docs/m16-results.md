@@ -23,6 +23,50 @@ reads), MinIO, 32 load-generator workers.
 - **Forks:** `peercache_split_brain_detections_total`, summed over the pods at
   the check. A pod the scenario restarted reports only what it counted since.
 
+## v1.1.2 candidate (2026-11-18, main at 39d92d0)
+
+### First, on 68f1c59: two scenarios lost acknowledged orders
+
+With the throughput cliff closed (below), the six scenarios on 68f1c59 — 3.9
+million keys, 1 GiB pods budgeted at 512 MiB with `GOMEMLIMIT` — lost 20
+acknowledged orders in kill9 and 230 in partition, with 49 stock counts wrong.
+The kernel logged cgroup OOM kills: in the partition all five pods died within
+twelve seconds of it starting. v1.1.0 had lost nothing at 2.6 million keys, but
+its budget, a third low until #103, had never shed.
+
+Two faults, found apart:
+
+- **Kill9.** Every pod was over its budget and shedding replicas, about 550,000
+  each. The lost orders were scattered over a second and a half before the kill,
+  inside the owner's flush window: their replicas, the only other holders of
+  writes not yet flushed, had been shed. #105 keeps replicas of persistent
+  writes younger than one flush interval and the flush timeout (open question
+  60).
+- **Partition.** Heap profiles taken every two seconds through the partition
+  showed pods dying at about 783 MB of live heap while the budget read 440 MB.
+  The difference was memory the budget did not count: a replica map promoted
+  from 1.1 million copies to 440,000 still held the million's slots, 239 MB for
+  136 MB accounted, since a Go map never gives slots back (#106, and the owned
+  store's shards in #107); restores held 150 to 200 MB of decoded records, eight
+  partitions at once; the backlog of restored keys held 80 MB (both #107).
+
+### The six scenarios on 39d92d0
+
+`up.sh` from main, then `scenarios.sh`, on the data the runs above left.
+
+| Scenario | Acknowledged | Lost | Uncertain | Stock exact / within / wrong | Forks | Checkouts/s |
+|---|---|---|---|---|---|---|
+| steady | 82,618 | 0 | 0 | 50 / 0 / 0 | 0 | 1,377 |
+| kill9 | 115,790 | 0 | 114 | 46 / 4 / 0 | 0 | 1,294 |
+| rolling | 34,062 | 0 | 791 | 28 / 22 / 0 | 0 | 165 |
+| partition | 75,238 | 0 | 126 | 40 / 10 / 0 | 1 | 509 |
+| coldstart | 18,872 | 0 | 0 | 50 / 0 / 0 | 0 | 469 |
+| minio | 146,108 | 0 | 0 | 50 / 0 / 0 | 0 | 1,218 |
+
+No OOM kill in the kernel log across the run, against five in the partition
+alone before. Steady checkout throughput is 1,377 a second, against 447 on
+68f1c59. The partition's fork is the documented window, as in v1.1.0's run.
+
 ## v1.1.0 candidate (2026-11-17, main at 1cce4a4)
 
 ### The six scenarios, on the data earlier runs left

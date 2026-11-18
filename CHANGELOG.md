@@ -7,6 +7,15 @@ change the public API.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-18
+
+Fixes for what kind found at 3.9 million keys: a throughput cliff, a startup
+OOM crashloop, under-replication after restarts, and a memory budget that
+missed nearly half of what a failover allocates and could shed the only other copy of
+an unflushed write. Checked: the race-enabled suite, the full mutation audit,
+and kind on accumulated data, all six scenarios with no acknowledged write
+lost and no OOM kill (docs/m16-results.md).
+
 ### Fixed
 
 - A tick that runs only to hand on out-of-place copies no longer ranks every
@@ -658,7 +667,8 @@ The first release. Everything below is new.
 - Kubernetes manifests (Deployment and StatefulSet) and an operational guide in
   `deploy/`.
 
-[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/arwenizEr/peercache/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/arwenizEr/peercache/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/arwenizEr/peercache/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/arwenizEr/peercache/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/arwenizEr/peercache/compare/v0.3.0...v1.0.0
