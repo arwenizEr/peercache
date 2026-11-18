@@ -1974,7 +1974,7 @@ mutate "Close does not flush persistent namespaces" \
 mutate "a restore brings back expired keys" \
   persistence.go \
   '		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {' \
-  '		if false {' \
+  '		if false && now >= r.ExpiresAt {' \
   'TestAColdStartRestoresWhatWasFlushed$' ./tests
 
 mutate "a restore does not advance the clock" \
