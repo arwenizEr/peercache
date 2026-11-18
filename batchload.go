@@ -71,7 +71,7 @@ func (n *namespace) localBatchGetOrLoad(ctx context.Context, keys []string, out 
 				return err
 			}
 		}
-		stored, _, _, ok, err := n.lookupResident(ctx, key)
+		stored, ok, err := n.getResident(ctx, key)
 		if err != nil {
 			return err
 		}

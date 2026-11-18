@@ -296,9 +296,20 @@ func (n *namespace) Get(ctx context.Context, key string) ([]byte, error) {
 
 // localGet reads from this node's owned store.
 func (n *namespace) localGet(ctx context.Context, key string) ([]byte, error) {
-	stored, _, _, ok, err := n.lookupResident(ctx, key)
-	if err != nil {
-		return nil, err
+	var stored []byte
+	var ok bool
+	if n.shedHeld == nil {
+		// getResident's fast path, written out: a call frame is a measurable
+		// share of a hit this cheap.
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return nil, err
+		}
+		stored, _, ok = n.store.Get(key)
+	} else {
+		var err error
+		if stored, _, _, ok, err = n.lookupResident(ctx, key); err != nil {
+			return nil, err
+		}
 	}
 	if !ok {
 		// The bare sentinel, not a wrapped one. A miss is routine — it is
@@ -868,7 +879,7 @@ func (n *namespace) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	if p.local {
-		_, _, _, ok, err := n.lookupResident(ctx, key)
+		_, ok, err := n.getResident(ctx, key)
 		return ok, err
 	}
 
@@ -948,7 +959,7 @@ func (n *namespace) localBatchGet(ctx context.Context, keys []string, out map[st
 				return err
 			}
 		}
-		stored, _, _, ok, err := n.lookupResident(ctx, key)
+		stored, ok, err := n.getResident(ctx, key)
 		if err != nil {
 			return err
 		}
@@ -1180,6 +1191,21 @@ func (n *namespace) remoteGetOrLoad(ctx context.Context, p placement, key string
 }
 
 var _ Namespace = (*namespace)(nil)
+
+// getResident is lookupResident without the time left, for the callers that
+// do not need it. A namespace without persistence has nothing shed to check
+// for and reads the store as it always did: this is the hottest path there is.
+func (n *namespace) getResident(ctx context.Context, key string) ([]byte, bool, error) {
+	if n.shedHeld == nil {
+		if err := n.awaitRestore(ctx, key); err != nil {
+			return nil, false, err
+		}
+		stored, _, ok := n.store.Get(key)
+		return stored, ok, nil
+	}
+	stored, _, _, ok, err := n.lookupResident(ctx, key)
+	return stored, ok, err
+}
 
 // lookupResident reads key from the owned store once its restore is done,
 // reading it back first if the memory budget shed it, including when the shed
