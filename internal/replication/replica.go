@@ -84,43 +84,99 @@ func dataSize(key string, e Entry) int64 {
 	return int64(len(key) + len(e.Value) + len(e.From))
 }
 
+// replicaShards is how many maps one namespace's copies are split across, by
+// the low bits of the key's hash.
+//
+// # Why a namespace is sharded
+//
+// A shed rebuilds what it shed from, since a Go map gives back no slots until
+// it is rebuilt (see shrink). With one map a namespace, every relief round
+// rebuilt the whole namespace under its one lock: about 160 ms for a million
+// replicas, during which every copy arriving for the namespace waited. Split
+// 64 ways, a shed empties shards whole, each rebuilt for nothing, and copies
+// what is left of only the last one it took from; every other pass — a drain,
+// a sweep chunk, an eviction — holds one shard's lock at a time, and a write
+// waits only for its own shard. The owned store has been split the same way,
+// 256 shards a store, since M3.
+const replicaShards = 64
+
 // namespaceReplicas is one namespace's worth of replicated keys.
 type namespaceReplicas struct {
+	shards [replicaShards]replicaShard
+	// bytes is the store's accounted size, which put, del and shrink keep.
+	bytes *atomic.Int64
+	// digest summarises every copy's key and owner version; see
+	// [Store.Digest]. Kept by put and del, the only writers of entries; its
+	// counters are atomic, so the shards share it.
+	digest digest.Set
+	// cursor rotates the shard a shed, a bounded drain or a sweep chunk
+	// starts from, so that repeated passes spread over the namespace.
+	cursor atomic.Uint64
+}
+
+// replicaShard is one of a namespace's maps.
+type replicaShard struct {
 	mu      sync.RWMutex
 	entries map[string]Entry
 	// high is the most entries the map has held since it was last built;
 	// see shrink. Each is charged EntryOverhead.
 	high int
-	// bytes is the store's accounted size, which put, del and shrink keep.
-	bytes *atomic.Int64
-	// digest summarises every copy's key and owner version; see
-	// [Store.Digest]. Kept by put and del, the only writers of entries.
-	digest digest.Set
 }
 
-// put stores e under key, keeping the digest and the accounted size in step.
-// Callers hold mu.
-func (nr *namespaceReplicas) put(key string, e Entry) {
+func newNamespaceReplicas(bytes *atomic.Int64) *namespaceReplicas {
+	nr := &namespaceReplicas{bytes: bytes}
+	for i := range nr.shards {
+		nr.shards[i].entries = make(map[string]Entry)
+	}
+	return nr
+}
+
+// shard returns the shard that holds key.
+func (nr *namespaceReplicas) shard(key string) *replicaShard {
+	return &nr.shards[uint64(digest.KeyOf(key))%replicaShards]
+}
+
+// start returns where the next rotating pass begins.
+func (nr *namespaceReplicas) start() int {
+	return int((nr.cursor.Add(1) - 1) % replicaShards)
+}
+
+// len reports how many copies the namespace holds, taking each shard's lock
+// in turn.
+func (nr *namespaceReplicas) len() int {
+	n := 0
+	for i := range nr.shards {
+		sh := &nr.shards[i]
+		sh.mu.RLock()
+		n += len(sh.entries)
+		sh.mu.RUnlock()
+	}
+	return n
+}
+
+// put stores e under key in sh, keeping the digest and the accounted size in
+// step. Callers hold sh.mu.
+func (nr *namespaceReplicas) put(sh *replicaShard, key string, e Entry) {
 	k := digest.KeyOf(key)
 	delta := dataSize(key, e)
-	if old, held := nr.entries[key]; held {
+	if old, held := sh.entries[key]; held {
 		nr.digest.Replace(k, old.Stamp.Version, e.Stamp.Version)
 		delta -= dataSize(key, old)
 	} else {
 		nr.digest.Add(k, e.Stamp.Version)
 	}
-	nr.entries[key] = e
-	if len(nr.entries) > nr.high {
-		delta += int64(len(nr.entries)-nr.high) * EntryOverhead
-		nr.high = len(nr.entries)
+	sh.entries[key] = e
+	if len(sh.entries) > sh.high {
+		delta += int64(len(sh.entries)-sh.high) * EntryOverhead
+		sh.high = len(sh.entries)
 	}
 	nr.bytes.Add(delta)
 }
 
-// shrink rebuilds the map once it holds under three quarters of the entries
-// it has held, or whenever it holds fewer if force is set, and returns the
-// bytes that frees. Callers hold mu, and call it after removing rather than
-// from del, which runs inside ranges over the map.
+// shrink rebuilds a shard's map once it holds under three quarters of the
+// entries it has held, or whenever it holds fewer if force is set, and returns
+// the bytes that frees. Callers hold sh.mu, and call it after removing rather
+// than from del, which runs inside ranges over the map.
 //
 // A Go map never gives back the slots of what is deleted from it. A store
 // that took a million copies and was shed or promoted down to 400,000 still
@@ -132,34 +188,34 @@ func (nr *namespaceReplicas) put(key string, e Entry) {
 // gives it back. At three quarters the copy is paid for by the deletions
 // before it, and the map never holds more than a third more slots than its
 // entries were last built with.
-func (nr *namespaceReplicas) shrink(force bool) int64 {
-	n := len(nr.entries)
-	if n == nr.high || (!force && n*4 >= nr.high*3) {
+func (nr *namespaceReplicas) shrink(sh *replicaShard, force bool) int64 {
+	n := len(sh.entries)
+	if n == sh.high || (!force && n*4 >= sh.high*3) {
 		return 0
 	}
 	fresh := make(map[string]Entry, n)
-	for key, e := range nr.entries {
+	for key, e := range sh.entries {
 		fresh[key] = e
 	}
-	freed := int64(nr.high-n) * EntryOverhead
-	nr.entries, nr.high = fresh, n
+	freed := int64(sh.high-n) * EntryOverhead
+	sh.entries, sh.high = fresh, n
 	nr.bytes.Add(-freed)
 	return freed
 }
 
-// unlockShrinking shrinks the map if it has become sparse, then releases mu.
-// Every path that removes entries leaves through it.
-func (nr *namespaceReplicas) unlockShrinking() {
-	nr.shrink(false)
-	nr.mu.Unlock()
+// unlockShrinking shrinks a shard's map if it has become sparse, then
+// releases its lock. Every path that removes entries leaves through it.
+func (nr *namespaceReplicas) unlockShrinking(sh *replicaShard) {
+	nr.shrink(sh, false)
+	sh.mu.Unlock()
 }
 
-// del removes key and its digest contribution. Callers hold mu; it is safe
-// inside a range over entries.
-func (nr *namespaceReplicas) del(key string) {
-	if old, held := nr.entries[key]; held {
+// del removes key from sh with its digest contribution. Callers hold sh.mu;
+// it is safe inside a range over sh.entries.
+func (nr *namespaceReplicas) del(sh *replicaShard, key string) {
+	if old, held := sh.entries[key]; held {
 		nr.digest.Remove(digest.KeyOf(key), old.Stamp.Version)
-		delete(nr.entries, key)
+		delete(sh.entries, key)
 		nr.bytes.Add(-dataSize(key, old))
 	}
 }
@@ -220,7 +276,7 @@ func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
 	if nr, ok := s.ns[namespace]; ok {
 		return nr
 	}
-	nr = &namespaceReplicas{entries: make(map[string]Entry), bytes: &s.bytes}
+	nr = newNamespaceReplicas(&s.bytes)
 	s.ns[namespace] = nr
 	return nr
 }
@@ -240,11 +296,12 @@ func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
 // never automatically merged.
 func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 	nr := s.namespaceFor(namespace)
+	sh := nr.shard(key)
 
-	nr.mu.Lock()
-	defer nr.mu.Unlock()
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
-	existing, held := nr.entries[key]
+	existing, held := sh.entries[key]
 	if held {
 		conflict = Forked(existing, e)
 		if !Newer(e, existing) {
@@ -257,7 +314,7 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 			return false, conflict
 		}
 	}
-	nr.put(key, e)
+	nr.put(sh, key, e)
 	return true, conflict
 }
 
@@ -314,9 +371,10 @@ func (s *Store) Get(namespace, key string) (Entry, bool) {
 		return Entry{}, false
 	}
 
-	nr.mu.RLock()
-	defer nr.mu.RUnlock()
-	e, held := nr.entries[key]
+	sh := nr.shard(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	e, held := sh.entries[key]
 	return e, held
 }
 
@@ -329,13 +387,14 @@ func (s *Store) Delete(namespace, key string) bool {
 		return false
 	}
 
-	nr.mu.Lock()
-	defer nr.unlockShrinking()
-	_, held := nr.entries[key]
+	sh := nr.shard(key)
+	sh.mu.Lock()
+	defer nr.unlockShrinking(sh)
+	_, held := sh.entries[key]
 	if !held {
 		return false
 	}
-	nr.del(key)
+	nr.del(sh, key)
 	return true
 }
 
@@ -353,13 +412,14 @@ func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp, order
 		return false
 	}
 
-	nr.mu.Lock()
-	defer nr.unlockShrinking()
-	e, held := nr.entries[key]
+	sh := nr.shard(key)
+	sh.mu.Lock()
+	defer nr.unlockShrinking(sh)
+	e, held := sh.entries[key]
 	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {
 		return false
 	}
-	nr.del(key)
+	nr.del(sh, key)
 	return true
 }
 
@@ -378,9 +438,7 @@ func (s *Store) Len() int {
 
 	total := 0
 	for _, nr := range namespaces {
-		nr.mu.RLock()
-		total += len(nr.entries)
-		nr.mu.RUnlock()
+		total += nr.len()
 	}
 	return total
 }
@@ -406,9 +464,11 @@ func (s *Store) Namespaces() []string {
 // from whichever the read path consulted first, which is not a decision anybody
 // made.
 //
-// Removal and return happen under one lock so that a concurrent Put cannot slip
-// a copy in behind the drain and leave it stranded in the replica store after
-// this node has taken ownership.
+// Removal and return happen under the key's shard lock so that a concurrent Put
+// cannot slip a copy in behind the drain and leave it stranded in the replica
+// store after this node has taken ownership: a Put to a shard the drain has
+// passed lands after it, as a Put after a drain of one map always could, and
+// is promoted by the replicate handler's own ownership check.
 func (s *Store) Drain(namespace string, keep func(key string) bool) map[string]Entry {
 	return s.DrainUpTo(namespace, -1, keep)
 }
@@ -432,22 +492,28 @@ func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool)
 		return nil
 	}
 
-	nr.mu.Lock()
-	defer nr.unlockShrinking()
-
 	var taken map[string]Entry
-	for key, e := range nr.entries {
+	first := nr.start()
+	for i := 0; i < replicaShards; i++ {
 		if max > 0 && len(taken) >= max {
 			break
 		}
-		if !keep(key) {
-			continue
+		sh := &nr.shards[(first+i)%replicaShards]
+		sh.mu.Lock()
+		for key, e := range sh.entries {
+			if max > 0 && len(taken) >= max {
+				break
+			}
+			if !keep(key) {
+				continue
+			}
+			if taken == nil {
+				taken = make(map[string]Entry)
+			}
+			taken[key] = e
+			nr.del(sh, key)
 		}
-		if taken == nil {
-			taken = make(map[string]Entry)
-		}
-		taken[key] = e
-		nr.del(key)
+		nr.unlockShrinking(sh)
 	}
 	return taken
 }
@@ -478,16 +544,24 @@ func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 		return 0
 	}
 
-	nr.mu.Lock()
-	defer nr.unlockShrinking()
+	return nr.evictWhere(func(key string, _ Entry) bool { return stillMine(key) })
+}
 
+// evictWhere removes every copy for which keep returns false, a shard at a
+// time, and reports how many it removed.
+func (nr *namespaceReplicas) evictWhere(keep func(key string, e Entry) bool) int {
 	dropped := 0
-	for key := range nr.entries {
-		if stillMine(key) {
-			continue
+	for i := range nr.shards {
+		sh := &nr.shards[i]
+		sh.mu.Lock()
+		for key, e := range sh.entries {
+			if keep(key, e) {
+				continue
+			}
+			nr.del(sh, key)
+			dropped++
 		}
-		nr.del(key)
-		dropped++
+		nr.unlockShrinking(sh)
 	}
 	return dropped
 }
@@ -551,7 +625,8 @@ const (
 //
 // It is Redis's active expiry, shaped to a Go map. A namespace under
 // [SweepWholeBelow] entries is swept whole, as before. A larger one is visited
-// [SweepChunk] entries at a time, the lock released between chunks, until a
+// [SweepChunk] entries at a time, from a rotating shard, holding one shard's
+// lock at a time (see replicaShards), until a
 // [SweepShare]th of it has been seen; and on while a chunk finds more than a
 // quarter of what it visits expired, up to a quarter of the namespace. A range
 // over a Go map starts at a random place, so each chunk is a fresh sample, and
@@ -574,44 +649,44 @@ func (s *Store) SweepExpired(now int64) (removed, visited int) {
 
 // sweepNamespace is SweepExpired for one namespace.
 func (s *Store) sweepNamespace(nr *namespaceReplicas, now int64) (removed, visited int) {
-	nr.mu.Lock()
-	held := len(nr.entries)
+	held := nr.len()
 	if held < SweepWholeBelow {
-		removed = s.sweepChunk(nr, now, held)
-		nr.unlockShrinking()
-		return removed, held
+		return s.sweepChunk(nr, now, held)
 	}
-	nr.mu.Unlock()
 
 	share, most := held/SweepShare, held/sweepMostShare
 	for visited < most {
-		nr.mu.Lock()
-		found := s.sweepChunk(nr, now, SweepChunk)
-		nr.unlockShrinking()
+		found, seen := s.sweepChunk(nr, now, SweepChunk)
 		removed += found
-		visited += SweepChunk
-		if visited >= share && found*sweepMoreAbove <= SweepChunk {
+		visited += seen
+		if seen == 0 || (visited >= share && found*sweepMoreAbove <= seen) {
 			break
 		}
 	}
 	return removed, visited
 }
 
-// sweepChunk visits up to n entries from wherever the map's range starts and
-// removes the expired ones. Callers hold mu.
-func (s *Store) sweepChunk(nr *namespaceReplicas, now int64, n int) int {
-	removed, seen := 0, 0
-	for key, e := range nr.entries {
-		if seen == n {
-			break
+// sweepChunk visits up to n entries, from a rotating shard and wherever its
+// map's range starts, on into the next shards until it has seen n, and
+// removes the expired ones. It holds one shard's lock at a time.
+func (s *Store) sweepChunk(nr *namespaceReplicas, now int64, n int) (removed, seen int) {
+	first := nr.start()
+	for i := 0; i < replicaShards && seen < n; i++ {
+		sh := &nr.shards[(first+i)%replicaShards]
+		sh.mu.Lock()
+		for key, e := range sh.entries {
+			if seen == n {
+				break
+			}
+			seen++
+			if !e.Live(now) {
+				nr.del(sh, key)
+				removed++
+			}
 		}
-		seen++
-		if !e.Live(now) {
-			nr.del(key)
-			removed++
-		}
+		nr.unlockShrinking(sh)
 	}
-	return removed
+	return removed, seen
 }
 
 // Slots returns how many map slots the store charges [EntryOverhead] for,
@@ -622,9 +697,12 @@ func (s *Store) Slots() int64 {
 	defer s.mu.RUnlock()
 	var n int64
 	for _, nr := range s.ns {
-		nr.mu.RLock()
-		n += int64(nr.high)
-		nr.mu.RUnlock()
+		for i := range nr.shards {
+			sh := &nr.shards[i]
+			sh.mu.RLock()
+			n += int64(sh.high)
+			sh.mu.RUnlock()
+		}
 	}
 	return n
 }
@@ -645,11 +723,13 @@ func (s *Store) ShedCount() int64 { return s.shed.Load() }
 // shed before owned data. Nothing is sent anywhere: the owner's copy is the
 // authority and is untouched.
 //
-// Namespaces are visited from a rotating start and entries taken in map
-// iteration order, so repeated small sheds spread across the keyspace rather
-// than emptying one namespace. Overshoot is at most one entry. Each namespace
-// it sheds from is rebuilt afterwards, which is what frees the slots; see
-// namespaceReplicas.shrink.
+// Namespaces, and each namespace's shards, are visited from a rotating start
+// and entries taken in map iteration order, so repeated small sheds spread
+// across the keyspace rather than emptying one namespace; a shard holds a
+// hash-chosen 64th of its namespace's keys, so emptying a few is still a
+// random sample of them. Overshoot is at most one entry. Each shard it sheds
+// from is rebuilt afterwards, which is what frees the slots; see
+// namespaceReplicas.shrink and replicaShards.
 //
 // keepFrom, when not nil, names for each namespace the order from which copies
 // are kept: a copy whose Order is at or past it is not shed. It is how the
@@ -687,27 +767,32 @@ func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64
 		if keepFrom != nil {
 			floor = keepFrom(name)
 		}
-		nr.mu.Lock()
-		// What a rebuild after the loop gives back: the slots already
-		// spare, and one per copy shed.
-		var data int64
-		slots := int64(nr.high-len(nr.entries)) * EntryOverhead
-		for key, e := range nr.entries {
-			if freed+data+slots >= target {
-				break
+		first := nr.start()
+		for j := 0; j < replicaShards && freed < target; j++ {
+			sh := &nr.shards[(first+j)%replicaShards]
+			sh.mu.Lock()
+			// What a rebuild after the loop gives back: the slots already
+			// spare, and one per copy shed.
+			var data int64
+			slots := int64(sh.high-len(sh.entries)) * EntryOverhead
+			for key, e := range sh.entries {
+				if freed+data+slots >= target {
+					break
+				}
+				if e.Order >= floor {
+					continue
+				}
+				data += dataSize(key, e)
+				slots += EntryOverhead
+				nr.del(sh, key)
+				s.shed.Add(1)
 			}
-			if e.Order >= floor {
-				continue
-			}
-			data += dataSize(key, e)
-			slots += EntryOverhead
-			nr.del(key)
-			s.shed.Add(1)
+			// Rebuilt whatever share was shed: shedding is for memory, and
+			// a map gives none of its slots back until it is rebuilt. A
+			// shard shed whole is rebuilt for nothing.
+			freed += data + nr.shrink(sh, true)
+			sh.mu.Unlock()
 		}
-		// Rebuilt whatever share was shed: shedding is for memory, and a
-		// map gives none of its slots back until it is rebuilt.
-		freed += data + nr.shrink(true)
-		nr.mu.Unlock()
 	}
 	return freed
 }
@@ -724,18 +809,7 @@ func (s *Store) EvictWhere(namespace string, keep func(key string, e Entry) bool
 		return 0
 	}
 
-	nr.mu.Lock()
-	defer nr.unlockShrinking()
-
-	dropped := 0
-	for key, e := range nr.entries {
-		if keep(key, e) {
-			continue
-		}
-		nr.del(key)
-		dropped++
-	}
-	return dropped
+	return nr.evictWhere(keep)
 }
 
 // Keys returns the keys held for a namespace, sorted for determinism.
@@ -751,13 +825,35 @@ func (s *Store) Keys(namespace string) []string {
 		return nil
 	}
 
-	nr.mu.RLock()
-	defer nr.mu.RUnlock()
-	out := make([]string, 0, len(nr.entries))
-	for key := range nr.entries {
-		out = append(out, key)
-	}
+	var out []string
+	nr.each(func(key string, _ Entry) { out = append(out, key) })
 	return out
+}
+
+// each calls fn for every copy, a shard at a time under its read lock.
+func (nr *namespaceReplicas) each(fn func(key string, e Entry)) {
+	for i := range nr.shards {
+		sh := &nr.shards[i]
+		sh.mu.RLock()
+		for key, e := range sh.entries {
+			fn(key, e)
+		}
+		sh.mu.RUnlock()
+	}
+}
+
+// lookup returns key's copy with its value cloned, if it is held and live at
+// now and want, when not nil, accepts it.
+func (nr *namespaceReplicas) lookup(key string, now int64, want func(key string) bool) (Entry, bool) {
+	sh := nr.shard(key)
+	sh.mu.RLock()
+	e, ok := sh.entries[key]
+	sh.mu.RUnlock()
+	if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) || (want != nil && !want(key)) {
+		return Entry{}, false
+	}
+	e.Value = append([]byte(nil), e.Value...)
+	return e, true
 }
 
 // KeyedEntry is one key's worth of a [Store.Snapshot].
@@ -785,18 +881,16 @@ func (s *Store) Snapshot(namespace, after string, limit int, now int64, want fun
 		return nil, false
 	}
 
-	nr.mu.RLock()
 	var candidates []string
-	for key, e := range nr.entries {
+	nr.each(func(key string, e Entry) {
 		if key <= after || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
-			continue
+			return
 		}
 		if want != nil && !want(key) {
-			continue
+			return
 		}
 		candidates = append(candidates, key)
-	}
-	nr.mu.RUnlock()
+	})
 
 	sort.Strings(candidates)
 	more := len(candidates) > limit
@@ -805,15 +899,12 @@ func (s *Store) Snapshot(namespace, after string, limit int, now int64, want fun
 	}
 
 	page := make([]KeyedEntry, 0, len(candidates))
-	nr.mu.RLock()
-	defer nr.mu.RUnlock()
 	for _, key := range candidates {
-		e, ok := nr.entries[key]
-		if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) {
-			continue // removed between the passes; the cursor still advances
+		// Removed between the passes, and skipped; the cursor still
+		// advances.
+		if e, ok := nr.lookup(key, now, nil); ok {
+			page = append(page, KeyedEntry{Key: key, Entry: e})
 		}
-		e.Value = append([]byte(nil), e.Value...)
-		page = append(page, KeyedEntry{Key: key, Entry: e})
 	}
 	return page, more
 }
@@ -840,33 +931,26 @@ func (s *Store) SnapshotFrom(p *pager.Pager, id, namespace, after string, limit 
 		return nil, false
 	}
 	build := func() []string {
-		nr.mu.RLock()
-		defer nr.mu.RUnlock()
 		var keys []string
-		for key, e := range nr.entries {
+		nr.each(func(key string, e Entry) {
 			if e.ExpiresAt != 0 && now >= e.ExpiresAt {
-				continue
+				return
 			}
 			if want != nil && !want(key) {
-				continue
+				return
 			}
 			keys = append(keys, key)
-		}
+		})
 		return keys
 	}
 	for {
 		keys, more := p.Page(id, after, limit, build)
 		page := make([]KeyedEntry, 0, len(keys))
-		nr.mu.RLock()
 		for _, key := range keys {
-			e, ok := nr.entries[key]
-			if !ok || (e.ExpiresAt != 0 && now >= e.ExpiresAt) || (want != nil && !want(key)) {
-				continue
+			if e, ok := nr.lookup(key, now, want); ok {
+				page = append(page, KeyedEntry{Key: key, Entry: e})
 			}
-			e.Value = append([]byte(nil), e.Value...)
-			page = append(page, KeyedEntry{Key: key, Entry: e})
 		}
-		nr.mu.RUnlock()
 		if len(page) > 0 || !more {
 			return page, more
 		}

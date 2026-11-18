@@ -765,9 +765,9 @@ mutate "the replica store compares versions, ignoring the epoch" \
 
 mutate "Drain leaves a stranded copy behind" \
   internal/replication/replica.go \
-  '		taken[key] = e
-		nr.del(key)' \
-  '		taken[key] = e' \
+  '			taken[key] = e
+			nr.del(sh, key)' \
+  '			taken[key] = e' \
   'TestDrainTakesOnlyWhatItClaims' ./internal/replication/
 
 mutate "snapshot ignores its page limit" \
@@ -1275,20 +1275,20 @@ mutate "the budget sheds replicas of unflushed persistent writes" \
 
 mutate "a replica map is never rebuilt, so it keeps the slots of what left" \
   internal/replication/replica.go \
-  '	if n == nr.high || (!force && n*4 >= nr.high*3) {' \
-  '	if true || n == nr.high || (!force && n*4 >= nr.high*3) {' \
+  '	if n == sh.high || (!force && n*4 >= sh.high*3) {' \
+  '	if true || n == sh.high || (!force && n*4 >= sh.high*3) {' \
   'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/replication/
 
 mutate "removals other than a shed never rebuild the map" \
   internal/replication/replica.go \
-  '	nr.shrink(false)
-	nr.mu.Unlock()' \
-  '	nr.mu.Unlock()' \
+  '	nr.shrink(sh, false)
+	sh.mu.Unlock()' \
+  '	sh.mu.Unlock()' \
   'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/replication/
 
 mutate "a replica is charged per live entry, not per slot kept" \
   internal/replication/replica.go \
-  '	freed := int64(nr.high-n) * EntryOverhead' \
+  '	freed := int64(sh.high-n) * EntryOverhead' \
   '	freed := int64(0)' \
   'TestReplicaBytesTracksEveryPath$' ./internal/replication/
 
@@ -1346,12 +1346,12 @@ mutate "a demotion never rebuilds the shards it took from" \
 
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
-  '			if e.Order >= floor {
-				continue
-			}' \
-  '			if e.Order >= floor && false {
-				continue
-			}' \
+  '				if e.Order >= floor {
+					continue
+				}' \
+  '				if e.Order >= floor && false {
+					continue
+				}' \
   'TestShedKeepsCopiesFromTheFloor$' ./internal/replication/
 
 mutate "the budget keeps every replica of a persistent namespace" \
@@ -3407,9 +3407,15 @@ mutate "a large namespace's replicas are swept whole every tick" \
 
 mutate "a sweep stops at its share however much it finds expired" \
   internal/replication/replica.go \
-  '		if visited >= share && found*sweepMoreAbove <= SweepChunk {' \
-  '		if visited >= share {' \
+  '		if seen == 0 || (visited >= share && found*sweepMoreAbove <= seen) {' \
+  '		if seen == 0 || visited >= share {' \
   'TestASweepGoesOnWhileItFindsExpiredReplicas$' ./internal/replication
+
+mutate "a shed rebuilds its whole namespace, not the shards it shed from" \
+  internal/replication/replica.go \
+  '	return &nr.shards[uint64(digest.KeyOf(key))%replicaShards]' \
+  '	return &nr.shards[uint64(digest.KeyOf(key))%1]' \
+  'TestAShedRebuildsOnlyWhatItShedFrom$' ./internal/replication
 
 mutate "a sweep that finds expired replicas goes on without bound" \
   internal/replication/replica.go \
