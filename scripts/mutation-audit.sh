@@ -1290,7 +1290,7 @@ mutate "a replica is charged per live entry, not per slot kept" \
   internal/replication/replica.go \
   '	freed := int64(nr.high-n) * EntryOverhead' \
   '	freed := int64(0)' \
-  'TestReplicaBytesUnderConcurrency$' ./internal/replication/
+  'TestReplicaBytesTracksEveryPath$' ./internal/replication/
 
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
