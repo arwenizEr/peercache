@@ -65,11 +65,14 @@ type Store struct {
 // EntryOverhead is what the store charges for one replica beyond its key, value
 // and sender ID.
 //
-// An estimate, on the high side for the same reason as the owned store's: a map
-// slot holding a string header and an Entry (a slice, a stamp, a TTL and a
-// string — about 80 bytes on 64-bit), bucket overhead, and the value's allocation
-// rounding.
-const EntryOverhead int64 = 128
+// Measured, at the worst point, as the owned store's is: a map that has just
+// doubled. A slot holds a string header and an Entry (a slice, a stamp, three
+// deadlines and orders, a string — 104 bytes on 64-bit), and pays its share of
+// the empty slots and control words, and the key's and value's rounding. With
+// 22-byte keys and 48-byte values, a million replicas took 237 bytes each
+// beyond key, value and sender in live heap; TestAccountedBytesCoverTheLiveHeap
+// holds the figure to it. It was 128, an estimate that called itself high.
+const EntryOverhead int64 = 240
 
 // size is what one replica is charged.
 func size(key string, e Entry) int64 {

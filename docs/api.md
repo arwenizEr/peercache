@@ -1153,18 +1153,22 @@ cache, err := peercache.New(
 ```
 
 Caps the bytes the owned stores, the replica store and the L1 tier may hold:
-keys and values, plus a per-entry overhead estimated on the high side. Activated
-groups are not counted — `WithMaxActiveGroups` bounds those — and neither is
-anything around the stores: decoded keys still referenced, RPC buffers, restore
-and catch-up pages, map growth. Off by default.
+keys and values, plus a per-entry overhead measured at a map's worst point,
+just after it doubles — 160 bytes an owned entry, 240 a replica
+(`TestAccountedBytesCoverTheLiveHeap`). Activated groups are not counted —
+`WithMaxActiveGroups` bounds those — and neither is anything around the
+stores: decoded keys still referenced, RPC buffers, restore and catch-up pages.
+Off by default.
 
-It bounds the data, not the process. On kind at a million orders the heap in
-use was about 1.55 times what the budget counted, and without a memory limit
-the Go runtime lets the heap reach twice its live size before collecting: a
-pod budgeted at 512 MiB under a 1 GiB limit, without `GOMEMLIMIT`, was
-OOM-killed (open question 55). Run with `GOMEMLIMIT` at about nine tenths of
-the container limit and the budget at about half of it. `New` logs a warning
-when a budget is set and the process has no memory limit.
+It bounds the data, not the process. Without a memory limit the Go runtime
+lets the heap reach twice its live size before collecting: a pod budgeted at
+512 MiB under a 1 GiB limit, without `GOMEMLIMIT`, was OOM-killed (open
+question 55). Before 1.1.2 the overheads were estimates, 96 and 128 bytes,
+that read about two thirds of the heap: on kind at 3.7 million keys, a pod
+budgeted at half its 1 GiB limit, with `GOMEMLIMIT` set, never shed and was
+OOM-killed once its replicas were complete. Run with `GOMEMLIMIT` at about nine
+tenths of the container limit and the budget at about half of it. `New` logs a
+warning when a budget is set and the process has no memory limit.
 
 Over budget, the node sheds down to nine tenths of it, cheapest first:
 

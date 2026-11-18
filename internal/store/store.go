@@ -36,14 +36,16 @@ const (
 // EntryOverhead is what the store charges for one entry beyond its key and
 // value bytes, in [Store.Bytes].
 //
-// It is an estimate, not a measurement, and it is deliberately on the high side.
-// One entry costs a map slot (the key's string header and the entry struct,
-// about 56 bytes on 64-bit), the slot's share of bucket and tophash overhead
-// at Go's load factor, and the value's own allocation header and size-class
-// rounding. 96 covers that for small values and overstates it for large ones,
-// where the value's length dominates anyway. Overstating is the safe direction
-// for a figure a memory budget is enforced against.
-const EntryOverhead int64 = 96
+// Measured, at the worst point: a map that has just doubled, so that half its
+// slots are empty. One entry costs a map slot (the key's string header and the
+// entry struct, 64 bytes on 64-bit), that slot's share of the empty ones and
+// of the group control words, and the key's and value's size-class rounding.
+// With 22-byte keys and 48-byte values, a million entries took 153 bytes each
+// beyond the key and value in live heap, and 128 at 300,000 between doublings;
+// TestAccountedBytesCoverTheLiveHeap holds the figure to it. It was 96, an
+// estimate that called itself high and was a third too low, and on kind a
+// pod budgeted by it at half its container limit was OOM-killed.
+const EntryOverhead int64 = 160
 
 // Options configures a [Store].
 type Options struct {

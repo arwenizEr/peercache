@@ -118,7 +118,7 @@ func TestSheddingTakesL1AndReplicasBeforeOwnedData(t *testing.T) {
 		keys = 600
 		size = 512
 	)
-	perEntry := int64(size + 160) // value, key, and the larger of the tier overheads
+	perEntry := int64(size + 240) // value, key, and the larger of the tier overheads
 	data := keys * perEntry
 	budget := data / 2
 
@@ -443,7 +443,7 @@ func TestAFailoverCascadeStaysWithinBudget(t *testing.T) {
 		keys = 1500
 		size = 512
 	)
-	perEntry := int64(size + 160)
+	perEntry := int64(size + 240)
 	// At five nodes each holds about 2/5 of the data (owned plus one replica).
 	// The budget is half the data: fits at five, does not fit at two, where
 	// each survivor would hold all of it.

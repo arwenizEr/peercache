@@ -58,6 +58,18 @@ const (
 	// persistSplitParallel is how many partition segments one split writes
 	// at once.
 	persistSplitParallel = 16
+	// persistSplitBatch is how many logs one split reads, oldest first.
+	//
+	// A split read every log there was, all at once, under one flush timeout,
+	// and deleted none until all were split. Under load the logs of one
+	// interval took longer than the timeout to split, so none were deleted,
+	// and the next split had more to read. On kind at 3.7 million keys that
+	// left 419 logs, 825 MB, which every attempt read whole: the pod that
+	// splits allocated 68 GB in four minutes and was OOM-killed, and so was
+	// the next pod to be assigned the job, over and over. A batch at a time,
+	// each with a timeout of its own and its logs deleted once split, bounds
+	// what a split holds and makes every completed batch progress.
+	persistSplitBatch = 32
 	// persistFlushTimeout bounds one flush. A store that does not answer
 	// must not hold the flusher, and the records stay pending for the next.
 	persistFlushTimeout = 10 * time.Second
@@ -324,11 +336,7 @@ func (p *persister) maintain(compact, split clock.Ticker) {
 		case <-split.C():
 			p.dropIdleLogs()
 			if p.splitsLogs() {
-				ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
-				if err := p.split(ctx); err != nil {
-					p.splitFailures.Add(1)
-				}
-				cancel()
+				p.splitBacklog()
 			}
 		}
 	}
@@ -1211,24 +1219,56 @@ func (p *persister) splitsLogs() bool {
 	return err == nil && owner.ID == c.selfID()
 }
 
-// split moves every log's records into partition segments, then deletes the
-// logs (decision 0030).
+// splitBacklog splits logs a batch at a time until none are left, the
+// persister closes, or a batch fails. One split round, counted once in
+// PersistSplits however many batches it took.
+func (p *persister) splitBacklog() {
+	for {
+		ctx, cancel := clock.WithTimeout(context.Background(), p.clk, persistFlushTimeout)
+		more, err := p.split(ctx)
+		cancel()
+		if err != nil {
+			p.splitFailures.Add(1)
+			return
+		}
+		if !more {
+			p.splits.Add(1)
+			return
+		}
+		select {
+		case <-p.done:
+			return
+		default:
+		}
+	}
+}
+
+// split moves the oldest logs' records, at most persistSplitBatch logs, into
+// partition segments, then deletes those logs (decision 0030), and reports
+// whether more logs were waiting.
 //
 // The logs are deleted only once every segment is durable. A split that stops
 // part-way leaves logs and segments both holding the same records, which the
 // merge reads as once; the next split writes the segments again and finishes.
 // A segment's name carries a hash of the logs it came from, so two splits of
-// different log sets never write to the same name.
-func (p *persister) split(ctx context.Context) error {
+// different log sets never write to the same name. Splitting the oldest logs
+// first and the rest later is sound for the same reason: a reader merges every
+// segment and log of a partition by order, whichever object a record is in.
+func (p *persister) split(ctx context.Context) (more bool, err error) {
 	logs, err := p.store.List(ctx, logPrefix(p.ns.name))
 	if err != nil || len(logs) == 0 {
-		return err
+		return false, err
+	}
+	// Log names lead with their highest order, so by name is oldest first.
+	sort.Strings(logs)
+	if len(logs) > persistSplitBatch {
+		logs, more = logs[:persistSplitBatch], true
 	}
 	byPartition := map[int]map[string]*segment.Record{}
 	for _, name := range logs {
 		f, err := p.load(ctx, name)
 		if err != nil {
-			return err
+			return false, err
 		}
 		for i := range f.Records {
 			r := &f.Records[i]
@@ -1284,15 +1324,14 @@ func (p *persister) split(ctx context.Context) error {
 	}
 	wg.Wait()
 	if failed != nil {
-		return failed
+		return false, failed
 	}
 	for _, name := range logs {
 		if err := p.store.Delete(ctx, name); err != nil {
-			return fmt.Errorf("peercache: deleting %s: %w", name, err)
+			return false, fmt.Errorf("peercache: deleting %s: %w", name, err)
 		}
 	}
-	p.splits.Add(1)
-	return nil
+	return more, nil
 }
 
 // replicateRestored sends a value or deletion a restore just installed to the

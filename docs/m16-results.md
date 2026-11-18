@@ -136,7 +136,59 @@ under the same lock. Those two are next.
 Found on the way, not the cause: the memory budget's accounting reads about
 two thirds of the live heap (311 MB accounted against 478 MB live after a
 GC, 1.83 million entries). The shop's 512 MiB budget therefore never shed,
-with the heap at 600–780 MB against a 920 MiB `GOMEMLIMIT`. Open.
+with the heap at 600–780 MB against a 920 MiB `GOMEMLIMIT`. Fixed below.
+
+### The rest of the cliff, and what closing it uncovered
+
+Each fix on the same cluster, as it grew; two steady runs after a rollout of
+the build:
+
+| Build | Keys | Orders, two steady runs | Per pod |
+|---|---|---|---|
+| v1.1.0 | 3.2 M | 25,731 · 28,615 | |
+| #98, no promotion scan on a dirty tick | 3.2 M | 69,749 · 73,160 | |
+| #100, hand-offs from eight senders | 3.4 M | 78,226 · 83,985 | no hand-off left by the measured runs |
+| #101, replica expiry by sample | 3.7 M | 115,224 · 119,593 | the cliff closed |
+| measured overheads, split by batch | 3.9 M | 85,621 · 117,364 | every pod at its budget, shedding |
+
+After #100 a pod used about 0.16 of a core under load, and a quarter of that
+was the replica sweep, which visited all 1.35 million replicas every second
+with the namespace's lock held (#101).
+
+With the cliff closed, the replica counts were wrong: 756,000 to 1.05 million
+a pod where RF 3 needs twice the 736,000 owned. `restoreReplicationsDropped`
+was within 2% of `persistRestored` on every pod. Restored keys went to their
+replicas through a queue of 1,024 that dropped when full, on the reasoning
+that a restored key's replicas still hold it from before the restart; under
+a rolling restart they restarted too. About 2.7 million copies were missing,
+with no write lost (#102: a backlog that keeps keys, not values, and drops
+none).
+
+With every copy delivered, every pod was OOM-killed within seconds of
+starting, and stayed in a crash loop. Two causes:
+
+- The memory budget never shed. Its per-entry overheads, 96 and 128 bytes,
+  were a third below the heap: measured at a map's worst point, an owned
+  entry takes 153 bytes beyond its key and value and a replica 237. They
+  are 160 and 240 now, held by `TestAccountedBytesCoverTheLiveHeap`.
+- The splitter for `orders` had stopped finishing. It read every log at
+  once under one ten-second timeout and deleted none until all were split;
+  once an interval's logs outlasted the timeout, nothing was deleted and
+  every attempt read more. 419 logs, 825 MB: a heap profile of the pod
+  holding the job showed 68 GB allocated in four minutes, all of it the
+  split. It now reads 32 logs at a time, oldest first, each batch with its
+  own timeout and deleted once split. The backlog went from 419 logs to none
+  and the bucket from 1.3 GB to 297 MB.
+
+A crash-looping StatefulSet does not take a fix on its own: the rolling
+update waits for the old pods to be ready, and they never were. The pods
+had to be deleted for the fixed revision to start.
+
+With both fixes, at 1 GiB with a 512 MiB budget, no pod restarted. Each held
+its budget, 506 to 523 MB accounted with 554 to 804 MB in heap. Each had shed
+about 367,000 replicas, which is the whole of the difference between what it
+held and twice its owned keys. Those copies are the budget's to drop, and it
+counts them. No order was lost, and `restoreReplicationsDropped` was 0.
 
 ## v1.0.0 candidates (2026-11-16), accumulated data
 
