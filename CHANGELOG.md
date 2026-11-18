@@ -76,6 +76,16 @@ change the public API.
   within seconds of starting: the budget read about 300 MB and never shed.
   A node now sheds about a third sooner for the same budget.
 
+- The memory budget counts the replica map's slots, not only its live
+  entries, and shedding frees them. A Go map keeps the slots of what is
+  deleted from it, so a replica store shed, drained or promoted from a million
+  copies down to 400,000 still held the million's slots while the budget
+  charged 400,000: on kind, in a partition, a pod's replica map held 239 MB of
+  heap for 136 MB accounted, and pods were OOM-killed with the budget reading
+  460 MB of 512. Each namespace's map is now rebuilt once it holds under three
+  quarters of what it held, and after every shed, and charged for the slots it
+  keeps until then. `TestAccountedBytesCoverTheLiveHeapAfterRemovals`.
+
 - The memory budget no longer sheds a replica of a persistent write its owner
   may not have flushed yet: for one flush interval and the flush timeout after
   the write, by the owner's write order. Until the flush that copy is the
