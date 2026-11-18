@@ -1292,6 +1292,36 @@ mutate "a replica is charged per live entry, not per slot kept" \
   '	freed := int64(0)' \
   'TestReplicaBytesTracksEveryPath$' ./internal/replication/
 
+mutate "what restores have read is outside the budget" \
+  pressure.go \
+  '			total += ns.persister.transientBytes()' \
+  '			_ = ns.persister.transientBytes()' \
+  'TestARestoreCountsWhatItReadsAgainstTheBudget$' ./tests
+
+mutate "a scan never gives back what it held" \
+  persistence.go \
+  '	sc.p.transient.Add(-sc.held)' \
+  '	_ = sc.held' \
+  'TestARestoreCountsWhatItReadsAgainstTheBudget$' ./tests
+
+mutate "the restore backlog is outside the budget" \
+  pressure.go \
+  '	total += c.replicator.restored.bytes.Load()' \
+  '	_ = c.replicator.restored.bytes.Load()' \
+  'TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget$' ./tests
+
+mutate "a sent restored key stays charged" \
+  replicate.go \
+  '	b.bytes.Add(-restoredKeyCharge(k))' \
+  '	_ = k' \
+  'TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget$' ./tests
+
+mutate "decoded records are charged their strings alone" \
+  internal/segment/segment.go \
+  '	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + DecodedOverhead' \
+  '	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + 0*DecodedOverhead' \
+  'TestDecodedSizeCoversTheLiveHeap$' ./internal/segment/
+
 mutate "an owned shard's map is never rebuilt" \
   internal/store/digest.go \
   '	if n == sh.high || (!force && n*4 >= sh.high*3) {' \

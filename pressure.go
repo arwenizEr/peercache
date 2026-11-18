@@ -82,6 +82,8 @@ func (p *pressure) used() int64 {
 	c.mu.RUnlock()
 
 	total := c.replicas.Bytes()
+	// Restored keys waiting to be sent to their replicas.
+	total += c.replicator.restored.bytes.Load()
 	for _, ns := range namespaces {
 		if ns.store != nil {
 			total += ns.store.Bytes()
@@ -93,6 +95,10 @@ func (p *pressure) used() int64 {
 		// flush frees them, which relieve asks for.
 		if ns.persister != nil {
 			total += ns.persister.pendingBytes()
+			// And what restores and compactions have read and not yet
+			// applied, which on kind was the difference between a budget
+			// reading 440 MB of 512 and a pod OOM-killed at 1 GiB.
+			total += ns.persister.transientBytes()
 		}
 	}
 	return total

@@ -176,7 +176,9 @@ type persister struct {
 	logMu    sync.Mutex
 	logs     map[string]*logEntry
 	logBytes int
-	logUsers int
+	// transient is what scans hold; see scanned.
+	transient atomic.Int64
+	logUsers  int
 }
 
 // logEntry is one unsplit log as scans share it: its records by partition,
@@ -192,8 +194,8 @@ type logEntry struct {
 // log is read for the scan that asked and not kept: the restore is no worse
 // than before the cache, one read of the log per partition.
 //
-// The memory budget does not count these bytes, which is why the bound is
-// small: logs are what the splitter has not moved yet, a few seconds of the
+// The memory budget counts these bytes (transientBytes), and the bound is
+// small besides: logs are what the splitter has not moved yet, a few seconds of the
 // cluster's distinct keys written to the namespace, which past this bound
 // are better read again than held. Per persistent namespace.
 const persistLogCacheBytes = 16 << 20
@@ -300,6 +302,30 @@ func (p *persister) flushSoon() {
 	case p.kick <- struct{}{}:
 	default:
 	}
+}
+
+// hold charges n bytes of what this scan read to the persister's transient
+// memory, which the budget counts.
+func (sc *scanned) hold(n int64) {
+	sc.held += n
+	sc.p.transient.Add(n)
+}
+
+// release gives back what the scan held. Called once its records are applied
+// or abandoned; it is safe to call twice.
+func (sc *scanned) release() {
+	sc.p.transient.Add(-sc.held)
+	sc.held = 0
+}
+
+// transientBytes is the memory this persister holds outside the stores and
+// the pending set: records scans have read and not yet released, and the
+// unsplit logs kept for them. The budget counts it; see [pressure.used].
+func (p *persister) transientBytes() int64 {
+	p.logMu.Lock()
+	logs := int64(p.logBytes)
+	p.logMu.Unlock()
+	return p.transient.Load() + logs
 }
 
 func recordSize(r *segment.Record) int {
@@ -670,18 +696,19 @@ func (p *persister) restore(ctx context.Context, part int) error {
 	// listing again finds it; three tries covers a compaction per try.
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		var newest map[string]*segment.Record
-		newest, err = p.read(ctx, part)
+		var sc *scanned
+		sc, err = p.scan(ctx, part)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		p.overlay(newest, mark, func(key string) bool {
+		p.overlay(sc.newest, mark, func(key string) bool {
 			return persistPartition(p.ns.groupKeyFor(key)) == part
 		})
-		p.apply(newest)
+		p.apply(sc.newest)
+		sc.release()
 		return nil
 	}
 	return err
@@ -752,17 +779,16 @@ func (p *persister) overlay(newest map[string]*segment.Record, mark int, want fu
 	add(p.pending)
 }
 
-// read collects the newest record per key of one partition.
-func (p *persister) read(ctx context.Context, part int) (map[string]*segment.Record, error) {
-	sc, err := p.scan(ctx, part)
-	if err != nil {
-		return nil, err
-	}
-	return sc.newest, nil
-}
-
 // scanned is one partition as a reader found it.
+//
+// What it holds is memory the budget counts, from the read until release:
+// on kind a failover's restores, eight partitions at once in each persistent
+// namespace, held 150 to 200 MB of decoded records the budget did not see,
+// and pods it said were at 440 MB of 512 were OOM-killed at a 1 GiB limit.
 type scanned struct {
+	p *persister
+	// held is what this scan has added to p.transient.
+	held   int64
 	newest map[string]*segment.Record
 	// merged names every object whose records are in newest, snapshots and
 	// segments alike: what a snapshot made from newest covers.
@@ -783,11 +809,22 @@ type scanned struct {
 // Logs not yet split are read too, keeping only this partition's records
 // (decision 0030). They are not counted in merged or segments: compaction
 // neither folds nor deletes them, the splitter does.
-func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
+func (p *persister) scan(ctx context.Context, part int) (_ *scanned, err error) {
 	defer p.useLogs()()
 	prefix := partitionPrefix(p.ns.name, part)
-	sc := &scanned{newest: map[string]*segment.Record{}}
-	merge := func(f *segment.File) {
+	sc := &scanned{p: p, newest: map[string]*segment.Record{}}
+	defer func() {
+		if err != nil {
+			sc.release()
+			return
+		}
+		// Room for what was read, before it is applied.
+		p.ns.cache.pressure.check()
+	}()
+	mergeHeld := func(f *segment.File, charge bool) {
+		if charge {
+			sc.hold(segment.DecodedSize(f.Records))
+		}
 		for i := range f.Records {
 			r := &f.Records[i]
 			if r.Namespace != p.ns.name {
@@ -798,6 +835,7 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 			}
 		}
 	}
+	merge := func(f *segment.File) { mergeHeld(f, true) }
 	// An object listed and then gone has been folded or split: its records
 	// are in a snapshot or a partition segment made before it was deleted
 	// (decision 0030), which listing again shows. So a missing object is
@@ -864,7 +902,7 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 			if loaded[name] {
 				continue
 			}
-			records, err := p.logRecords(ctx, name, part)
+			records, shared, err := p.logRecords(ctx, name, part)
 			if gone(err) {
 				vanished = true
 				continue
@@ -873,7 +911,8 @@ func (p *persister) scan(ctx context.Context, part int) (*scanned, error) {
 				return nil, err
 			}
 			loaded[name] = true
-			merge(&segment.File{Records: records})
+			// Records from the shared logs are counted there, once.
+			mergeHeld(&segment.File{Records: records}, !shared)
 		}
 		if !vanished {
 			return sc, nil
@@ -906,7 +945,10 @@ const scanPasses = 16
 // shows them (pruneLogs), and all of them at the split interval when no scan
 // or restore is under way (dropIdleLogs): a node that stopped restoring holds
 // none for longer than that.
-func (p *persister) logRecords(ctx context.Context, name string, part int) ([]segment.Record, error) {
+//
+// shared reports that the records are the kept log's, which transientBytes
+// counts already, rather than read for this caller alone.
+func (p *persister) logRecords(ctx context.Context, name string, part int) (_ []segment.Record, shared bool, err error) {
 	p.logMu.Lock()
 	e := p.logs[name]
 	if e == nil {
@@ -922,7 +964,7 @@ func (p *persister) logRecords(ctx context.Context, name string, part int) ([]se
 			for _, r := range f.Records {
 				i := persistPartition(p.ns.groupKeyFor(r.Key))
 				e.parts[i] = append(e.parts[i], r)
-				e.bytes += recordSize(&r)
+				e.bytes += int(r.DecodedSize())
 			}
 		}
 		p.logMu.Lock()
@@ -945,16 +987,20 @@ func (p *persister) logRecords(ctx context.Context, name string, part int) ([]se
 	select {
 	case <-e.ready:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, false, ctx.Err()
 	}
 	if e.err != nil {
 		if errors.Is(e.err, ErrNotFound) {
-			return nil, e.err
+			return nil, false, e.err
 		}
 		// Another scan's failure, maybe its deadline: try for this one.
-		return p.loadLogPart(ctx, name, part)
+		records, err := p.loadLogPart(ctx, name, part)
+		return records, false, err
 	}
-	return e.parts[part], nil
+	p.logMu.Lock()
+	kept := p.logs[name] == e
+	p.logMu.Unlock()
+	return e.parts[part], kept, nil
 }
 
 // loadLogPart reads the log name for one scan alone and keeps part's records.
@@ -963,7 +1009,9 @@ func (p *persister) loadLogPart(ctx context.Context, name string, part int) ([]s
 	if err != nil {
 		return nil, err
 	}
-	kept := f.Records[:0]
+	// Copied out, so that the other partitions' records are not kept alive
+	// behind the slice for as long as the scan holds this one.
+	var kept []segment.Record
 	for _, r := range f.Records {
 		if persistPartition(p.ns.groupKeyFor(r.Key)) == part {
 			kept = append(kept, r)
@@ -1093,7 +1141,7 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 	defer p.releaseRestoreSlot()
 	mark := p.beginRestore()
 	defer p.endRestore()
-	newest, err := p.read(ctx, persistPartition(p.ns.groupKeyFor(key)))
+	sc, err := p.scan(ctx, persistPartition(p.ns.groupKeyFor(key)))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -1101,6 +1149,8 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		p.restoreFailures.Add(1)
 		return nil
 	}
+	defer sc.release()
+	newest := sc.newest
 
 	p.mu.Lock()
 	delete(p.shed, key)
@@ -1173,6 +1223,7 @@ func (p *persister) compact(ctx context.Context, part, threshold int) error {
 	if err != nil {
 		return err
 	}
+	defer sc.release()
 	if sc.segments < threshold {
 		return nil
 	}

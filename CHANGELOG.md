@@ -88,6 +88,16 @@ change the public API.
   matters after a demotion takes a returning owner's share out of them.
   `TestAccountedBytesCoverTheLiveHeapAfterRemovals`, in both stores.
 
+- The memory budget counts what a persistent namespace's restores and
+  compactions have read and not yet applied, the logs kept for them, and the
+  restored keys waiting to be sent to their replicas. None of it was counted:
+  on kind, in a partition, a pod's restores held 150 to 200 MB of decoded
+  records and its restore backlog 80 MB while the budget read 440 MB of 512,
+  and the pod was OOM-killed at 1 GiB. A scan asks the budget for room once it
+  has read, before it applies. `TestARestoreCountsWhatItReadsAgainstTheBudget`,
+  `TestRestoredKeysWaitingForTheirReplicasCountAgainstTheBudget`,
+  `TestDecodedSizeCoversTheLiveHeap`.
+
 - The memory budget no longer sheds a replica of a persistent write its owner
   may not have flushed yet: for one flush interval and the flush timeout after
   the write, by the owner's write order. Until the flush that copy is the

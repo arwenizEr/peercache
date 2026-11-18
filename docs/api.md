@@ -1159,9 +1159,12 @@ just after it doubles — 160 bytes an owned entry, 240 a replica
 map keeps — a replica namespace's map, an owned store's shard — since a Go map
 gives none back when entries leave it; a map is rebuilt once it holds under
 three quarters of its slots, and after every shed, which is what frees them. Activated groups are not counted —
-`WithMaxActiveGroups` bounds those — and neither is anything around the
-stores: decoded keys still referenced, RPC buffers, restore and catch-up pages.
-Off by default.
+`WithMaxActiveGroups` bounds those — and neither are RPC buffers or catch-up
+pages in flight. What a persistent namespace's restores and compactions have
+read from storage and not yet applied, the logs kept for them, and restored
+keys waiting to be sent to their replicas are counted: on kind a failover's
+restores held 150 to 200 MB of them, and the restore backlog 80 MB, outside a
+budget that read 440 MB of 512 when its pods were OOM-killed. Off by default.
 
 It bounds the data, not the process. Without a memory limit the Go runtime
 lets the heap reach twice its live size before collecting: a pod budgeted at
