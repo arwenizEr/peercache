@@ -1374,6 +1374,31 @@ The estimate read four fifths of the heap. The charge decides only what the
 bound admits and what the budget sees, not how fast a read or a fill runs, so
 the tier's benchmarks do not move.
 
+## Owned entries with a lineage, and the shed checks
+
+Machine A, 2026-11-18, not under the race detector, while the machine also ran
+a game: every figure is a median of six to eight runs of main and this branch
+interleaved, one after the other, so that the load fell on both alike. A
+namespace without persistence and untraced, the common case.
+
+| Benchmark | main | lineage as a string | final |
+|---|---|---|---|
+| `BenchmarkNamespaceGetSmallPlain` | 37.4 ns | 40.4 ns | 38.0 ns |
+| `BenchmarkNamespaceSet` | 463 ns | 470 ns | 462 ns |
+| `BenchmarkNamespaceIncrement` | 520 ns | 580 ns | 532 ns |
+| `BenchmarkNamespaceCompareAndSwap` | 397 ns | — | 406 ns |
+
+An owned entry keeps the writer and predecessor of its value (open question
+66): 24 bytes as a string, 16 with the writer interned as a four-byte index,
+which is what shipped. The read and write paths of a namespace without
+persistence skip the shed checks (questions 61, 62); a cache without a key
+trace pays an inlined nil check per change. What remains, about 2% on an
+update, is the larger entry.
+
+`TestAccountedBytesCoverTheLiveHeap` in `internal/store`, 22-byte keys and
+48-byte values: 185 bytes an entry beyond key and value at a million entries
+(153 before), 156 at 300,000. `store.EntryOverhead` is 192 (160 before).
+
 ## Invalidation hints under a burst of writes
 
 `BenchmarkHintsOverGRPC`, Machine A: three caches over real gRPC on
