@@ -42,8 +42,20 @@ wait_ready() {
   log "WARNING: not all shop pods ready"; return 1
 }
 
-# load NAME SECONDS: start the load generator in the background.
+# oom_counts: kernel OOM kills so far on each worker, "node count" per line.
+# The kernel's log is per node and survives container restarts, which is what
+# tells an OOM kill from a probe kill or a crash after the fact.
+oom_counts() {
+  for n in $(docker ps --format '{{.Names}}' | grep -E '^m16-worker[0-9]*$' | sort); do
+    echo "$n $(docker exec "$n" dmesg 2>/dev/null | grep -c 'Killed process')"
+  done
+}
+
+# load NAME SECONDS: start the load generator in the background, and note when
+# the scenario began, for the evidence check collects.
 load() {
+  SCENARIO_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  oom_counts > "$OUT/$1/oom-before.txt"
   $K exec loadgen -- rm -rf "/tmp/$1"
   $K exec loadgen -- shopload run -target http://shop -duration "${2}s" \
     -workers "$WORKERS" -prefix "$1-$RUN-" -ledger "/tmp/$1" > "$OUT/$1/load.txt" 2>&1 &
@@ -61,7 +73,7 @@ check() {
     $K logs "$p" --since=10m > "$OUT/$1/$(basename "$p").log" 2>&1
     $K logs "$p" --previous > "$OUT/$1/$(basename "$p").previous.log" 2>/dev/null || true
   done
-  $K exec shop-0 -- wget -qO- http://localhost:8080/debug/peercache/namespaces > "$OUT/$1/namespaces.json" 2>/dev/null || true
+  evidence "$1"
   # Forks counted since each pod last started: a pod the scenario restarted
   # reports only what it saw after the restart.
   local forks=0 n p
@@ -73,6 +85,38 @@ check() {
     forks=$((forks + ${n:-0}))
   done
   log "$1: $(grep -E '^(acknowledged|uncertain|stock items)' "$OUT/$1/check.txt" | tr '\n' ' ') forks: $forks rc=$rc"
+}
+
+# evidence NAME: what explains a scenario after the fact, beside the logs.
+#
+#   events.txt     cluster events since the scenario began: probe failures,
+#                  kills, back-offs, scheduling
+#   restarts.txt   each pod's restart count and how its last container ended
+#                  (reason, exit code, when): OOMKilled, Error, or Completed
+#   oom.txt        kernel OOM kills during the scenario, per worker
+#   <pod>.metrics  every pod's /metrics, the library's counters included
+#   <pod>.namespaces.json  every pod's view of its namespaces
+#
+# The partition run of 2026-11-18 restarted two pods for a reason nothing kept:
+# not OOM by the kernel's count, and nothing else was recorded.
+evidence() {
+  local d="$OUT/$1" p
+  $K get events --sort-by=.metadata.creationTimestamp \
+    -o custom-columns='TIME:.metadata.creationTimestamp,TYPE:.type,REASON:.reason,OBJECT:.involvedObject.name,COUNT:.count,MESSAGE:.message' \
+    2>/dev/null | awk -v s="$SCENARIO_START" 'NR == 1 || $1 >= s' > "$d/events.txt"
+  $K get pods -l app=shop -o jsonpath='{range .items[*]}{.metadata.name}{" restarts="}{.status.containerStatuses[0].restartCount}{" last="}{.status.containerStatuses[0].lastState.terminated.reason}{" exit="}{.status.containerStatuses[0].lastState.terminated.exitCode}{" started="}{.status.containerStatuses[0].lastState.terminated.startedAt}{" finished="}{.status.containerStatuses[0].lastState.terminated.finishedAt}{"\n"}{end}' \
+    > "$d/restarts.txt" 2>/dev/null
+  oom_counts > "$d/oom-after.txt"
+  join "$d/oom-before.txt" "$d/oom-after.txt" 2>/dev/null | awk '{ print $1, $3 - $2 }' > "$d/oom.txt"
+  for p in $($K get pods -l app=shop -o jsonpath='{.items[*].metadata.name}'); do
+    $K exec "$p" -- wget -qO- http://localhost:8080/metrics > "$d/$p.metrics" 2>/dev/null || true
+    $K exec "$p" -- wget -qO- http://localhost:8080/debug/peercache/namespaces > "$d/$p.namespaces.json" 2>/dev/null || true
+  done
+  local restarted ooms probes
+  restarted=$(awk '$2 != "restarts=0"' "$d/restarts.txt" | tr '\n' ';')
+  ooms=$(awk '{ n += $2 } END { print n + 0 }' "$d/oom.txt")
+  probes=$(grep -c 'Unhealthy' "$d/events.txt")
+  log "$1: evidence: kernel OOM kills $ooms, probe failures $probes, restarted: ${restarted:-none}"
 }
 
 steady() {
