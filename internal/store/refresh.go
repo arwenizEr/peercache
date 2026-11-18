@@ -48,7 +48,7 @@ func (s *Store) PutIfVersion(key string, val []byte, ttl time.Duration, version 
 		return false
 	}
 	sh.forget(key)
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version + 1, order: s.nextOrder()})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version + 1, order: s.nextOrder(), prev: old.order, writer: s.writer})
 	sh.bytes.Add(size(key, stored) - size(key, old.val))
 	sh.sets.Add(1)
 	return true

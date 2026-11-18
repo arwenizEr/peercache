@@ -631,6 +631,7 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		SweepInterval: 0,
 		Order:         order,
 		TTLJitter:     opts.TTLJitter,
+		Writer:        c.selfID(),
 	})
 	if err != nil {
 		ns.err = err

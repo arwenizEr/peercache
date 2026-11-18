@@ -8,6 +8,7 @@ import (
 
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/store"
 	"github.com/arwenizEr/peercache/internal/wire"
 	"github.com/arwenizEr/peercache/transport"
 )
@@ -538,7 +539,22 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// replicated copy is; framing it again stored a frame inside a
 		// frame and handed the header back to the next reader.
 		h.cache.observeOrder(in.Order)
-		adopted := ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order)
+		// The owner judges the copy as a replica would (open question 66):
+		// a copy from another writer whose history and the held value's
+		// do not descend from each other is a fork, counted whichever of
+		// the two wins by order.
+		if order, lin, held := ns.store.LineageOf(in.Key); held && replication.Forked(
+			replication.Entry{Order: order, From: lin.Writer, Prev: lin.Prev},
+			replication.Entry{Order: in.Order, From: in.From, Prev: in.Prev}) {
+			h.cache.splitBrain.Add(1)
+			h.cache.opts.Logger.Warn("conflicting replicated write",
+				"namespace", in.Namespace, "key", in.Key, "from", in.From)
+			if h.cache.traced(in.Namespace, in.Key) {
+				h.cache.record(in.Namespace, in.Key, keytraceFork, in.Order, in.From, in.Stamp.Version, in.Value, "as owner")
+			}
+		}
+		adopted := ns.store.RestoreFrom(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,
+			store.Lineage{Writer: in.From, Prev: in.Prev})
 		if h.cache.traced(in.Namespace, in.Key) {
 			kind := keytraceReplicaAccepted
 			if !adopted {

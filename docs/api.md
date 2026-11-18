@@ -1154,7 +1154,7 @@ cache, err := peercache.New(
 
 Caps the bytes the owned stores, the replica store and the L1 tier may hold:
 keys and values, plus a per-entry overhead measured at a map's worst point,
-just after it doubles — 160 bytes an owned entry, 240 a replica, 192 an L1
+just after it doubles — 208 bytes an owned entry, 240 a replica, 192 an L1
 copy (`TestAccountedBytesCoverTheLiveHeap`). The overhead is charged per slot a
 map keeps — a replica namespace's shard, an owned store's shard — since a Go map
 gives none back when entries leave it; a map is rebuilt once it holds under

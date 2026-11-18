@@ -1151,7 +1151,7 @@ func (p *persister) apply(newest map[string]*segment.Record) {
 		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
 			continue
 		}
-		version, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
+		version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone, r.Writer, nil)
 		if !merged {
 			continue
 		}
@@ -1313,7 +1313,7 @@ func (p *persister) settleShed(key string, r *segment.Record) bool {
 	}
 	expired := !r.Tombstone && r.ExpiresAt != 0 && p.clk.Now().UnixNano() >= r.ExpiresAt
 	settled := true
-	version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, func() bool {
+	version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, r.Writer, func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if newer() {
