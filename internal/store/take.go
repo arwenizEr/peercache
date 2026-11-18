@@ -31,7 +31,7 @@ func (s *Store) TakeWhere(take func(key string) bool) []SnapshotEntry {
 			}
 			if e.expiresAt == 0 || now < e.expiresAt {
 				out = append(out, SnapshotEntry{Key: key, Value: e.val, Version: e.version, ExpiresAt: e.expiresAt, Order: e.order,
-					Lineage: Lineage{Writer: e.writer, Prev: e.prev &^ unrecordedBit}})
+					Lineage: Lineage{Writer: s.writerName(e.writer), Prev: e.prev &^ unrecordedBit}})
 			}
 			sh.bytes.Add(-size(key, e.val))
 			s.deleteEntry(sh, key)

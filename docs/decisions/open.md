@@ -2234,8 +2234,9 @@ replaced: from the local write, this node; from a promoted, adopted or restored
 copy, the copy's own. Demotion carries them, so the minority's value reaches
 the majority's replicas naming its writer, and the fork is judged and counted
 there. The demoting node is still never named for a write it did not make,
-the false fork that made demotion name nobody. The cost is 24 bytes a slot:
-`store.EntryOverhead` is 208, measured at 202 (153 before).
+the false fork that made demotion name nobody. The cost is 16 bytes a slot, the writer
+interned as a four-byte index: `store.EntryOverhead` is 192, measured at 185
+(153 before).
 `TestAForkWrittenOnBothSidesOfAPartitionIsCounted` counted nothing before.
 The write that loses the heal is still lost — decision 5's window, now
 counted — so `TestDurableSimulation` holds such keys to the upper bound only.

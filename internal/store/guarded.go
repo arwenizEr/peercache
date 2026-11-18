@@ -62,7 +62,7 @@ func (s *Store) SetIfAbsentGuarded(key string, val []byte, ttl time.Duration, he
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	s.putEntry(sh, key, entry{val: copied, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: old.order | unrecordedBit, writer: s.writer})
+	s.putEntry(sh, key, entry{val: copied, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: old.order | unrecordedBit, writer: s.self})
 	delta := size(key, copied)
 	if had {
 		delta -= size(key, old.val)

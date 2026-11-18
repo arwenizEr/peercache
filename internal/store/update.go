@@ -85,7 +85,7 @@ func (s *Store) Update(key string, fn func(cur []byte, ok bool) (m Mutation, wri
 		version = sh.floor + 1
 	}
 	order := s.nextOrder()
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.writer})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.self})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)

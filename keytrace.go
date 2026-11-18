@@ -86,7 +86,12 @@ func (c *cache) recordCopy(namespace, key, stored string, accepted, conflict boo
 
 // traced reports whether key of namespace is traced, so that a hook builds
 // its event only then.
-func (c *cache) traced(namespace, key string) bool { return c.trace.Traced(namespace, key) }
+//
+// The nil check is here, where it inlines, rather than only in Traced: an
+// untraced cache pays a predicted branch on every write, not a call.
+func (c *cache) traced(namespace, key string) bool {
+	return c.trace != nil && c.trace.Traced(namespace, key)
+}
 
 // record adds an event to key's history. Callers check traced first.
 func (c *cache) record(namespace, key, kind string, order uint64, writer string, version uint64, val []byte, detail string) {

@@ -38,20 +38,20 @@ const (
 //
 // Measured, at the worst point: a map that has just doubled, so that half its
 // slots are empty. One entry costs a map slot (the key's string header and the
-// entry struct, 88 bytes on 64-bit), that slot's share of the empty ones and
+// entry struct, 80 bytes on 64-bit), that slot's share of the empty ones and
 // of the group control words, and the key's and value's size-class rounding.
-// With 22-byte keys and 48-byte values, a million entries took 202 bytes each
-// beyond the key and value in live heap, and 170 at 300,000 between doublings;
+// With 22-byte keys and 48-byte values, a million entries took 185 bytes each
+// beyond the key and value in live heap, and 156 at 300,000 between doublings;
 // TestAccountedBytesCoverTheLiveHeap holds the figure to it. It was 96, an
 // estimate that called itself high and was a third too low, and on kind a
 // pod budgeted by it at half its container limit was OOM-killed. It was 160,
-// measured at 153, until each entry kept its lineage — 24 bytes a slot, twice
+// measured at 153, until each entry kept its lineage — 16 bytes a slot, twice
 // that at the worst point — so that a fork can be judged (open question 66).
 //
 // It is charged per slot a shard's map keeps, which deleting does not give
 // back: one per entry, and one per entry removed since the map was last
 // rebuilt; see shard.shrink and [Store.Slots].
-const EntryOverhead int64 = 208
+const EntryOverhead int64 = 192
 
 // Options configures a [Store].
 type Options struct {
@@ -100,8 +100,11 @@ type entry struct {
 	// replaced where it was written, and the node that wrote it. A copy of
 	// the entry that leaves this store carries them, so that two copies of
 	// one key can be told apart as a handover or a fork; see Lineage.
-	prev   uint64
-	writer string
+	prev uint64
+	// writer indexes the store's writer names (see Store.intern): four
+	// bytes rather than a string's sixteen, since every slot pays for it
+	// and a store hears from a handful of nodes.
+	writer uint32
 }
 
 // unrecordedBit marks, in an entry's prev, a value no persistence record will
@@ -205,8 +208,13 @@ type Store struct {
 	done      chan struct{}
 	stopped   chan struct{}
 	ticker    clock.Ticker
-	// writer is Options.Writer.
-	writer string
+	// self is Options.Writer's index among the writer names.
+	self uint32
+	// writers names the nodes entries were written by, index 0 none:
+	// appended under writerMu, read without it. writerIDs is the reverse.
+	writers   atomic.Pointer[[]string]
+	writerMu  sync.Mutex
+	writerIDs map[string]uint32
 }
 
 // New returns a [Store].
@@ -238,12 +246,16 @@ func New(opts Options) (*Store, error) {
 		mask:         uint64(count - 1),
 		clk:          opts.Clock,
 		order:        opts.Order,
-		writer:       opts.Writer,
 		jitter:       opts.TTLJitter,
+		writerIDs:    map[string]uint32{},
 		sweepPerTick: opts.SweepShardsPerTick,
 		done:         make(chan struct{}),
 		stopped:      make(chan struct{}),
 	}
+	names := []string{""}
+	s.writers.Store(&names)
+	s.self = s.intern(opts.Writer)
+
 	for i := range s.shards {
 		s.shards[i] = &shard{entries: make(map[string]entry)}
 	}
@@ -423,7 +435,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 		version = sh.floor + 1
 	}
 	order := s.nextOrder()
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.writer})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.self})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -626,6 +638,29 @@ func (s *Store) RestoreAtFrom(key string, val []byte, expiresAt int64, version, 
 	return s.restore(key, val, expiresAt, version, order, lin)
 }
 
+// intern returns name's index among the writer names, adding it if new.
+// The empty name is index 0.
+func (s *Store) intern(name string) uint32 {
+	if name == "" {
+		return 0
+	}
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	if id, ok := s.writerIDs[name]; ok {
+		return id
+	}
+	names := append(append([]string(nil), *s.writers.Load()...), name)
+	id := uint32(len(names) - 1)
+	s.writers.Store(&names)
+	s.writerIDs[name] = id
+	return id
+}
+
+// writerName is intern's inverse.
+func (s *Store) writerName(id uint32) string {
+	return (*s.writers.Load())[id]
+}
+
 // LineageOf returns the order and lineage of key's entry, live or expired, and
 // whether there is one.
 func (s *Store) LineageOf(key string) (order uint64, lin Lineage, ok bool) {
@@ -636,10 +671,11 @@ func (s *Store) LineageOf(key string) (order uint64, lin Lineage, ok bool) {
 	if !found {
 		return 0, Lineage{}, false
 	}
-	return e.order, Lineage{Writer: e.writer, Prev: e.prev &^ unrecordedBit}, true
+	return e.order, Lineage{Writer: s.writerName(e.writer), Prev: e.prev &^ unrecordedBit}, true
 }
 
 func (s *Store) restore(key string, val []byte, expiresAt int64, version, order uint64, lin Lineage) bool {
+	writer := s.intern(lin.Writer)
 	stored := make([]byte, len(val))
 	copy(stored, val)
 
@@ -658,7 +694,7 @@ func (s *Store) restore(key string, val []byte, expiresAt int64, version, order 
 	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: lin.Prev, writer: lin.Writer})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: lin.Prev, writer: writer})
 	delta := size(key, stored)
 	if ok {
 		delta -= size(key, existing.val)
@@ -975,7 +1011,8 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 //
 // writer is the node the record names as its writer, kept as the entry's
 // lineage; a record does not carry its predecessor.
-func (s *Store) MergeIfNewerGuarded(key string, val []byte, expiresAt int64, order uint64, tombstone bool, writer string, guard func() bool) (uint64, bool) {
+func (s *Store) MergeIfNewerGuarded(key string, val []byte, expiresAt int64, order uint64, tombstone bool, writerName string, guard func() bool) (uint64, bool) {
+	writer := s.intern(writerName)
 	var stored []byte
 	if !tombstone {
 		stored = make([]byte, len(val))

@@ -149,6 +149,9 @@ func (n *namespace) routeWrite(ctx context.Context, key string, local func() err
 // then failed synchronous replication reports true with the error, for the
 // same reason localSet does not roll back.
 func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []byte, ok bool) (store.Mutation, bool, error)) (bool, error) {
+	if n.shedHeld == nil {
+		return n.localUpdateOnce(ctx, key, fn) // nothing shed to read back
+	}
 	for attempt := 0; ; attempt++ {
 		wrote, err := n.localUpdateOnce(ctx, key, fn)
 		if !errors.Is(err, errShedSinceRestore) {
