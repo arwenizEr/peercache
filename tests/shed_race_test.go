@@ -258,7 +258,7 @@ func TestShedKeysAreNeverReadAsAbsent(t *testing.T) {
 func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 	const (
 		budget = 128 << 10
-		keys   = 3000
+		keys   = 9000
 	)
 	c, _ := newCache(t, peercache.WithMemoryBudget(budget))
 	ns := c.Namespace("profiles",

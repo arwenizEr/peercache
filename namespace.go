@@ -1084,11 +1084,7 @@ func (n *namespace) localGetOrLoad(ctx context.Context, key string) ([]byte, err
 		// the key — or found nothing, and remembered that; loading it
 		// again would be a pointless round trip to whatever the loader
 		// talks to.
-		stored, _, _, ok, held := n.store.LookupGuarded(key, n.shedHeld)
-		if held {
-			return nil, 0, n.shedSinceRestore(key)
-		}
-		if ok {
+		if stored, _, ok := n.store.Get(key); ok {
 			val, err := n.decode(stored)
 			return val, 0, err
 		}
