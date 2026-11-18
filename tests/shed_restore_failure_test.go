@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/arwenizEr/peercache"
 	"github.com/arwenizEr/peercache/persist"
@@ -120,8 +121,10 @@ func TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable(t *testing.T) 
 		t.Fatal("no stock counter was shed, so this test checked nothing")
 	}
 
-	// Storage back: every counter continues from its own value.
+	// Storage back, and the retry interval past: every counter continues
+	// from its own value.
 	store.cut.Store(false)
+	fc.Advance(2 * time.Second)
 	for i := 0; i < counters; i++ {
 		key := fmt.Sprintf("item-%d", i)
 		v, err := stock.Get(ctx, key)
@@ -134,6 +137,77 @@ func TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable(t *testing.T) 
 		}
 		if n > -before {
 			t.Fatalf("%s = %d after storage returned; it was %d before the outage", key, n, -before)
+		}
+	}
+}
+
+// listCountingStore counts listings, which every read-back of a partition
+// starts with.
+type listCountingStore struct {
+	*cutOffStore
+	lists atomic.Int64
+}
+
+func (s *listCountingStore) List(ctx context.Context, prefix string) ([]string, error) {
+	s.lists.Add(1)
+	return s.cutOffStore.List(ctx, prefix)
+}
+
+// TestAShedReadBackBacksOffWhileStorageIsDown: a read-back that failed is not
+// retried by every access until the retry interval passes, as a failed
+// partition restore is not. Without that, each access to a shed key during an
+// outage read a whole partition against a store that was not answering, held
+// one of the restore slots doing it, and counted one more restore failure:
+// the failure count measured the request rate, not the outage.
+func TestAShedReadBackBacksOffWhileStorageIsDown(t *testing.T) {
+	const (
+		budget   = 256 << 10
+		counters = 50
+		accesses = 200
+	)
+	store := &listCountingStore{cutOffStore: &cutOffStore{BlobStore: persist.Memory()}}
+	c, fc := newCache(t, peercache.WithMemoryBudget(budget))
+	stock := c.Namespace("stock", peercache.WithPersistence(store))
+	ctx := context.Background()
+	for i := 0; i < counters; i++ {
+		if _, err := stock.Increment(ctx, fmt.Sprintf("item-%d", i), -1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flushed(t, c, fc, 1)
+	bulk := c.Namespace("bulk")
+	for i := 0; i < 4000; i++ {
+		_ = bulk.Set(ctx, fmt.Sprintf("b%05d", i), make([]byte, 1<<10), 0)
+	}
+
+	store.cut.Store(true)
+	before, failuresBefore := store.lists.Load(), c.Stats().PersistRestoreFailures
+	refused := 0
+	for i := 0; i < accesses; i++ {
+		_, err := stock.Increment(ctx, fmt.Sprintf("item-%d", i%counters), -1, 0)
+		if errors.Is(err, peercache.ErrActivationPending) {
+			refused++
+		}
+	}
+	if refused < accesses/4 {
+		t.Fatalf("only %d of %d accesses refused; too few shed keys to say anything", refused, accesses)
+	}
+	lists := store.lists.Load() - before
+	failures := c.Stats().PersistRestoreFailures - failuresBefore
+	// One attempt per partition per retry interval, and the clock does not
+	// move here: 50 keys fall in at most 50 partitions.
+	if lists > counters || failures > counters {
+		t.Fatalf("%d refused accesses listed storage %d times and counted %d restore failures; "+
+			"a failed read-back must wait out the retry interval, not retry on every access",
+			refused, lists, failures)
+	}
+
+	// After the interval, with storage back, the keys come back.
+	store.cut.Store(false)
+	fc.Advance(2 * time.Second)
+	for i := 0; i < counters; i++ {
+		if _, err := stock.Get(ctx, fmt.Sprintf("item-%d", i)); err != nil {
+			t.Fatalf("Get(item-%d) after storage returned: %v", i, err)
 		}
 	}
 }

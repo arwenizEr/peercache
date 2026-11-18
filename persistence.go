@@ -666,6 +666,15 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 	}
 }
 
+// failedRecently reports whether reading part from storage failed less than
+// restoreRetry ago.
+func (p *persister) failedRecently(part int) bool {
+	p.rmu.Lock()
+	defer p.rmu.Unlock()
+	at := p.parts[part].failedAt
+	return at != 0 && p.clk.Now().UnixNano()-at < int64(restoreRetry)
+}
+
 // errPartitionUnrestored reports that a key's partition could not be restored
 // from storage and is answered from memory until the next attempt.
 //
@@ -1179,17 +1188,33 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 		return nil
 	}
 
+	// A partition storage just failed to give is not read again until the
+	// retry interval passes, as a failed partition restore is not: during an
+	// outage every access to a shed key would otherwise read a whole
+	// partition from a store that is not answering, holding a restore slot,
+	// and the failure count would measure the request rate.
+	part := persistPartition(p.ns.groupKeyFor(key))
+	if p.failedRecently(part) {
+		return errPartitionUnrestored
+	}
 	if err := p.takeRestoreSlot(ctx); err != nil {
 		return err
 	}
 	defer p.releaseRestoreSlot()
 	mark := p.beginRestore()
 	defer p.endRestore()
-	sc, err := p.scan(ctx, persistPartition(p.ns.groupKeyFor(key)))
+	// Bounded like a partition restore: a store that hangs rather than fails
+	// must not hold the slot for as long as the caller is willing to wait.
+	scanCtx, cancel := clock.WithTimeout(ctx, p.clk, persistFlushTimeout)
+	sc, err := p.scan(scanCtx, part)
+	cancel()
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.rmu.Lock()
+		p.parts[part].failedAt = p.clk.Now().UnixNano()
+		p.rmu.Unlock()
 		p.restoreFailures.Add(1)
 		// Not nil: memory does not hold a shed key, so answering from it
 		// would report the key absent, and an Increment would count from
