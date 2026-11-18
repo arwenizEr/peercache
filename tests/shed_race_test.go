@@ -273,8 +273,11 @@ func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 func loadRacesShedWrite(t *testing.T) {
 	const (
 		budget = 128 << 10
-		keys   = 9000
 	)
+	keys := 9000
+	if raceEnabled {
+		keys = 3000 // the code paths for the detector; see the test above
+	}
 	c, _ := newCache(t, peercache.WithMemoryBudget(budget))
 	ns := c.Namespace("profiles",
 		peercache.WithPersistence(persist.Memory()),
@@ -304,7 +307,7 @@ func loadRacesShedWrite(t *testing.T) {
 		}(f)
 	}
 
-	var set [keys]atomic.Bool
+	set := make([]atomic.Bool, keys)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

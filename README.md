@@ -447,6 +447,7 @@ ignoredopts.go    Warning for options given to an already open namespace
 batchload.go      BatchGetOrLoad: one request per owner, one batch load per owner
 refresh.go        WithRefreshAhead: background reloads of keys read near expiry
 trace.go          WithTracer: spans around peer requests and loads
+keytrace.go       WithKeyTrace, KeyHistory: a traced key's history on this node
 cluster.go        DescribeCluster: every member's view, replica digests compared
 group.go          Group handle
 types.go          Shared public types
@@ -494,6 +495,7 @@ internal/
   pager/          Sorted key lists for catch-up and hand-off passes, sorted once per pass
   debugui/        The live dashboard DebugHandler serves at /ui
   hotkeys/        Sampled Space-Saving estimate of the most accessed keys
+  keytrace/       Bounded per-key event rings behind WithKeyTrace
   testkit/        In-process cluster harness with fault injection
   store/          Sharded owned store, TTL, versions
   l1/             Non-owned cache, TTL and version discipline

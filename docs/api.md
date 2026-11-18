@@ -30,6 +30,7 @@ and output-checked by `go test`:
 | `ExampleWithCatchUpRate` | the catch-up rate configured, a negative one rejected |
 | `ExampleWithJoinProbation` | probation configuration, a single node unaffected, a negative value rejected |
 | `ExampleWithMemoryBudget` | shedding to stay within a byte budget, counted |
+| `ExampleWithKeyTrace` | a key's history recorded with its writer and order, an untraced key with none |
 | `ExampleWithRequireReplicationFactor` | a synchronous write below its factor: counted by default, refused on request, held either way |
 | `ExamplePartitionByPrefix` | key-to-group mapping |
 | `ExampleCache_RegisterGroupFunc` | registration, duplicates, unknown names |
