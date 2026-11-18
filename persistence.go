@@ -195,10 +195,16 @@ type logEntry struct {
 // than before the cache, one read of the log per partition.
 //
 // The memory budget counts these bytes (transientBytes), and the bound is
-// small besides: logs are what the splitter has not moved yet, a few seconds of the
-// cluster's distinct keys written to the namespace, which past this bound
-// are better read again than held. Per persistent namespace.
-const persistLogCacheBytes = 16 << 20
+// small besides: logs are what the splitter has not moved yet, a few seconds
+// of the cluster's distinct keys written to the namespace, which past this
+// bound are better read again than held. Per persistent namespace.
+//
+// 48 MiB, by segment.DecodedSize. It was 16 MiB by a charge of 32 bytes a
+// record, which DecodedSize measures at 200: counted honestly, 16 MiB kept a
+// third of the records it had, and BenchmarkRestoreAfterRestart at 200,000
+// keys went from 415 to 718 ms reading every log once per partition again.
+// At 48 MiB it takes 272.
+const persistLogCacheBytes = 48 << 20
 
 func newPersister(ns *namespace, store core.BlobStore) *persister {
 	p := &persister{
