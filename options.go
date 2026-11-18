@@ -188,17 +188,19 @@ func WithGroupIdleTimeout(d time.Duration) Option {
 // entries when it is exceeded. Zero, the default, means no cap.
 //
 // It counts the owned stores, the replica store and the L1 tier, at their keys'
-// and values' sizes plus a per-entry overhead estimated on the high side. It
-// does not count activated groups, which [WithMaxActiveGroups] bounds, or
-// anything around the stores: decoded keys still referenced, RPC buffers,
-// restore and catch-up pages, map growth. Measured on kind at a million
-// orders, the heap in use was about 1.55 times what the budget counted.
+// and values' sizes plus a per-entry overhead measured at a map's worst point,
+// just after it doubles. It does not count activated groups, which
+// [WithMaxActiveGroups] bounds, or anything around the stores: decoded keys
+// still referenced, RPC buffers, restore and catch-up pages. Until 1.1.2 the
+// per-entry overheads were estimates, and they read about two thirds of the
+// heap the stores took.
 //
 // It bounds the data, not the process. The Go runtime decides when to collect,
 // and without a memory limit it lets the heap grow to twice its live size
 // first. Run with GOMEMLIMIT at about nine tenths of the container's memory
 // limit and set the budget to about half of it; a pod budgeted at 512 MiB
-// with a 1 GiB limit and no GOMEMLIMIT was OOM-killed. [New] logs a warning
+// with a 1 GiB limit and no GOMEMLIMIT was OOM-killed, and so, before the
+// overheads were measured, was one with GOMEMLIMIT. [New] logs a warning
 // when a budget is set and the process has no memory limit.
 //
 // Over budget, the node sheds to nine tenths of it, cheapest tier first: the L1

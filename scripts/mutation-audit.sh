@@ -1338,7 +1338,7 @@ mutate "asynchronous writes wait for their replicas"   namespace.go   '	if err :
 
 mutate "a caught-up replica's deadline is counted late"   catchup.go   'ExpiresAt:  replication.DeadlineFrom(now, e.TTLNanos),'   'ExpiresAt:  replication.DeadlineFrom(now+int64(6*time.Second), e.TTLNanos),'   'TestACaughtUpKeyKeepsItsRemainingTTL$' ./tests
 
-mutate "expired replicas are never swept"   peercache.go   '	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' ./tests
+mutate "expired replicas are never swept"   peercache.go   '	_, _ = c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())'   ''   'TestExpiredReplicasAreReclaimed$' ./tests
 
 mutate "a replica at its deadline still counts as live"   internal/replication/replica.go   '	return left, left > 0'   '	return left, left >= 0'   'TestRemainingAndDeadline$' ./internal/replication/
 
@@ -2247,7 +2247,7 @@ mutate "a split deletes logs its segments failed to cover" \
   persistence.go \
   '	wg.Wait()
 	if failed != nil {
-		return failed
+		return false, failed
 	}
 	for _, name := range logs {' \
   '	wg.Wait()
@@ -2292,8 +2292,8 @@ mutate "a non-positive flush interval is accepted" \
 
 mutate "a restored key is not replicated again" \
   persistence.go \
-  '		p.replicateRestored(key, r, version, now)' \
-  '		_ = version' \
+  '		p.replicateRestored(key, r)' \
+  '' \
   'TestARestoredKeyIsReplicatedAgain$' ./tests
 
 # --- persistence: Close and restores in flight ---
@@ -3231,6 +3231,34 @@ mutate "a dead node's name is never reclaimed" \
   '	if cfg.DeadNodeReclaimTime == 0 {' \
   '	if false {' \
   'TestADeadNodeRejoinsUnderItsNameFromANewAddress$' ./membership
+
+# --- a backlog of logs is split a batch at a time ---
+
+mutate "a split reads every log at once" \
+  persistence.go \
+  '	if len(logs) > persistSplitBatch {' \
+  '	if false {' \
+  'TestABacklogOfLogsIsSplitABatchAtATime$' ./tests
+
+mutate "a split round stops after one batch" \
+  persistence.go \
+  'logs, more = logs[:persistSplitBatch], true' \
+  'logs, more = logs[:persistSplitBatch], false' \
+  'TestABacklogOfLogsIsSplitABatchAtATime$' ./tests
+
+# --- the memory budget counts what entries take ---
+
+mutate "an owned entry is charged the old estimate" \
+  internal/store/store.go \
+  'const EntryOverhead int64 = 160' \
+  'const EntryOverhead int64 = 96' \
+  'TestAccountedBytesCoverTheLiveHeap$' ./internal/store
+
+mutate "a replica is charged the old estimate" \
+  internal/replication/replica.go \
+  'const EntryOverhead int64 = 240' \
+  'const EntryOverhead int64 = 128' \
+  'TestAccountedBytesCoverTheLiveHeap$' ./internal/replication
 
 # --- restored keys fan out from a backlog of their own, dropping none ---
 

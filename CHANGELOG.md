@@ -65,6 +65,27 @@ change the public API.
   now count only keys refused by the backlog's guard bound of four million,
   and are zero in an ordinary restart.
 
+- The memory budget counts what entries take. Its per-entry overheads were
+  estimates, 96 bytes for an owned entry and 128 for a replica, described as
+  high and measured a third low: at a map's worst point, just after it
+  doubles, an owned entry took 153 bytes beyond its key and value and a
+  replica 237. They are 160 and 240 now, and
+  `TestAccountedBytesCoverTheLiveHeap` holds them to the live heap. On kind
+  at 3.7 million keys, once restored keys reached their replicas, every pod
+  budgeted at 512 MiB under a 1 GiB limit with `GOMEMLIMIT` was OOM-killed
+  within seconds of starting: the budget read about 300 MB and never shed.
+  A node now sheds about a third sooner for the same budget.
+
+- A namespace's logs are split into partition segments a batch of 32 at a
+  time, oldest first, each batch with a timeout of its own and its logs
+  deleted once split. A split read every log there was at once, under one
+  flush timeout, and deleted none until all were split; under load one
+  interval's logs outlasted the timeout, nothing was deleted, and each attempt
+  had more to read. On kind at 3.7 million keys that left 419 logs, 825 MB:
+  the pod assigned the split allocated 68 GB in four minutes and was
+  OOM-killed, then the next, in a crash loop no rollout could clear.
+  `TestABacklogOfLogsIsSplitABatchAtATime`.
+
 ### Added
 
 - `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that
