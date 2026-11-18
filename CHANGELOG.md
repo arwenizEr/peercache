@@ -16,7 +16,11 @@ change the public API.
   pods that were over budget and cut off from the object store. The access is
   now refused with `ErrActivationPending`, as a failed partition restore
   already was (open question 61).
-  `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`.
+  `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`. Such a
+  refusal waits out the restore retry interval before storage is read again,
+  rather than reading a partition on every access during the outage and
+  counting a restore failure each time.
+  `TestAShedReadBackBacksOffWhileStorageIsDown`.
 - A persistent counter under memory pressure no longer loses decrements with
   storage reachable. Shedding a key and reading it back each left a moment
   when the key was neither in memory nor marked as shed, so an `Increment`

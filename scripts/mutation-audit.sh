@@ -3507,6 +3507,21 @@ mutate "a guarded SetIfAbsent stores over a held key" \
   '	if false && !had && held(key) {' \
   'TestSetIfAbsentGuardedStoresNothingOverAHeldKey$' ./internal/store/
 
+mutate "a failed shed read-back is retried by every access" \
+  persistence.go \
+  '	return at != 0 && p.clk.Now().UnixNano()-at < int64(restoreRetry)' \
+  '	return false && at != 0 && p.clk.Now().UnixNano()-at < int64(restoreRetry)' \
+  'TestAShedReadBackBacksOffWhileStorageIsDown$' ./tests
+
+mutate "a failed shed read-back leaves no retry interval" \
+  persistence.go \
+  '		p.parts[part].failedAt = p.clk.Now().UnixNano()
+		p.rmu.Unlock()
+		p.restoreFailures.Add(1)' \
+  '		p.rmu.Unlock()
+		p.restoreFailures.Add(1)' \
+  'TestAShedReadBackBacksOffWhileStorageIsDown$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

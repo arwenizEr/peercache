@@ -2077,6 +2077,14 @@ keys it shed only; keys memory holds are served as before.
 `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable` counted a shed
 counter from zero before.
 
+**Then:** a refusal had no retry interval, so during an outage every access to
+a shed key read a whole partition from a store that was not answering, held a
+restore slot doing it, with only the caller's context to bound it, and counted
+one more restore failure: 200 accesses, 200 listings, 200 failures. A failed
+read-back now marks its partition failed, as a failed partition restore does,
+and accesses within `restoreRetry` are refused without reading; the read is
+bounded by the flush timeout. `TestAShedReadBackBacksOffWhileStorageIsDown`.
+
 ## 62. A shed key could be in neither memory nor the marks — found by review, resolved
 
 **Found** reviewing open question 61's fix: the memory budget's shed of a
