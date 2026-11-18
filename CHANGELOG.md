@@ -48,6 +48,12 @@ change the public API.
   newest write those copies were its only other holders, and an owner dying
   before its flush lost the write (open question 65).
   `TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites`.
+- Conflicting writes on both sides of a partition are counted in
+  `SplitBrainDetections` when the minority's value is demoted at the heal. The
+  owned store kept no writer or predecessor for a value, so a demoted copy
+  named neither and was never judged a fork; each owned entry now keeps both
+  (open question 66). The memory budget charges 208 bytes an owned entry
+  rather than 160, measured. `TestAForkWrittenOnBothSidesOfAPartitionIsCounted`.
 - A memory-budget relief round no longer stalls every copy arriving for a
   namespace. A shed rebuilds the map it removed from, which is what frees its
   slots, and with one map a namespace that copied the whole remaining

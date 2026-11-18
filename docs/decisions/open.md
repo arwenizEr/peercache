@@ -2197,7 +2197,7 @@ is not lost — it stays in storage and is read back — so the copies are still
 copies of it, and the version floor already makes the owner's next write
 outrank them. Nothing about a non-persistent namespace changes.
 
-## 66. A fork whose minority copy is demoted before the majority's arrives is not counted — found by the durable simulation, open
+## 66. A fork whose minority copy is demoted before the majority's arrives is not counted — found by the durable simulation, resolved
 
 **Found** by `TestDurableSimulation`: in a partition the cut-off node promoted
 its replica of a counter once its activation delay passed, as decision 5
@@ -2229,8 +2229,13 @@ never judged.
 3. Leave detection as it is and qualify the README: conflicting writes are
    detected when both copies still name their writers.
 
-**Picked for now:** none in code. 3 weakens a stated guarantee, which decision
-0042 treats as a breaking change, and 1 or 2 change the owned store's entry
-and the budget's accounting; a decision between them is the owner's. Until
-then `TestDurableSimulation` excuses the keys that were also written on a
-minority side, the documented window, and reports the detections it saw.
+**Picked:** 1. Each owned entry keeps its writer and the order its write
+replaced: from the local write, this node; from a promoted, adopted or restored
+copy, the copy's own. Demotion carries them, so the minority's value reaches
+the majority's replicas naming its writer, and the fork is judged and counted
+there. The demoting node is still never named for a write it did not make,
+the false fork that made demotion name nobody. The cost is 24 bytes a slot:
+`store.EntryOverhead` is 208, measured at 202 (153 before).
+`TestAForkWrittenOnBothSidesOfAPartitionIsCounted` counted nothing before.
+The write that loses the heal is still lost — decision 5's window, now
+counted — so `TestDurableSimulation` holds such keys to the upper bound only.

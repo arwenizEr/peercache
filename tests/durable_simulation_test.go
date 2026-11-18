@@ -89,7 +89,8 @@ type durLedger struct {
 	// forked records a write acknowledged on a minority side. Both sides
 	// then wrote the key, and the later write by order wins the heal
 	// whichever side made it: the AP window decision 5 documents, in which
-	// the majority's writes may be lost too (open question 66).
+	// the majority's writes may be lost too. Counted as a fork since open
+	// question 66; lost all the same.
 	forked bool
 }
 

@@ -3585,6 +3585,14 @@ mutate "an owner's shed of a persistent key drops its replicas" \
   '	if n.opts.ReplicationFactor < 2 {' \
   'TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites$' ./tests
 
+mutate "a demoted value names no writer and no predecessor" \
+  promote.go \
+  '			From: e.Lineage.Writer,
+			Prev: e.Lineage.Prev,' \
+  '			From: "",
+			Prev: 0,' \
+  'TestAForkWrittenOnBothSidesOfAPartitionIsCounted$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
