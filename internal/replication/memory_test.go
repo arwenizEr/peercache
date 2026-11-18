@@ -148,8 +148,15 @@ func TestReplicaBytesUnderConcurrency(t *testing.T) {
 		}
 		want += charge(k, e)
 	}
+	// Plus the slots of what was removed since the map was last rebuilt,
+	// which a map keeps until then.
+	slots, held := s.Slots(), int64(s.Len())
+	if slots < held || slots*3 > held*4+3 {
+		t.Fatalf("%d slots charged for %d replicas; want at least one each and at most a third more", slots, held)
+	}
+	want += (slots - held) * replication.EntryOverhead
 	if got := s.Bytes(); got != want {
-		t.Fatalf("Bytes = %d, contents add up to %d", got, want)
+		t.Fatalf("Bytes = %d, contents and spare slots add up to %d", got, want)
 	}
 }
 

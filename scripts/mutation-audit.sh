@@ -1273,6 +1273,25 @@ mutate "the budget sheds replicas of unflushed persistent writes" \
   '			if floor, ok := keep[name]; ok && false {' \
   'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
 
+mutate "a replica map is never rebuilt, so it keeps the slots of what left" \
+  internal/replication/replica.go \
+  '	if n == nr.high || (!force && n*4 >= nr.high*3) {' \
+  '	if true || n == nr.high || (!force && n*4 >= nr.high*3) {' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/replication/
+
+mutate "removals other than a shed never rebuild the map" \
+  internal/replication/replica.go \
+  '	nr.shrink(false)
+	nr.mu.Unlock()' \
+  '	nr.mu.Unlock()' \
+  'TestAccountedBytesCoverTheLiveHeapAfterRemovals$' ./internal/replication/
+
+mutate "a replica is charged per live entry, not per slot kept" \
+  internal/replication/replica.go \
+  '	freed := int64(nr.high-n) * EntryOverhead' \
+  '	freed := int64(0)' \
+  'TestReplicaBytesTracksEveryPath$' ./internal/replication/
+
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
   '			if e.Order >= floor {

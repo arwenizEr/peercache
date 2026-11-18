@@ -73,31 +73,85 @@ type Store struct {
 // 22-byte keys and 48-byte values, a million replicas took 237 bytes each
 // beyond key, value and sender in live heap; TestAccountedBytesCoverTheLiveHeap
 // holds the figure to it. It was 128, an estimate that called itself high.
+//
+// It is charged per slot the map keeps, not per live entry: on the most
+// entries the map has held since it was last built, which deleting does not
+// lower; see namespaceReplicas.shrink.
 const EntryOverhead int64 = 240
 
-// size is what one replica is charged.
-func size(key string, e Entry) int64 {
-	return int64(len(key)+len(e.Value)+len(e.From)) + EntryOverhead
+// dataSize is what one replica's key, value and sender take.
+func dataSize(key string, e Entry) int64 {
+	return int64(len(key) + len(e.Value) + len(e.From))
 }
 
 // namespaceReplicas is one namespace's worth of replicated keys.
 type namespaceReplicas struct {
 	mu      sync.RWMutex
 	entries map[string]Entry
+	// high is the most entries the map has held since it was last built;
+	// see shrink. Each is charged EntryOverhead.
+	high int
+	// bytes is the store's accounted size, which put, del and shrink keep.
+	bytes *atomic.Int64
 	// digest summarises every copy's key and owner version; see
 	// [Store.Digest]. Kept by put and del, the only writers of entries.
 	digest digest.Set
 }
 
-// put stores e under key, keeping the digest in step. Callers hold mu.
+// put stores e under key, keeping the digest and the accounted size in step.
+// Callers hold mu.
 func (nr *namespaceReplicas) put(key string, e Entry) {
 	k := digest.KeyOf(key)
+	delta := dataSize(key, e)
 	if old, held := nr.entries[key]; held {
 		nr.digest.Replace(k, old.Stamp.Version, e.Stamp.Version)
+		delta -= dataSize(key, old)
 	} else {
 		nr.digest.Add(k, e.Stamp.Version)
 	}
 	nr.entries[key] = e
+	if len(nr.entries) > nr.high {
+		delta += int64(len(nr.entries)-nr.high) * EntryOverhead
+		nr.high = len(nr.entries)
+	}
+	nr.bytes.Add(delta)
+}
+
+// shrink rebuilds the map once it holds under three quarters of the entries
+// it has held, or whenever it holds fewer if force is set, and returns the
+// bytes that frees. Callers hold mu, and call it after removing rather than
+// from del, which runs inside ranges over the map.
+//
+// A Go map never gives back the slots of what is deleted from it. A store
+// that took a million copies and was shed or promoted down to 400,000 still
+// held the million's slots, while Bytes, which charged each live entry its
+// share of a map at its worst point, said 400,000: on kind a pod's replica map
+// held 239 MB of heap after a failover promoted two thirds of it, for 136 MB
+// accounted, and the pod was OOM-killed with its budget reading 460 MB of 512.
+// So the overhead is charged on the slots kept, high, and only a rebuild
+// gives it back. At three quarters the copy is paid for by the deletions
+// before it, and the map never holds more than a third more slots than its
+// entries were last built with.
+func (nr *namespaceReplicas) shrink(force bool) int64 {
+	n := len(nr.entries)
+	if n == nr.high || (!force && n*4 >= nr.high*3) {
+		return 0
+	}
+	fresh := make(map[string]Entry, n)
+	for key, e := range nr.entries {
+		fresh[key] = e
+	}
+	freed := int64(nr.high-n) * EntryOverhead
+	nr.entries, nr.high = fresh, n
+	nr.bytes.Add(-freed)
+	return freed
+}
+
+// unlockShrinking shrinks the map if it has become sparse, then releases mu.
+// Every path that removes entries leaves through it.
+func (nr *namespaceReplicas) unlockShrinking() {
+	nr.shrink(false)
+	nr.mu.Unlock()
 }
 
 // del removes key and its digest contribution. Callers hold mu; it is safe
@@ -106,6 +160,7 @@ func (nr *namespaceReplicas) del(key string) {
 	if old, held := nr.entries[key]; held {
 		nr.digest.Remove(digest.KeyOf(key), old.Stamp.Version)
 		delete(nr.entries, key)
+		nr.bytes.Add(-dataSize(key, old))
 	}
 }
 
@@ -165,7 +220,7 @@ func (s *Store) namespaceFor(namespace string) *namespaceReplicas {
 	if nr, ok := s.ns[namespace]; ok {
 		return nr
 	}
-	nr = &namespaceReplicas{entries: make(map[string]Entry)}
+	nr = &namespaceReplicas{entries: make(map[string]Entry), bytes: &s.bytes}
 	s.ns[namespace] = nr
 	return nr
 }
@@ -203,11 +258,6 @@ func (s *Store) Put(namespace, key string, e Entry) (accepted, conflict bool) {
 		}
 	}
 	nr.put(key, e)
-	delta := size(key, e)
-	if held {
-		delta -= size(key, existing)
-	}
-	s.bytes.Add(delta)
 	return true, conflict
 }
 
@@ -280,13 +330,12 @@ func (s *Store) Delete(namespace, key string) bool {
 	}
 
 	nr.mu.Lock()
-	defer nr.mu.Unlock()
-	e, held := nr.entries[key]
+	defer nr.unlockShrinking()
+	_, held := nr.entries[key]
 	if !held {
 		return false
 	}
 	nr.del(key)
-	s.bytes.Add(-size(key, e))
 	return true
 }
 
@@ -305,13 +354,12 @@ func (s *Store) DeleteUnlessNewer(namespace, key string, stamp core.Stamp, order
 	}
 
 	nr.mu.Lock()
-	defer nr.mu.Unlock()
+	defer nr.unlockShrinking()
 	e, held := nr.entries[key]
 	if !held || Newer(e, Entry{Stamp: stamp, Order: order}) {
 		return false
 	}
 	nr.del(key)
-	s.bytes.Add(-size(key, e))
 	return true
 }
 
@@ -385,7 +433,7 @@ func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool)
 	}
 
 	nr.mu.Lock()
-	defer nr.mu.Unlock()
+	defer nr.unlockShrinking()
 
 	var taken map[string]Entry
 	for key, e := range nr.entries {
@@ -400,7 +448,6 @@ func (s *Store) DrainUpTo(namespace string, max int, keep func(key string) bool)
 		}
 		taken[key] = e
 		nr.del(key)
-		s.bytes.Add(-size(key, e))
 	}
 	return taken
 }
@@ -432,15 +479,14 @@ func (s *Store) Evict(namespace string, stillMine func(key string) bool) int {
 	}
 
 	nr.mu.Lock()
-	defer nr.mu.Unlock()
+	defer nr.unlockShrinking()
 
 	dropped := 0
-	for key, e := range nr.entries {
+	for key := range nr.entries {
 		if stillMine(key) {
 			continue
 		}
 		nr.del(key)
-		s.bytes.Add(-size(key, e))
 		dropped++
 	}
 	return dropped
@@ -532,7 +578,7 @@ func (s *Store) sweepNamespace(nr *namespaceReplicas, now int64) (removed, visit
 	held := len(nr.entries)
 	if held < SweepWholeBelow {
 		removed = s.sweepChunk(nr, now, held)
-		nr.mu.Unlock()
+		nr.unlockShrinking()
 		return removed, held
 	}
 	nr.mu.Unlock()
@@ -541,7 +587,7 @@ func (s *Store) sweepNamespace(nr *namespaceReplicas, now int64) (removed, visit
 	for visited < most {
 		nr.mu.Lock()
 		found := s.sweepChunk(nr, now, SweepChunk)
-		nr.mu.Unlock()
+		nr.unlockShrinking()
 		removed += found
 		visited += SweepChunk
 		if visited >= share && found*sweepMoreAbove <= SweepChunk {
@@ -562,14 +608,29 @@ func (s *Store) sweepChunk(nr *namespaceReplicas, now int64, n int) int {
 		seen++
 		if !e.Live(now) {
 			nr.del(key)
-			s.bytes.Add(-size(key, e))
 			removed++
 		}
 	}
 	return removed
 }
 
-// Bytes returns the accounted size of every replica held, across namespaces.
+// Slots returns how many map slots the store charges [EntryOverhead] for,
+// across namespaces: at least [Store.Len], and more by what has been removed
+// since a namespace's map was last rebuilt.
+func (s *Store) Slots() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int64
+	for _, nr := range s.ns {
+		nr.mu.RLock()
+		n += int64(nr.high)
+		nr.mu.RUnlock()
+	}
+	return n
+}
+
+// Bytes returns the accounted size of every replica held, across namespaces:
+// keys, values and sender IDs, and [EntryOverhead] per slot (see [Store.Slots]).
 func (s *Store) Bytes() int64 { return s.bytes.Load() }
 
 // ShedCount returns how many replicas [Store.Shed] has dropped.
@@ -586,7 +647,9 @@ func (s *Store) ShedCount() int64 { return s.shed.Load() }
 //
 // Namespaces are visited from a rotating start and entries taken in map
 // iteration order, so repeated small sheds spread across the keyspace rather
-// than emptying one namespace. Overshoot is at most one entry.
+// than emptying one namespace. Overshoot is at most one entry. Each namespace
+// it sheds from is rebuilt afterwards, which is what frees the slots; see
+// namespaceReplicas.shrink.
 //
 // keepFrom, when not nil, names for each namespace the order from which copies
 // are kept: a copy whose Order is at or past it is not shed. It is how the
@@ -625,19 +688,25 @@ func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64
 			floor = keepFrom(name)
 		}
 		nr.mu.Lock()
+		// What a rebuild after the loop gives back: the slots already
+		// spare, and one per copy shed.
+		var data int64
+		slots := int64(nr.high-len(nr.entries)) * EntryOverhead
 		for key, e := range nr.entries {
-			if freed >= target {
+			if freed+data+slots >= target {
 				break
 			}
 			if e.Order >= floor {
 				continue
 			}
+			data += dataSize(key, e)
+			slots += EntryOverhead
 			nr.del(key)
-			n := size(key, e)
-			s.bytes.Add(-n)
 			s.shed.Add(1)
-			freed += n
 		}
+		// Rebuilt whatever share was shed: shedding is for memory, and a
+		// map gives none of its slots back until it is rebuilt.
+		freed += data + nr.shrink(true)
 		nr.mu.Unlock()
 	}
 	return freed
@@ -656,7 +725,7 @@ func (s *Store) EvictWhere(namespace string, keep func(key string, e Entry) bool
 	}
 
 	nr.mu.Lock()
-	defer nr.mu.Unlock()
+	defer nr.unlockShrinking()
 
 	dropped := 0
 	for key, e := range nr.entries {
@@ -664,7 +733,6 @@ func (s *Store) EvictWhere(namespace string, keep func(key string, e Entry) bool
 			continue
 		}
 		nr.del(key)
-		s.bytes.Add(-size(key, e))
 		dropped++
 	}
 	return dropped

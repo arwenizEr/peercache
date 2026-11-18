@@ -1155,7 +1155,10 @@ cache, err := peercache.New(
 Caps the bytes the owned stores, the replica store and the L1 tier may hold:
 keys and values, plus a per-entry overhead measured at a map's worst point,
 just after it doubles — 160 bytes an owned entry, 240 a replica
-(`TestAccountedBytesCoverTheLiveHeap`). Activated groups are not counted —
+(`TestAccountedBytesCoverTheLiveHeap`). A replica's overhead is charged per
+slot its namespace's map keeps, since a Go map gives none back when entries
+leave it; the map is rebuilt once it holds under three quarters of its slots,
+and after every shed, which is what frees them. Activated groups are not counted —
 `WithMaxActiveGroups` bounds those — and neither is anything around the
 stores: decoded keys still referenced, RPC buffers, restore and catch-up pages.
 Off by default.

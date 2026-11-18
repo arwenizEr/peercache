@@ -1279,15 +1279,17 @@ benchmark of its own.
 40-byte values, a shed of a tenth of their bytes, the store refilled outside
 the timer. Median of five runs, `-benchtime 20x`.
 
-| Floor | ns/op | allocs/op |
+| Floor | ns/op, removing only | ns/op, map rebuilt after |
 |---|---|---|
-| none | 908,085 | 0 |
-| the youngest tenth kept (open question 60) | 1,452,900 | 0 |
+| none | 908,085 | 16,302,910 |
+| the youngest tenth kept (open question 60) | 1,452,900 | 20,041,310 |
 
-A shed with a floor visits the copies it keeps as well as the ones it drops,
-and the map iteration over a store with holes in it is what the difference
-is. Half a millisecond per hundred thousand replicas, once per relief round,
-not per write.
+The first column is a shed that only deleted, which freed the keys and values
+and none of the map's slots: a Go map never gives those back. A shed now
+rebuilds the namespace's map after it, which is what frees them, at about
+0.18 µs per copy kept: some 160 ms under the namespace's lock for a million
+replicas, once per relief round, not per write. Each round sheds to nine tenths
+of the budget, so rounds are a tenth of the budget's worth of inflow apart.
 
 ## Invalidation hints under a burst of writes
 
