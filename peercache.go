@@ -162,7 +162,8 @@ type Cache interface {
 	DescribeCluster(ctx context.Context, digests bool) ClusterDescription
 
 	// DebugHandler serves Describe at "/", its namespaces at "/namespaces",
-	// DescribeKey at "/key?namespace=…&key=…", DescribeCluster at
+	// DescribeKey at "/key?namespace=…&key=…", KeyHistory at
+	// "/keys?namespace=…&key=…", DescribeCluster at
 	// "/cluster" ("?digests=1" for the replica check) and Stats at
 	// "/stats", as JSON, and a live dashboard of all of them at "/ui". It has no
 	// authentication: mount it on an internal admin port, as one would

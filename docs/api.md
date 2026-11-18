@@ -1577,6 +1577,41 @@ Every JSON route names its fields in camelCase — `/stats` answers
 `TestDebugHandlerJSONNamesAreCamelCase` keeps a new field from going out under
 its Go name.
 
+### A key's history — `WithKeyTrace`, `KeyHistory`
+
+```go
+func WithKeyTrace(namespace, prefix string) Option
+KeyHistory(namespace, key string) []KeyEvent
+```
+
+Metrics count events; a correctness incident is a sequence of them on one key
+across several nodes. `WithKeyTrace` records, for the keys of a namespace that
+start with a prefix, every change to what this node holds: a write or delete
+the owner applied, a replica copy stored, refused or in conflict (a fork), a
+promotion, a demotion, a hand-off, a restore from storage, a shed and its
+read-back, a catch-up install. Each `KeyEvent` carries this node's clock time,
+the write's order and writer, the stored version, and the value's length and a
+hash — never the value (`docs/decisions/0043-key-trace.md`).
+
+The newest 64 events per key are kept, for at most 4,096 keys per node. Keys
+that are not traced cost one check per change, and a cache without the option
+records nothing. The debug handler serves a key's history at
+`GET /keys?namespace=…&key=…` as `{"node": …, "events": […]}`; a key's whole
+history is the union over the nodes, merged by time, and the order and writer
+on each event, not the times, say which value is newer.
+
+```go
+cache, _ := peercache.New(peercache.WithNodeID("pod-0"),
+	peercache.WithKeyTrace("stock", "item-"))
+stock := cache.Namespace("stock")
+_, _ = stock.Increment(ctx, "item-7", -1, 0)
+for _, e := range cache.KeyHistory("stock", "item-7") {
+	fmt.Println(e.Kind, e.Writer) // write pod-0
+}
+```
+
+Runnable: `ExampleWithKeyTrace`.
+
 ### The metrics that are worth alerting on
 
 Most of the 66 are ordinary levels and rates. These twelve are not — each counts a

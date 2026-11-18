@@ -7,6 +7,15 @@ change the public API.
 
 ## [Unreleased]
 
+### Added
+
+- `WithKeyTrace(namespace, prefix)` and `Cache.KeyHistory`: a node records
+  the recent history of the keys it is told to, with where each value came
+  from — a write, a replica copy (stored, refused, or a fork), a promotion, a
+  demotion, a hand-off, a restore, a shed and its read-back, a catch-up — and
+  the write's order, writer and value hash. The debug handler serves it at
+  `/keys?namespace=…&key=…`. Decision 0043.
+
 ### Fixed
 
 - A key the memory budget shed from a persistent namespace is no longer

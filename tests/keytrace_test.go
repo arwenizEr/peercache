@@ -163,3 +163,70 @@ func TestAShedAndItsReadBackAreTraced(t *testing.T) {
 		t.Fatal("no traced key was shed")
 	}
 }
+
+// TestARestoreAndACatchUpAreTraced: the two ways a key comes back to a node
+// that lost its memory, each named as such.
+func TestARestoreAndACatchUpAreTraced(t *testing.T) {
+	t.Run("restore", func(t *testing.T) {
+		store := persist.Memory()
+		ctx := context.Background()
+		first, fc := newCache(t, peercache.WithKeyTrace("durable", ""))
+		if err := first.Namespace("durable", peercache.WithPersistence(store)).Set(ctx, "k", []byte("v"), 0); err != nil {
+			t.Fatal(err)
+		}
+		flushed(t, first, fc, 1)
+		w, _ := lastOf(first.KeyHistory("durable", "k"), "write")
+
+		second, _ := newCache(t, peercache.WithKeyTrace("durable", ""))
+		if _, err := second.Namespace("durable", peercache.WithPersistence(store)).Get(ctx, "k"); err != nil {
+			t.Fatal(err)
+		}
+		r, ok := lastOf(second.KeyHistory("durable", "k"), "restore")
+		if !ok || r.Order != w.Order || r.Hash != w.Hash {
+			t.Fatalf("a restored key's history is %v; want a restore of the write %+v",
+				kinds(second.KeyHistory("durable", "k")), w)
+		}
+	})
+	t.Run("catch-up", func(t *testing.T) {
+		f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1,
+			withCacheOptions(peercache.WithKeyTrace("traced", "")))
+		open := func(id string) peercache.Namespace {
+			return f.caches[id].Namespace("traced", peercache.WithReplicationFactor(3))
+		}
+		for _, id := range f.ids {
+			open(id)
+		}
+		f.settle(t)
+		const key = "k"
+		owner := f.ownerOf(t, key)
+		var victim string
+		for _, id := range f.ids {
+			if id != owner {
+				victim = id
+				break
+			}
+		}
+		killAndSettle(t, f, victim)
+		if err := open(owner).Set(context.Background(), key, []byte("v"), 0); err != nil {
+			t.Fatal(err)
+		}
+		f.revive(t, victim)
+		open(victim)
+		f.clk.Advance(2 * testkit.DefaultJoinDelay)
+		f.convergeTo(t, len(f.ids))
+		f.settle(t)
+		if err := f.caches[victim].CatchUp(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		h := f.caches[victim].KeyHistory("traced", key)
+		found := false
+		for _, e := range h {
+			if e.Kind == "replica-accepted" && len(e.Detail) > 8 && e.Detail[:8] == "catch-up" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s caught up on %s without a catch-up event: %+v", victim, key, h)
+		}
+	})
+}
