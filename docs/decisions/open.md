@@ -2076,3 +2076,42 @@ A caller sees "ask again" for as long as storage stays unreachable, for the
 keys it shed only; keys memory holds are served as before.
 `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable` counted a shed
 counter from zero before.
+
+## 62. A shed key could be in neither memory nor the marks — found by review, resolved
+
+**Found** reviewing open question 61's fix: the memory budget's shed of a
+persistent namespace's owned key, and the read-back that brings it back, each
+left a moment when the key was neither in memory nor marked as shed, so an
+access found it absent, an `Increment` counted from zero, and its write
+outranked the stored value. With storage reachable. A stress test of four
+writers on eight counters under a 128 KiB budget applied 30 of 749
+acknowledged decrements. Four windows:
+
+1. The budget removed the key under its shard lock and marked it after
+   releasing it.
+2. The read-back cleared the mark before installing what it read.
+3. An update checked the mark in `awaitRestore` and wrote later; a shed in
+   between was not seen.
+4. A write records its value for flushing after releasing the store, so a
+   shed between the two left the previous value as the newest record, and the
+   read-back installed it.
+
+**Picked:** keep the mark and memory consistent under the key's shard lock.
+The budget marks a key there before removing it (`Store.ShedMarked`), with
+the order of the value memory held. An update checks the mark again under the
+lock and reads the key back first if it was shed since. The read-back decides,
+clears the mark and merges under the lock (`Store.MergeIfNewerGuarded`), and
+only once what it found is at least as new as the mark's order; until then it
+re-reads this node's own records, where a newer value must be, since this node
+wrote it. `TestShedCountersRacingTheirWritersLoseNoDecrement` and
+`TestShedFreshKeysLoseNoFirstWrite` lost decrements in every run before.
+
+**Not guarded by the audit:** the read-back's comparison with the mark's
+order. Its tests catch its removal in about seven runs of ten, and the
+first-write case in one of ten; a deterministic test needs a hook between a
+write's store and its record, which this code base does not use. Reads (`Get`,
+`BatchGet`, `Exists`, a loader's store) still check the mark only in
+`awaitRestore`; a shed racing them reports a key absent that storage holds,
+which is wrong but loses nothing, and a loader's `SetIfAbsent` there can lay a
+loaded value over a newer stored one. Recorded as the next step rather than
+fixed here.

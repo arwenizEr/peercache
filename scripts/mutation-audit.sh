@@ -3457,6 +3457,28 @@ mutate "a failed read-back of a shed key answers from memory" \
 	defer sc.release()' \
   'TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable$' ./tests
 
+# A shed key is, at every instant, in memory or marked for reading back
+# (open question 62). Both entries are caught by every run of the race test;
+# the read-back's own guard is not listed, because its test catches its
+# mutations only most of the time, and an entry caught by chance is vacuous.
+mutate "the budget marks a shed key only after removing it" \
+  internal/store/store.go \
+  '			if mark != nil {
+				mark(key, e.order)
+			}
+			s.deleteEntry(sh, key)' \
+  '			s.deleteEntry(sh, key)
+			if mark != nil {
+				defer mark(key, e.order)
+			}' \
+  'TestShedCountersRacingTheirWritersLoseNoDecrement$' ./tests
+
+mutate "an update does not look at the shed mark under the shard lock" \
+  atomic.go \
+  '		if !ok && n.persister != nil && n.persister.isShed(key) {' \
+  '		if false && !ok && n.persister != nil && n.persister.isShed(key) {' \
+  'TestShedCountersRacingTheirWritersLoseNoDecrement$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
