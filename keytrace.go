@@ -66,7 +66,6 @@ const (
 	keytraceHandOff         = keytrace.HandOff
 	keytraceRestore         = keytrace.Restore
 	keytraceShed            = keytrace.Shed
-	keytraceFork            = keytrace.Fork
 	keytraceReplicaShed     = keytrace.ReplicaShed
 	keytraceReadBack        = keytrace.ReadBack
 )
