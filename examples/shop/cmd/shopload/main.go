@@ -17,12 +17,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -299,6 +301,7 @@ func check(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	target := fs.String("target", "http://localhost:8080", "shop service URL")
 	ledgerDir := fs.String("ledger", "ledger", "the run's ledger")
+	pods := fs.String("pods", "", "comma-separated pod URLs; with it, each wrong count prints its key's history from every pod")
 	_ = fs.Parse(args)
 
 	acked, err := readLedger(*ledgerDir, "acknowledged")
@@ -354,7 +357,7 @@ func check(args []string) error {
 	for it := range slack {
 		items[it] = true
 	}
-	var wrong []string
+	var wrong, wrongItems []string
 	exact := 0
 	for it := range items {
 		code, body, _, err := retryGet(*target + "/stock/" + it)
@@ -366,6 +369,7 @@ func check(args []string) error {
 		want := initialStock - perItem[it]
 		if got < 0 || got > want || got < want-slack[it] {
 			wrong = append(wrong, fmt.Sprintf("%s: stock %d, ledger says %d (uncertain %d)", it, got, want, slack[it]))
+			wrongItems = append(wrongItems, it)
 		} else if got == want {
 			exact++
 		}
@@ -385,10 +389,62 @@ func check(args []string) error {
 	for _, w := range wrong {
 		fmt.Println("  WRONG", w)
 	}
+	if *pods != "" {
+		for _, it := range wrongItems {
+			printHistory(strings.Split(*pods, ","), "stock", it)
+		}
+	}
 	if len(lost) > 0 || len(wrong) > 0 {
 		return fmt.Errorf("%d lost orders, %d wrong stock counts", len(lost), len(wrong))
 	}
 	return nil
+}
+
+// keyEvent is one event of a key's history as the shop's debug handler
+// serves it (peercache.KeyEvent), with the pod it came from.
+type keyEvent struct {
+	Pod     string `json:"-"`
+	At      int64  `json:"at"`
+	Kind    string `json:"kind"`
+	Order   uint64 `json:"order"`
+	Writer  string `json:"writer"`
+	Version uint64 `json:"version"`
+	Len     int    `json:"len"`
+	Hash    string `json:"hash"`
+	Detail  string `json:"detail"`
+}
+
+// printHistory merges key's history from every pod by time and prints it: the
+// sequence a wrong count was made by. A pod that restarted since reports only
+// what it saw after; its earlier history went with its memory.
+func printHistory(pods []string, namespace, key string) {
+	var all []keyEvent
+	for _, pod := range pods {
+		u := strings.TrimRight(pod, "/") + "/debug/peercache/keys?namespace=" + url.QueryEscape(namespace) + "&key=" + url.QueryEscape(key)
+		code, body, _, err := retryGet(u)
+		if err != nil || code != http.StatusOK {
+			fmt.Printf("    %s: history unreadable (%d %v)\n", pod, code, err)
+			continue
+		}
+		var h struct {
+			Node   string     `json:"node"`
+			Events []keyEvent `json:"events"`
+		}
+		if err := json.Unmarshal([]byte(body), &h); err != nil {
+			fmt.Printf("    %s: history unreadable: %v\n", pod, err)
+			continue
+		}
+		for _, e := range h.Events {
+			e.Pod = h.Node
+			all = append(all, e)
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].At < all[j].At })
+	fmt.Printf("  HISTORY %s (%d events)\n", key, len(all))
+	for _, e := range all {
+		fmt.Printf("    %s %-6s %-16s order=%d writer=%s v=%d len=%d hash=%s %s\n",
+			time.Unix(0, e.At).UTC().Format("15:04:05.000"), e.Pod, e.Kind, e.Order, e.Writer, e.Version, e.Len, e.Hash, e.Detail)
+	}
 }
 
 // retryGet reads through transient unavailability: a 503 means "ask again"

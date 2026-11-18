@@ -18,6 +18,7 @@ WORKERS=${WORKERS:-32}
 # A fresh stock prefix per invocation: stock persists across runs, so a
 # repeated scenario name would otherwise start from the last run's counts.
 RUN=$(date +%s)
+PODS=http://shop-0.shop-peers:8080,http://shop-1.shop-peers:8080,http://shop-2.shop-peers:8080,http://shop-3.shop-peers:8080,http://shop-4.shop-peers:8080
 
 log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -66,7 +67,8 @@ load() {
 check() {
   wait_ready
   sleep 5 # past a flush interval and a catch-up
-  $K exec loadgen -- shopload check -target http://shop -ledger "/tmp/$1" > "$OUT/$1/check.txt" 2>&1
+  # -pods: a wrong count prints its key's history from every pod (decision 0043).
+  $K exec loadgen -- shopload check -target http://shop -ledger "/tmp/$1" -pods "$PODS" > "$OUT/$1/check.txt" 2>&1
   local rc=$?
   echo "check exit $rc" >> "$OUT/$1/check.txt"
   for p in $($K get pods -l app=shop -o name); do
