@@ -38,7 +38,7 @@ func TestTheReplicaDigestFollowsEveryWritePath(t *testing.T) {
 		case 7:
 			s.EvictWhere(ns, func(string, replication.Entry) bool { return rng.Intn(4) != 0 })
 		case 8:
-			s.Shed(s.Bytes() / 4)
+			s.Shed(s.Bytes()/4, nil)
 		}
 	}
 	var want digest.Set

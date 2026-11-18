@@ -76,6 +76,16 @@ change the public API.
   within seconds of starting: the budget read about 300 MB and never shed.
   A node now sheds about a third sooner for the same budget.
 
+- The memory budget no longer sheds a replica of a persistent write its owner
+  may not have flushed yet: for one flush interval and the flush timeout after
+  the write, by the owner's write order. Until the flush that copy is the
+  write's only other holder. On kind at 3.9 million keys, pods over their
+  budget shed the replicas of orders written a second earlier, and a kill -9
+  of their owner lost 20 acknowledged orders. Copies of older writes, which
+  catch-up and restores bring, are shed as before.
+  `TestAnUnflushedWriteSurvivesItsReplicaNodeShedding`,
+  `TestAFlushedWritesReplicaIsShedAsBefore`; open question 60.
+
 - A namespace's logs are split into partition segments a batch of 32 at a
   time, oldest first, each batch with a timeout of its own and its logs
   deleted once split. A split read every log there was at once, under one

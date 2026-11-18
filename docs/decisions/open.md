@@ -2003,3 +2003,37 @@ for promotion and hand-off. Demotion is already once per epoch, so the added
 cost is one pass over the owned store per view, which RF 2 namespaces pay
 today. Needs a test at RF 1 first: whether a key left behind there can be
 served stale after ownership returns.
+
+## 60. The budget shed the only other copy of an unflushed write — found on kind, resolved
+
+**Found** on kind at 3.9 million keys, 1 GiB pods budgeted at 512 MiB: the
+kill -9 scenario lost 20 acknowledged orders, scattered over about a second and
+a half of writes just before the kill. `orders` is persistent, flushed every
+second, at replication factor 3 with synchronous replication. Every surviving
+pod was over its budget and shedding replicas, about 550,000 each. A write
+acknowledged after its replicas accepted it is held in the owner's memory and
+its replicas' until the owner flushes it; a replica shed in that window leaves
+fewer holders than the write was acknowledged with, and the owner dying before
+its flush loses the write if both replicas were shed. The budget is memory
+relief, never meant to lose a persistent write.
+
+**Options:**
+
+1. Never shed replicas of persistent namespaces. Simple, but it puts their
+   whole replica tier outside the budget, the tier that grows most in a
+   failover.
+2. Owners tell replicas how far they have flushed, and replicas shed only
+   below that. Exact, but a new message on every flush, and state per owner.
+3. Keep copies of writes younger than the time a write normally waits for its
+   flush: one flush interval and the flush timeout, by the owner's write order.
+
+**Picked:** 3. The write order is the owner's hybrid logical clock, carried
+with every copy, so it needs no new message, and it separates what the budget
+must keep from what it may shed: the copies live writes bring, against those of
+old writes that catch-up and restores bring. What it keeps is one window's
+writes. A flush that fails for longer than the timeout still leaves its
+records unprotected on the replicas, as it leaves them in the owner's memory
+alone; that is the loss window persistence already documents for a store that
+does not answer. Reversible to 2 if a store's flushes are routinely slower than
+the timeout. `TestAnUnflushedWriteSurvivesItsReplicaNodeShedding` lost all 50
+of its writes before.

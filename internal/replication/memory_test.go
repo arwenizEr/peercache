@@ -72,7 +72,7 @@ func TestReplicaShedFreesAtLeastTheTarget(t *testing.T) {
 		s.Put(fmt.Sprintf("ns%d", i%3), fmt.Sprintf("k%03d", i), entry("n1", 1, 1, "0123456789"))
 	}
 	before := s.Bytes()
-	freed := s.Shed(2000)
+	freed := s.Shed(2000, nil)
 	if freed < 2000 {
 		t.Fatalf("Shed(2000) freed %d", freed)
 	}
@@ -94,7 +94,7 @@ func TestReplicaShedFreesAtLeastTheTarget(t *testing.T) {
 		for _, ns := range []string{"ns0", "ns1", "ns2"} {
 			lens[ns] = len(s.Keys(ns))
 		}
-		s.Shed(per)
+		s.Shed(per, nil)
 		for _, ns := range []string{"ns0", "ns1", "ns2"} {
 			if len(s.Keys(ns)) < lens[ns] {
 				touched[ns] = true
@@ -106,7 +106,7 @@ func TestReplicaShedFreesAtLeastTheTarget(t *testing.T) {
 	}
 
 	rest := s.Bytes()
-	if freed := s.Shed(1 << 40); freed != rest || s.Bytes() != 0 || s.Len() != 0 {
+	if freed := s.Shed(1<<40, nil); freed != rest || s.Bytes() != 0 || s.Len() != 0 {
 		t.Fatalf("Shed(huge) freed %d of %d; left Bytes %d Len %d", freed, rest, s.Bytes(), s.Len())
 	}
 }
@@ -135,7 +135,7 @@ func TestReplicaBytesUnderConcurrency(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 300; i++ {
-			s.Shed(400)
+			s.Shed(400, nil)
 		}
 	}()
 	wg.Wait()

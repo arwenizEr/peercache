@@ -1273,6 +1273,22 @@ too widely to rank by more than the bytes imply. Catch-up and `Drain` no
 longer unframe and frame each entry they send either, which costs a
 decompression and a compression per key transferred; that path has no
 benchmark of its own.
+## Replica shedding — stepping over unflushed writes
+
+`BenchmarkReplicaShed`, Machine A: one namespace of 100,000 replicas with
+40-byte values, a shed of a tenth of their bytes, the store refilled outside
+the timer. Median of five runs, `-benchtime 20x`.
+
+| Floor | ns/op | allocs/op |
+|---|---|---|
+| none | 908,085 | 0 |
+| the youngest tenth kept (open question 60) | 1,452,900 | 0 |
+
+A shed with a floor visits the copies it keeps as well as the ones it drops,
+and the map iteration over a store with holes in it is what the difference
+is. Half a millisecond per hundred thousand replicas, once per relief round,
+not per write.
+
 ## Invalidation hints under a burst of writes
 
 `BenchmarkHintsOverGRPC`, Machine A: three caches over real gRPC on
