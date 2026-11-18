@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 	"sync/atomic"
+
+	"github.com/arwenizEr/peercache/internal/hlc"
 )
 
 // pressureCheckInterval is how many writes pass between two inline checks of
@@ -32,6 +34,7 @@ const pressureLargeWrite = 64 << 10
 //     losing them costs round trips and never data.
 //  2. Replicas. Losing one lowers that key's replication factor until the owner
 //     next writes it or this node next catches up; the owner still holds it.
+//     Not the young copies of persistent writes, though; see keepFrom.
 //  3. Owned data. This loses the key, which state that is lossy by design
 //     is allowed to do, and which a loader rebuilds.
 //
@@ -162,10 +165,16 @@ func (p *pressure) relieve() {
 		p.shedL1.Add(int64(entries))
 	}
 
-	// 2. Replicas.
+	// 2. Replicas, but not the young copies of persistent writes.
 	if excess > 0 {
+		keep := p.keepFrom(namespaces)
 		before := c.replicas.ShedCount()
-		excess -= c.replicas.Shed(excess)
+		excess -= c.replicas.Shed(excess, func(name string) uint64 {
+			if floor, ok := keep[name]; ok {
+				return floor
+			}
+			return math.MaxUint64
+		})
 		p.shedReplicas.Add(c.replicas.ShedCount() - before)
 	}
 
@@ -212,6 +221,35 @@ func (p *pressure) relieve() {
 		c.opts.Logger.Warn("memory budget still exceeded after shedding",
 			"budget", p.budget, "used", after)
 	}
+}
+
+// keepFrom returns, for each persistent namespace, the order from which its
+// replicas are not shed: that of a write made [persister.unflushedFor] ago.
+//
+// A replica of a persistent write is the write's only other holder until the
+// owner flushes it. Shed then, and an owner killed before its flush takes the
+// write with it, acknowledged or not: on kind, a pod over its budget shed
+// replicas of orders written a second earlier, and killing their owner lost 20
+// acknowledged orders. Past the window the write is in storage, the copy is
+// one of three holders, and shedding it costs what it costs any namespace.
+//
+// The window is read from the owner's write order, not from when the copy
+// arrived, so the copies catch-up and restores bring, of writes long since
+// flushed, are shed as before. What it keeps is bounded by the write rate:
+// the copies of one window's writes.
+func (p *pressure) keepFrom(namespaces []*namespace) map[string]uint64 {
+	var keep map[string]uint64
+	now := p.c.opts.Clock.Now()
+	for _, ns := range namespaces {
+		if ns.persister == nil {
+			continue
+		}
+		if keep == nil {
+			keep = map[string]uint64{}
+		}
+		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))
+	}
+	return keep
 }
 
 // replicateShed tells a shed key's replicas to drop their copies.

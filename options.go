@@ -209,6 +209,11 @@ func WithGroupIdleTimeout(d time.Duration) Option {
 // rebuilds. Neither is silent: Stats().ShedL1, ShedReplicas and ShedOwned count
 // them, and peercache_memory_used_bytes shows how close the node runs.
 //
+// A replica of a persistent namespace's write is not shed while its owner may
+// not have flushed the write yet — one flush interval and the flush timeout,
+// 10 s, from the write — because until then it is the write's only other
+// holder. What that keeps is one window's writes.
+//
 // The case it exists for is a failover cascade. A node dies, its share moves to
 // the survivors, and a survivor sized for its steady state is now over its
 // container limit. Without a budget it is killed, its share moves on, and the

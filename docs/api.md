@@ -1178,6 +1178,15 @@ Over budget, the node sheds down to nine tenths of it, cheapest first:
 | replicas | that key's replication factor, until it is next written or caught up | `ShedReplicas` |
 | owned data | the key, which a loader rebuilds | `ShedOwned` |
 
+A replica of a write to a persistent namespace is not shed while the write may
+still be in its owner's memory alone: for one flush interval and the flush
+timeout, 10 s, after the write, by the owner's write order. Until the owner
+flushes, that copy is the write's only other holder, and shedding it would let
+an owner killed in the window take an acknowledged write with it. Copies of
+older writes, which catch-up and restores bring, are shed as before. What this
+keeps is bounded by the write rate: one window's writes
+(`TestAnUnflushedWriteSurvivesItsReplicaNodeShedding`, open question 60).
+
 The budget is checked every 64 writes, on any write of
 64 KiB or more, and once a second, so the accounted size can run past it by
 about 64 entries between checks. `Stats().MemoryUsed` and

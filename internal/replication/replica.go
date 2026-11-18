@@ -2,6 +2,7 @@ package replication
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -586,7 +587,14 @@ func (s *Store) ShedCount() int64 { return s.shed.Load() }
 // Namespaces are visited from a rotating start and entries taken in map
 // iteration order, so repeated small sheds spread across the keyspace rather
 // than emptying one namespace. Overshoot is at most one entry.
-func (s *Store) Shed(target int64) int64 {
+//
+// keepFrom, when not nil, names for each namespace the order from which copies
+// are kept: a copy whose Order is at or past it is not shed. It is how the
+// budget spares the copies of persistent writes their owner may not have
+// flushed yet, which are then the write's only other holder; see
+// docs/decisions/open.md question 60. A namespace it returns math.MaxUint64
+// for keeps nothing.
+func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -605,16 +613,24 @@ func (s *Store) Shed(target int64) int64 {
 	var freed int64
 	start := s.shedCursor.Add(1) - 1
 	for i := 0; i < len(names) && freed < target; i++ {
+		name := names[(start+uint64(i))%uint64(len(names))]
 		s.mu.RLock()
-		nr := s.ns[names[(start+uint64(i))%uint64(len(names))]]
+		nr := s.ns[name]
 		s.mu.RUnlock()
 		if nr == nil {
 			continue
+		}
+		floor := uint64(math.MaxUint64)
+		if keepFrom != nil {
+			floor = keepFrom(name)
 		}
 		nr.mu.Lock()
 		for key, e := range nr.entries {
 			if freed >= target {
 				break
+			}
+			if e.Order >= floor {
+				continue
 			}
 			nr.del(key)
 			n := size(key, e)

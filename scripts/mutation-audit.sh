@@ -1259,11 +1259,41 @@ mutate "a shed owned key sends its replicas no removal" \
 # Replicas before owned data.
 mutate "owned data is shed while replicas could have been" \
   pressure.go \
-  '	// 2. Replicas.
+  '	// 2. Replicas, but not the young copies of persistent writes.
 	if excess > 0 {' \
-  '	// 2. Replicas.
+  '	// 2. Replicas, but not the young copies of persistent writes.
 	if false {' \
   'TestSheddingTakesL1AndReplicasBeforeOwnedData$' ./tests
+
+# A persistent write's replica is its only other holder until the owner
+# flushes it; the budget must not shed it then (open question 60).
+mutate "the budget sheds replicas of unflushed persistent writes" \
+  pressure.go \
+  '			if floor, ok := keep[name]; ok {' \
+  '			if floor, ok := keep[name]; ok && false {' \
+  'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
+
+mutate "the replica store ignores the floor it is given" \
+  internal/replication/replica.go \
+  '			if e.Order >= floor {
+				continue
+			}' \
+  '			if e.Order >= floor && false {
+				continue
+			}' \
+  'TestShedKeepsCopiesFromTheFloor$' ./internal/replication/
+
+mutate "the budget keeps every replica of a persistent namespace" \
+  pressure.go \
+  '		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))' \
+  '		keep[ns.name] = 0' \
+  'TestAFlushedWritesReplicaIsShedAsBefore$' ./tests
+
+mutate "the window is the flush interval alone, not its timeout too" \
+  persistence.go \
+  '	return p.flushInterval() + persistFlushTimeout' \
+  '	return p.flushInterval()' \
+  'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
 
 # L1 before everything.
 mutate "the L1 tier is never shed" \

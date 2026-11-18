@@ -214,11 +214,7 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 	// goroutine misses any clock advance that lands before the goroutine is
 	// scheduled, and the first flush then comes an interval late — on the
 	// fake clock, never.
-	interval := ns.opts.PersistFlushInterval
-	if interval <= 0 {
-		interval = persistFlushInterval
-	}
-	ticker := p.clk.NewTicker(interval)
+	ticker := p.clk.NewTicker(p.flushInterval())
 	compact := p.clk.NewTicker(persistCompactInterval)
 	split := p.clk.NewTicker(persistSplitInterval)
 	p.wg.Add(2)
@@ -269,6 +265,22 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 }
 
 // noteShed records that the memory budget dropped key from the owned store.
+// flushInterval is how often this namespace flushes.
+func (p *persister) flushInterval() time.Duration {
+	if d := p.ns.opts.PersistFlushInterval; d > 0 {
+		return d
+	}
+	return persistFlushInterval
+}
+
+// unflushedFor is how long an acknowledged write may stay in its owner's memory
+// alone, in the ordinary course: an interval until the flush that takes it, and
+// that flush's timeout to finish. The memory budget does not shed replicas of
+// writes this young (docs/decisions/open.md question 60).
+func (p *persister) unflushedFor() time.Duration {
+	return p.flushInterval() + persistFlushTimeout
+}
+
 func (p *persister) noteShed(key string) {
 	p.mu.Lock()
 	p.shed[key] = struct{}{}
