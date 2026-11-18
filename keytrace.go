@@ -13,7 +13,7 @@ type KeyEvent struct {
 	At int64 `json:"at"`
 	// Kind is what happened: write, delete, replica-accepted,
 	// replica-refused, fork, promote, demote, hand-off, restore, shed,
-	// read-back or catch-up.
+	// replica-shed or read-back.
 	Kind string `json:"kind"`
 	// Order and Writer identify the write the value came from: the order
 	// decides which of two values is newer, the writer is the node that
@@ -65,6 +65,7 @@ const (
 	keytraceHandOff         = keytrace.HandOff
 	keytraceRestore         = keytrace.Restore
 	keytraceShed            = keytrace.Shed
+	keytraceReplicaShed     = keytrace.ReplicaShed
 	keytraceReadBack        = keytrace.ReadBack
 )
 

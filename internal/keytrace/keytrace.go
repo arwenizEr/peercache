@@ -49,6 +49,7 @@ const (
 	HandOff         = "hand-off"         // a replica copy was placed elsewhere
 	Restore         = "restore"          // storage's record was merged into memory
 	Shed            = "shed"             // the memory budget dropped the owned value
+	ReplicaShed     = "replica-shed"     // the memory budget dropped a replica copy
 	ReadBack        = "read-back"        // a shed key was read back from storage
 	CatchUp         = "catch-up"         // catch-up installed a copy
 )

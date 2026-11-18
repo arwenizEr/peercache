@@ -738,6 +738,12 @@ func (s *Store) ShedCount() int64 { return s.shed.Load() }
 // docs/decisions/open.md question 60. A namespace it returns math.MaxUint64
 // for keeps nothing.
 func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64 {
+	return s.ShedVisit(target, keepFrom, nil)
+}
+
+// ShedVisit is [Store.Shed] with visit called for each copy shed, under its
+// shard's lock: it must be quick and must not call into this store.
+func (s *Store) ShedVisit(target int64, keepFrom func(namespace string) uint64, visit func(namespace, key string, e Entry)) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -784,6 +790,9 @@ func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64
 				}
 				data += dataSize(key, e)
 				slots += EntryOverhead
+				if visit != nil {
+					visit(name, key, e)
+				}
 				nr.del(sh, key)
 				s.shed.Add(1)
 			}
