@@ -20,7 +20,7 @@ weight for this reason.
 
 `WithL1MaxBytes(n int64)`, per namespace, default 64 MiB. otter's capacity
 becomes a total cost and each copy costs what `Cache.Bytes` already charges it:
-key bytes, value bytes and `EntryOverhead` (128). The bound, the L1 bytes
+key bytes, value bytes and `EntryOverhead` (192 since 1.1.3, measured; 128 before, estimated). The bound, the L1 bytes
 gauge and the memory budget's accounting therefore use one charge.
 
 - Zero or negative is `ErrInvalidOption`. Turning the tier off stays with

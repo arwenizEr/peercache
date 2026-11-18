@@ -243,7 +243,7 @@ joining (open question 26).
 | `WithCodec(string)` | `msgpack` | The codec a `NamespaceOf` view encodes values with: `json` or `msgpack`. Unknown names fail at construction. The byte API ignores it. |
 | `WithTypedLoader(func(ctx, key) (T, time.Duration, error))` | none | A loader returning `T`, for `NamespaceOf`. Conflicts with `WithLoader`. |
 | `WithL1TTL(time.Duration)` | 5s | Upper bound on staleness for non-owned copies. |
-| `WithL1MaxBytes(int64)` | 64 MiB | Bounds the memory of the namespace's non-owned copies on each node: key, value and a fixed 128-byte overhead per copy. Past it copies are evicted (round trips, never data); a copy larger than the bound is not cached. Zero or negative is `ErrInvalidOption`. Eviction is asynchronous, so a write burst can overshoot briefly; leave headroom. |
+| `WithL1MaxBytes(int64)` | 64 MiB | Bounds the memory of the namespace's non-owned copies on each node: key, value and a fixed 192-byte overhead per copy, measured. Past it copies are evicted (round trips, never data); a copy larger than the bound is not cached. Zero or negative is `ErrInvalidOption`. Eviction is asynchronous, so a write burst can overshoot briefly; leave headroom. |
 | `WithPersistence(persist.BlobStore)` | off | Writes the namespace behind to a blob store so keys survive losing every holder. See below. |
 | `WithReplicaReads()` | off | Lets a key's replicas answer reads of it, bounded by the L1 TTL. Needs RF ≥ 2 and an L1 tier. See below. |
 | `WithCompression(name string, threshold int)` | off | Compresses stored values at or above `threshold` bytes. `lz4` is registered. |
@@ -1154,8 +1154,8 @@ cache, err := peercache.New(
 
 Caps the bytes the owned stores, the replica store and the L1 tier may hold:
 keys and values, plus a per-entry overhead measured at a map's worst point,
-just after it doubles — 160 bytes an owned entry, 240 a replica
-(`TestAccountedBytesCoverTheLiveHeap`). The overhead is charged per slot a
+just after it doubles — 160 bytes an owned entry, 240 a replica, 192 an L1
+copy (`TestAccountedBytesCoverTheLiveHeap`). The overhead is charged per slot a
 map keeps — a replica namespace's map, an owned store's shard — since a Go map
 gives none back when entries leave it; a map is rebuilt once it holds under
 three quarters of its slots, and after every shed, which is what frees them. Activated groups are not counted —

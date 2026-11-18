@@ -43,10 +43,16 @@ const (
 )
 
 // EntryOverhead is what the tier charges for one entry beyond its key and value
-// bytes, in [Cache.Bytes]. An estimate on the high side: the entry struct (a
-// slice, a stamp and a deadline), the library's node and its policy metadata,
-// and the value's allocation rounding.
-const EntryOverhead int64 = 128
+// bytes, in [Cache.Bytes]: the entry struct (a slice, a stamp and a deadline),
+// the library's node, its hash table slot and its policy metadata.
+//
+// Measured, not estimated (TestAccountedBytesCoverTheLiveHeap): 150 to 172
+// bytes an entry in tiers of 70,000 to 1 million, up to 179 in one of 10,000,
+// where the library's fixed structures are shared by fewer. It was 128, an estimate,
+// which read about four fifths of the heap; the owned and replica stores'
+// estimates were found a third low on kind, and this was the last one left
+// unmeasured.
+const EntryOverhead int64 = 192
 
 // size is what one entry is charged.
 func size(key string, e entry) int64 { return int64(len(key)+len(e.val)) + EntryOverhead }
