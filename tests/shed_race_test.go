@@ -264,7 +264,7 @@ func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 	ns := c.Namespace("profiles",
 		peercache.WithPersistence(persist.Memory()),
 		peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
-			for i := 0; i < 50; i++ {
+			for i := 0; i < 200; i++ {
 				runtime.Gosched() // a load takes a while; writes land meanwhile
 			}
 			return []byte("loaded"), 0, nil
@@ -274,18 +274,20 @@ func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 
 	stop := make(chan struct{})
 	var filler sync.WaitGroup
-	filler.Add(1)
-	go func() {
-		defer filler.Done()
-		for i := 0; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
+	for f := 0; f < 2; f++ {
+		filler.Add(1)
+		go func(f int) {
+			defer filler.Done()
+			for i := 0; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = bulk.Set(ctx, fmt.Sprintf("b%d-%d", f, i%2048), make([]byte, 1<<10), 0)
 			}
-			_ = bulk.Set(ctx, fmt.Sprintf("b%d", i%4096), make([]byte, 1<<10), 0)
-		}
-	}()
+		}(f)
+	}
 
 	var set [keys]atomic.Bool
 	var wg sync.WaitGroup
