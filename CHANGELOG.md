@@ -39,7 +39,10 @@ change the public API.
   counted from zero; a stress test applied 30 of 749 acknowledged decrements.
   The mark and memory now change together under the key's shard lock (open
   question 62). Reads no longer report such a key absent, and a loader's
-  result is no longer stored over a write the budget shed while it ran.
+  result is no longer stored over a write the budget shed while it ran. A shed
+  key whose value was loaded rather than written, or has expired, is answered
+  rather than waited for: neither has a record to wait for
+  (`TestAShedLoadedOrExpiredKeyIsNotRefusedForever`).
   `TestShedCountersRacingTheirWritersLoseNoDecrement`,
   `TestShedFreshKeysLoseNoFirstWrite`, `TestShedKeysAreNeverReadAsAbsent`,
   `TestALoadDoesNotStoreOverAShedWrite`.

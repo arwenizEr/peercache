@@ -2239,3 +2239,29 @@ the false fork that made demotion name nobody. The cost is 24 bytes a slot:
 `TestAForkWrittenOnBothSidesOfAPartitionIsCounted` counted nothing before.
 The write that loses the heal is still lost — decision 5's window, now
 counted — so `TestDurableSimulation` holds such keys to the upper bound only.
+
+## 67. The shed mark lives beside the store, so every path must ask it — found by review, open
+
+Questions 61, 62 and 64 made the shed mark and the owned store agree under the
+store's shard lock, and every path that reads or writes an owned key now asks:
+`LookupGuarded`, `SetIfAbsentGuarded`, `MergeIfNewerGuarded`, `ShedMarked`,
+the check inside `localUpdate`, the retries in `lookupResident`. A new access
+path that forgets to ask reintroduces question 62, silently. The review that
+found the loaded-value and expired-value cases of the read-back (both fixed:
+the mark now keeps whether the value was recorded and when it expires) also
+found this shape the root of them.
+
+**Options:**
+
+1. Keep the mark in the persister, the guarded variants in the store.
+2. Keep a stub in the store's shard for a shed key — no value, the order, the
+   deadline, whether it was recorded — that every store operation reads as
+   "not resident, read it back". Absent and shed would then differ inside the
+   store itself, under the lock every operation already takes, and the guarded
+   variants, the mark map and its lock ordering would go. A stub costs a slot,
+   which shedding exists to free; a bounded number of stubs per shard, oldest
+   dropped to "unknown, read back", would bound it.
+
+**Picked for now:** 1, which is tested and audited as it stands. 2 is the
+better structure and the next thing to do in this area; it is a rewrite of the
+shed path, to be done with its own tests rather than folded into a fix.

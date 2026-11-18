@@ -3593,6 +3593,18 @@ mutate "a demoted value names no writer and no predecessor" \
 			Prev: 0,' \
   'TestAForkWrittenOnBothSidesOfAPartitionIsCounted$' ./tests
 
+mutate "a shed loaded value is waited for as if recorded" \
+  persistence.go \
+  '	return m.order != 0 && !m.unrecorded && (m.expiresAt == 0 || now < m.expiresAt)' \
+  '	return m.order != 0 && (m.expiresAt == 0 || now < m.expiresAt)' \
+  'TestAShedLoadedOrExpiredKeyIsNotRefusedForever$' ./tests
+
+mutate "a shed expired value is waited for as if live" \
+  persistence.go \
+  '	return m.order != 0 && !m.unrecorded && (m.expiresAt == 0 || now < m.expiresAt)' \
+  '	return m.order != 0 && !m.unrecorded' \
+  'TestAShedLoadedOrExpiredKeyIsNotRefusedForever$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then
