@@ -152,11 +152,12 @@ type Stats struct {
 	ReplicationsSent    int64 `json:"replicationsSent"`
 	ReplicationsDropped int64 `json:"replicationsDropped"`
 	ReplicationsFailed  int64 `json:"replicationsFailed"`
-	// RestoreReplicationsDropped counts copies of restored keys dropped
-	// because their queue was full: keys a restore brought back from
-	// storage, whose replicas usually still hold them from before. Counted
-	// apart from ReplicationsDropped so that a restart's burst does not read
-	// as live writes going uncopied; live writes have a queue of their own.
+	// RestoreReplicationsDropped counts restored keys never sent to their
+	// replicas because the backlog of restored keys waiting to go was at its
+	// guard bound, four million. Zero in any ordinary restart: a restored
+	// key waits for the network rather than being dropped, because after a
+	// rolling restart its replicas restarted too and hold nothing. Counted
+	// apart from ReplicationsDropped, which counts live writes.
 	RestoreReplicationsDropped int64 `json:"restoreReplicationsDropped"`
 
 	// SplitBrainDetections counts forks a replica saw in a key's history:

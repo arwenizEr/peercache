@@ -409,6 +409,21 @@ func (s *Store) Order(key string) (uint64, bool) {
 	return e.order, true
 }
 
+// Peek returns a live entry's value, version, deadline (zero for none) and
+// order without counting a hit or a miss. It is for the node's own background
+// work — sending a restored key to its replicas — which is not a read and must
+// not show in the read counters.
+func (s *Store) Peek(key string) (val []byte, version uint64, expiresAt int64, order uint64, ok bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, found := sh.entries[key]
+	sh.mu.RUnlock()
+	if !found || (e.expiresAt != 0 && s.clk.Now().UnixNano() >= e.expiresAt) {
+		return nil, 0, 0, 0, false
+	}
+	return e.val, e.version, e.expiresAt, e.order, true
+}
+
 // SetIfAbsent stores val under key for ttl unless a live entry is already
 // there, and reports whether it stored. When it does not, it returns the
 // resident value — the same stored slice [Store.Get] would.

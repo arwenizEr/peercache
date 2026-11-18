@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -1031,12 +1030,12 @@ func (p *persister) apply(newest map[string]*segment.Record) {
 		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
 			continue
 		}
-		version, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
+		_, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
 		if !merged {
 			continue
 		}
 		p.restored.Add(1)
-		p.replicateRestored(key, r, version, now)
+		p.replicateRestored(key, r)
 	}
 	// This node's next write to any of these keys must outrank what it
 	// just read, whatever its own clock says.
@@ -1305,27 +1304,12 @@ func (p *persister) split(ctx context.Context) error {
 // until its next write, and losing this node as well meant restoring from
 // storage again. Always asynchronous: a restore has no caller waiting for
 // durability, and it runs inside one, where waiting on a slow replica would
-// stall the read that triggered it. On a queue of its own, apart from live
-// writes; see restoreQueue.
-func (p *persister) replicateRestored(key string, r *segment.Record, version uint64, now int64) {
+// stall the read that triggered it. In a backlog of its own, apart from live
+// writes, which keeps the key and not its value; see restoreBacklogMax.
+func (p *persister) replicateRestored(key string, r *segment.Record) {
 	ns := p.ns
 	if ns.opts.ReplicationFactor < 2 {
 		return
 	}
-	targets, _, err := ns.cache.replicaTargets(ns.groupKeyFor(key), ns.opts.ReplicationFactor)
-	if err != nil || len(targets) == 0 {
-		return
-	}
-	w := replicaWork{namespace: ns.name, key: key, order: r.Order, targets: targets}
-	if r.Tombstone {
-		w.stamp = ns.stamp(math.MaxUint64)
-		w.deleted = true
-	} else {
-		w.value = r.Value
-		w.stamp = ns.stamp(version)
-		if r.ExpiresAt != 0 {
-			w.ttl = time.Duration(r.ExpiresAt - now)
-		}
-	}
-	ns.cache.replicator.enqueueRestored(w)
+	ns.cache.replicator.enqueueRestored(restoredKey{ns: ns, key: key, order: r.Order, tombstone: r.Tombstone})
 }

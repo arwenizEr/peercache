@@ -154,7 +154,7 @@ func Collect(s core.Stats) []Metric {
 			"Replica copies dropped because the asynchronous queue was full. A real reduction in redundancy, not a hint.",
 			float64(s.ReplicationsDropped)},
 		{"peercache_restore_replications_dropped_total", Counter,
-			"Copies of keys a restore brought back from storage, dropped because their queue was full. Their replicas usually still hold them; live writes are not counted here.",
+			"Keys a restore brought back from storage that were never sent to their replicas, because four million restored keys were already waiting to go. Zero in an ordinary restart; live writes are not counted here.",
 			float64(s.RestoreReplicationsDropped)},
 
 		// Invalidation. Best effort by design, so losses are not alarming.
