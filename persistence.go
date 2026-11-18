@@ -1130,9 +1130,9 @@ func (p *persister) owns(key string) bool {
 //
 // It reads the key's partition and merges that key alone, preferring a record
 // still pending here — the newest write may not have been flushed when the key
-// was shed. A failure leaves the key marked, counted, and served from memory
-// as a miss; the next access tries again. Two accesses racing may both read
-// the partition; the merge makes that harmless.
+// was shed. A failure leaves the key marked and counted, and the access is
+// refused with errPartitionUnrestored; the next access tries again. Two
+// accesses racing may both read the partition; the merge makes that harmless.
 func (p *persister) restoreShed(ctx context.Context, key string) error {
 	p.mu.Lock()
 	_, shed := p.shed[key]
@@ -1153,7 +1153,11 @@ func (p *persister) restoreShed(ctx context.Context, key string) error {
 			return ctx.Err()
 		}
 		p.restoreFailures.Add(1)
-		return nil
+		// Not nil: memory does not hold a shed key, so answering from it
+		// would report the key absent, and an Increment would count from
+		// zero with a write that outranks the stored value. The same
+		// refusal a failed partition restore gives (open question 61).
+		return errPartitionUnrestored
 	}
 	defer sc.release()
 	newest := sc.newest

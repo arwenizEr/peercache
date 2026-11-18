@@ -2049,3 +2049,30 @@ alone; that is the loss window persistence already documents for a store that
 does not answer. Reversible to 2 if a store's flushes are routinely slower than
 the timeout. `TestAnUnflushedWriteSurvivesItsReplicaNodeShedding` lost all 50
 of its writes before.
+
+## 61. A shed key was counted from zero when storage could not be read — found on kind, resolved
+
+**Found** on kind on 2026-11-18 (main dd77a5f): after the partition scenario,
+four stock counters stood 421 to 477 above what the order ledger allowed,
+with no order lost and no fork counted. The two pods on the cut-off worker were
+over their memory budget and could not reach the object store. A persistent
+namespace's owner under pressure sheds owned keys, which stay in storage and
+are read back on their next access (`restoreShed`). When that read failed, the
+access went on as if it had succeeded: the key was in neither memory nor
+anything this node knew, so it was reported absent, and an `Increment` counted
+from zero with a write whose order outranks the stored value. Open question 57
+closed exactly this for a failed partition restore; the shed path kept the
+old behaviour.
+
+**Options:**
+
+1. Refuse the access with `ErrActivationPending`, as a failed partition restore
+   does, and retry the read on the next access.
+2. Keep shed keys' records in memory until storage confirms them. That is what
+   the shed was meant to free.
+
+**Picked:** 1. The same answer for the same ignorance, and no memory kept.
+A caller sees "ask again" for as long as storage stays unreachable, for the
+keys it shed only; keys memory holds are served as before.
+`TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable` counted a shed
+counter from zero before.

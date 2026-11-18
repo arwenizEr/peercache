@@ -3445,6 +3445,18 @@ mutate "a namespace opened late is never scanned on a quiet cluster" \
   '		if full {' \
   'TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas$' ./tests
 
+# A shed key whose read-back failed must be refused, not answered from a
+# memory that does not hold it (open question 61).
+mutate "a failed read-back of a shed key answers from memory" \
+  persistence.go \
+  '		return errPartitionUnrestored
+	}
+	defer sc.release()' \
+  '		return nil
+	}
+	defer sc.release()' \
+  'TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable$' ./tests
+
 echo
 echo "caught: $caught   vacuous: $vacuous   skipped: $skipped   broken: $broken"
 if [ "$filtered" -ne 0 ]; then

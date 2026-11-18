@@ -9,6 +9,14 @@ change the public API.
 
 ### Fixed
 
+- A key the memory budget shed from a persistent namespace is no longer
+  answered as absent when storage cannot be read back. The failed read was
+  ignored, so an `Increment` counted from zero and its write outranked the
+  stored value: on kind, four stock counters lost hundreds of decrements on
+  pods that were over budget and cut off from the object store. The access is
+  now refused with `ErrActivationPending`, as a failed partition restore
+  already was (open question 61).
+  `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`.
 - A memory-budget relief round no longer stalls every copy arriving for a
   namespace. A shed rebuilds the map it removed from, which is what frees its
   slots, and with one map a namespace that copied the whole remaining
