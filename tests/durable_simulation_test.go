@@ -86,6 +86,11 @@ type durLedger struct {
 	promised   []int
 	unpromised int
 	unknown    int
+	// forked records a write acknowledged on a minority side. Both sides
+	// then wrote the key, and the later write by order wins the heal
+	// whichever side made it: the AP window decision 5 documents, in which
+	// the majority's writes may be lost too (open question 66).
+	forked bool
 }
 
 // durClaim is one acknowledged order claim and the destruction counts when it
@@ -116,6 +121,8 @@ type durableSim struct {
 	hardKills int
 	// cartsShed names the carts keys some node's budget shed.
 	cartsShed map[string]bool
+	// forkedClaims names the order keys also claimed on a minority side.
+	forkedClaims map[string]bool
 
 	partitioned bool
 	minority    map[string]bool
@@ -177,15 +184,16 @@ func runDurableSimulation(t *testing.T, seed int64) {
 
 	backing := persist.Memory()
 	s := &durableSim{
-		t:         t,
-		f:         f,
-		rng:       rand.New(rand.NewSource(seed)),
-		stores:    map[string]*cutOffStore{},
-		ledger:    map[string]*durLedger{},
-		carts:     map[string]*durLedger{},
-		cartsShed: map[string]bool{},
-		claims:    map[string]durClaim{},
-		minority:  map[string]bool{},
+		t:            t,
+		f:            f,
+		rng:          rand.New(rand.NewSource(seed)),
+		stores:       map[string]*cutOffStore{},
+		ledger:       map[string]*durLedger{},
+		carts:        map[string]*durLedger{},
+		cartsShed:    map[string]bool{},
+		forkedClaims: map[string]bool{},
+		claims:       map[string]durClaim{},
+		minority:     map[string]bool{},
 	}
 	for _, id := range f.ids {
 		s.stores[id] = &cutOffStore{BlobStore: backing}
@@ -271,9 +279,11 @@ func (s *durableSim) judgeCounters(name string, ledger map[string]*durLedger, de
 		if promised+excused+l.unpromised == 0 {
 			continue // never acknowledged: absent and present are both right
 		}
-		if shed[key] {
-			// Shed is lost, and the count started again from zero: only
-			// the upper bound still holds.
+		if shed[key] || l.forked {
+			// Shed is lost and the count started again from zero; or both
+			// sides of a partition wrote it and one side's writes lost
+			// the heal. Either way only the upper bound still holds: no
+			// decrement applied more often than it was made.
 			excused += promised
 			promised = 0
 		}
@@ -365,7 +375,7 @@ func (s *durableSim) judgeClaims(checked *int) []string {
 	var wrong []string
 	for _, key := range keys {
 		c := s.claims[key]
-		if s.unflushedCrashes-c.crashesAt >= simRF {
+		if s.unflushedCrashes-c.crashesAt >= simRF || s.forkedClaims[key] {
 			continue
 		}
 		v, err := s.read(s.openOrders, key)
@@ -465,6 +475,7 @@ func (s *durableSim) decrementIn(name string, ledger map[string]*durLedger, dest
 	}
 	if ok, why := s.promisedVia(via); !ok {
 		l.unpromised++
+		l.forked = l.forked || (s.partitioned && s.minority[via])
 		s.logf("decrement %s/%s via %s -> %d (%s)", name, key, via, got, why)
 		return
 	}
@@ -493,10 +504,13 @@ func (s *durableSim) claim() {
 	}
 	ok, why := s.promisedVia(via)
 	if !ok {
+		if s.partitioned && s.minority[via] {
+			s.forkedClaims[key] = true
+		}
 		s.logf("claim %s via %s -> %s (%s)", key, via, val, why)
 		return
 	}
-	if prev, had := s.claims[key]; had && s.unflushedCrashes-prev.crashesAt < simRF {
+	if prev, had := s.claims[key]; had && s.unflushedCrashes-prev.crashesAt < simRF && !s.forkedClaims[key] {
 		s.violations = append(s.violations, fmt.Sprintf("orders/%s claimed twice: %q, then %q via %s",
 			key, prev.val, val, via))
 	}
