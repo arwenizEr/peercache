@@ -2102,12 +2102,12 @@ mutate "a restore skips a corrupt log" \
 				return nil, err
 			}
 			loaded[name] = true
-			merge(&segment.File{Records: records})' \
+			// Records from the shared logs are counted there, once.' \
   '			if err != nil {
 				continue
 			}
 			loaded[name] = true
-			merge(&segment.File{Records: records})' \
+			// Records from the shared logs are counted there, once.' \
   'TestACorruptSegmentFailsTheRestore$' ./tests
 
 mutate "a failed restore is never retried" \
@@ -3129,12 +3129,12 @@ mutate "a drained node applies a peer's write" \
 
 mutate "a restore gives up on a log that moved" \
   persistence.go \
-  '			records, err := p.logRecords(ctx, name, part)
+  '			records, shared, err := p.logRecords(ctx, name, part)
 			if gone(err) {
 				vanished = true
 				continue
 			}' \
-  '			records, err := p.logRecords(ctx, name, part)' \
+  '			records, shared, err := p.logRecords(ctx, name, part)' \
   'TestARestoreOutlastsASplitterDeletingItsLogs$' ./tests
 mutate "an unrestored partition answers absent keys from memory" \
   namespace.go \
@@ -3210,8 +3210,8 @@ mutate "partitions restore one at a time" \
 
 mutate "every partition reads every log for itself" \
   persistence.go \
-  'records, err := p.logRecords(ctx, name, part)' \
-  'records, err := p.loadLogPart(ctx, name, part)' \
+  'records, shared, err := p.logRecords(ctx, name, part)' \
+  'records, err := p.loadLogPart(ctx, name, part); shared := false' \
   'TestARestoreReadsEachLogOnce$' ./tests
 
 mutate "compaction reads a partition before counting its segments" \
