@@ -2125,3 +2125,45 @@ newer stored one. They now ask under the shard lock too, on a miss only
 (`Store.LookupGuarded`, `Store.SetIfAbsentGuarded`), and a namespace with
 nothing shed takes no lock for it. `TestShedKeysAreNeverReadAsAbsent` and
 `TestALoadDoesNotStoreOverAShedWrite` fail without them.
+
+## 63. One key that cannot be answered fails a whole batch — found by review, open
+
+`BatchGet` and `BatchGetOrLoad` on an owner return the first error a key's
+restore gives, so one key refused with `ErrActivationPending` fails the batch,
+including the keys memory holds. Before open question 61 that took a partition
+whose restore failed; now a shed key read during a store outage does it too,
+and under memory pressure shed keys are spread over every partition, so during
+an outage most batches against an over-budget owner fail.
+
+**Options:**
+
+1. Keep it: a batch is answered whole or refused, and a caller retries.
+2. Omit a refused key, as a miss is omitted. Wrong for `BatchGet`, whose
+   callers read an omitted key as absent: the lie questions 57 and 61 removed.
+3. Answer the keys that can be answered and name the refused ones, as the
+   wire's `Misrouted` already names keys of a load that moved. A new field in
+   the public result, so a v1 API addition.
+
+**Picked for now:** 1, the only one that cannot report a refused key as
+absent. 3 is the answer if batches during outages matter to someone; it is an
+addition, reversible in the sense that it breaks nobody.
+
+## 64. A refused shed key may be newer here than anything storage holds — found by review, open
+
+When a shed key's read-back fails, the access is refused even if this node's
+own unflushed records hold the key's newest write: during an outage flushes
+fail, pending grows, and the budget sheds keys written during it. Those keys
+are refused for the whole outage though the overlay would answer them.
+
+**Options:**
+
+1. Keep refusing.
+2. On a failed read, answer from this node's own records when they hold the
+   key. Correct only if no other node can have written the key since: true
+   while this node has owned it throughout, which is what a write recorded
+   here under the current ownership means, and false after a move this node
+   cannot see.
+
+**Picked for now:** 1. Availability for a short window against a correctness
+argument that needs care about ownership history. Revisit with a test that
+pins down the ownership condition.
