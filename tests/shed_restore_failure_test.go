@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -120,8 +121,10 @@ func TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable(t *testing.T) 
 		if err != nil {
 			t.Fatalf("Get(%s) after storage returned: %v", key, err)
 		}
-		var n int
-		fmt.Sscan(string(v), &n)
+		n, err := strconv.Atoi(string(v))
+		if err != nil {
+			t.Fatalf("%s holds %q: %v", key, v, err)
+		}
 		if n > -before {
 			t.Fatalf("%s = %d after storage returned; it was %d before the outage", key, n, -before)
 		}

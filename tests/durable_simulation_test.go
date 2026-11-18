@@ -51,8 +51,8 @@ func TestDurableSimulation(t *testing.T) {
 }
 
 const (
-	durSteps    = 80
-	durCounters = 12
+	durSteps    = 120
+	durCounters = 6
 	// durBudget is small enough that a few fills push every node into
 	// shedding owned data, persistent namespaces included.
 	durBudget = 256 << 10
@@ -229,17 +229,17 @@ func (s *durableSim) readCounter(key string) (int64, error) {
 
 func (s *durableSim) step() {
 	switch roll := s.rng.Intn(100); {
-	case roll < 40:
+	case roll < 45:
 		s.decrement()
-	case roll < 52:
-		s.fill()
 	case roll < 62:
+		s.fill()
+	case roll < 69:
 		s.kill()
-	case roll < 72:
+	case roll < 76:
 		s.revive()
-	case roll < 82:
+	case roll < 85:
 		s.togglePartition()
-	case roll < 88:
+	case roll < 93:
 		s.setOutage(!s.outage)
 	default:
 		s.f.clk.Advance(flushInterval)
