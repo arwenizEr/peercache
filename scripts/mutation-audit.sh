@@ -2308,8 +2308,8 @@ mutate "a flush writes one object per partition" \
 
 mutate "the persistence flush interval option is ignored" \
   persistence.go \
-  '	interval := ns.opts.PersistFlushInterval' \
-  '	interval := time.Duration(0)' \
+  '	if d := p.ns.opts.PersistFlushInterval; d > 0 {' \
+  '	if d := p.ns.opts.PersistFlushInterval; false {' \
   'TestWithFlushIntervalSetsTheCadence$' ./tests
 
 mutate "a non-positive flush interval is accepted" \
