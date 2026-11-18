@@ -271,9 +271,12 @@ func TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage(t *testing.T) {
 // value memory held; treating "no record" as older than it refused such a key
 // on every access, forever, and the loader could not store it again either.
 func TestAShedLoadedOrExpiredKeyIsNotRefusedForever(t *testing.T) {
+	// The expiring keys' records are swallowed, as a compaction past the
+	// tombstone grace drops an expired record: a read-back finds nothing.
+	store := &blackholeStore{BlobStore: persist.Memory()}
 	c, fc := newCache(t, peercache.WithMemoryBudget(128<<10))
 	ns := c.Namespace("profiles",
-		peercache.WithPersistence(persist.Memory()),
+		peercache.WithPersistence(store),
 		peercache.WithLoader(func(_ context.Context, key string) ([]byte, time.Duration, error) {
 			return []byte("loaded-" + key), 0, nil
 		}))
@@ -283,10 +286,15 @@ func TestAShedLoadedOrExpiredKeyIsNotRefusedForever(t *testing.T) {
 		if _, err := ns.GetOrLoad(ctx, fmt.Sprintf("loaded-%d", i)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	store.dropping.Store(true)
+	for i := 0; i < keys; i++ {
 		if err := ns.Set(ctx, fmt.Sprintf("expiring-%d", i), []byte("v"), time.Second); err != nil {
 			t.Fatal(err)
 		}
 	}
+	flushed(t, c, fc, 1)
+	store.dropping.Store(false)
 	bulk := c.Namespace("bulk")
 	for i := 0; i < 4000; i++ {
 		_ = bulk.Set(ctx, fmt.Sprintf("b%05d", i), make([]byte, 1<<10), 0)
@@ -294,10 +302,7 @@ func TestAShedLoadedOrExpiredKeyIsNotRefusedForever(t *testing.T) {
 	if c.Stats().ShedOwned == 0 {
 		t.Fatal("nothing was shed")
 	}
-	// The expiring keys' records lapse; a compaction would drop them. The
-	// store here drops nothing, so expire them in memory's terms instead:
-	// past the deadline, every record of them is one a restore skips.
-	fc.Advance(2 * time.Second)
+	fc.Advance(2 * time.Second) // past the deadline
 
 	for i := 0; i < keys; i++ {
 		key := fmt.Sprintf("loaded-%d", i)
