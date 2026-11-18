@@ -260,7 +260,7 @@ func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
 	// and a load's store, and one round reaches it about four times in
 	// five. Four miss it together about once in six hundred.
 	for round := 0; round < 4; round++ {
-		loadRacesShedWrite(t)
+		t.Run(fmt.Sprintf("round=%d", round), loadRacesShedWrite)
 	}
 }
 
