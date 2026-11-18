@@ -9,6 +9,14 @@ change the public API.
 
 ### Fixed
 
+- A memory-budget relief round no longer stalls every copy arriving for a
+  namespace. A shed rebuilds the map it removed from, which is what frees its
+  slots, and with one map a namespace that copied the whole remaining
+  namespace under its lock: about 160 ms for a million replicas, every round.
+  A namespace's copies are now split over 64 maps by key hash; a shed empties
+  shards whole and rebuilds only the last one it took from, 9 times faster at
+  100,000 copies, and drains, sweeps and evictions hold one shard's lock at a
+  time. `TestAShedRebuildsOnlyWhatItShedFrom`.
 - The L1 tier charges 192 bytes of overhead a copy, measured, instead of 128,
   estimated. The library's node, hash slot and policy metadata took 150 to 179
   bytes beyond key and value, so the tier's bytes gauge and the memory budget

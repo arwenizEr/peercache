@@ -1305,6 +1305,36 @@ rebuilds the namespace's map after it, which is what frees them, at about
 replicas, once per relief round, not per write. Each round sheds to nine tenths
 of the budget, so rounds are a tenth of the budget's worth of inflow apart.
 
+That stall is gone: a namespace's copies are split over 64 maps, and a shed
+empties shards whole and rebuilds only the last one it took from. Same
+benchmark, Machine A, quiet (kind scaled to zero), 2026-11-18, five runs of
+`-benchtime 20x`, medians:
+
+| Floor | one map a namespace | 64 shards |
+|---|---|---|
+| none | 12,190,075 | 1,348,955 |
+| the youngest tenth kept | 12,254,025 | 2,068,350 |
+
+`TestAShedRebuildsOnlyWhatItShedFrom` holds it: a shed of a tenth of 100,000
+copies allocated 14.7 MB, half of what they are charged, rebuilding the rest;
+now one shard's worth. At a million replicas, a relief round holds one shard's
+lock for at most about 3 ms instead of the namespace's for 160.
+
+The other passes over a namespace now hold one shard's lock at a time. Their
+time is unchanged with the collector off; with it on, the fill each op does
+outside the timer leaves more collection inside it across 64 maps than one:
+
+| Benchmark | one map, GC on | 64 shards, GC on | one map, `GOGC=off` | 64 shards, `GOGC=off` |
+|---|---|---|---|---|
+| `BenchmarkEvict`, 100,000 keys | 7,166,905 | 15,013,591 | 7,876,270 | 7,563,180 |
+| `BenchmarkDrain`, 100,000 keys | 2,960,723 | 3,512,863 | 2,608,120 | 2,756,345 |
+| `BenchmarkSweepExpired`, 1,000,000 | 584,130 | 1,184,640 | 589,870 | 604,405 |
+| `BenchmarkPut` | 155.1 (84.3–167) | 85.1 | | |
+| `BenchmarkGet` | 38.3 | 37.2 | | |
+
+Evict and Drain run once per reconciliation, Sweep once a second; none is on a
+request's path, and what a request waits for behind them is now a 64th.
+
 ## Owned store and restores — counting what the budget missed
 
 Machine A, median of five runs. The owned store charges spare map slots and
