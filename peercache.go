@@ -823,7 +823,7 @@ func (c *cache) sweepOnce() {
 	}
 	// Replicas expire on the owner's schedule, and nothing else reclaims
 	// them: an expiry is not replicated.
-	c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())
+	_, _ = c.replicas.SweepExpired(c.opts.Clock.Now().UnixNano())
 	// The budget is checked here as well as on writes, because the L1 tier
 	// grows on reads and a read path has no business summing counters.
 	c.pressure.check()

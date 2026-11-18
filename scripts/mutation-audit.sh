@@ -3240,6 +3240,26 @@ mutate "restored keys share the live replication queue" \
   '	case r.queues[workerFor(w.namespace, w.key, len(r.queues))] <- w:' \
   'TestARestoreDoesNotCrowdOutLiveReplication$' ./tests
 
+# --- replica expiry samples a large namespace ---
+
+mutate "a large namespace's replicas are swept whole every tick" \
+  internal/replication/replica.go \
+  '	if held < SweepWholeBelow {' \
+  '	if true {' \
+  'TestASweepOfALargeNamespaceVisitsAShareOfIt$' ./internal/replication
+
+mutate "a sweep stops at its share however much it finds expired" \
+  internal/replication/replica.go \
+  '		if visited >= share && found*sweepMoreAbove <= SweepChunk {' \
+  '		if visited >= share {' \
+  'TestASweepGoesOnWhileItFindsExpiredReplicas$' ./internal/replication
+
+mutate "a sweep that finds expired replicas goes on without bound" \
+  internal/replication/replica.go \
+  '	share, most := held/SweepShare, held/sweepMostShare' \
+  '	share, most := held/SweepShare, held' \
+  'TestASweepGoesOnWhileItFindsExpiredReplicas$' ./internal/replication
+
 # --- hand-offs run in parallel ---
 
 mutate "one hand-off at a time" \

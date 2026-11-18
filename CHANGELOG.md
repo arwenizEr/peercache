@@ -41,6 +41,15 @@ change the public API.
   increment for the next flush. `TestAFailedFlushDoesNotUndoAWriteMadeDuringIt`
   failed on it once under the race gate.
 
+- Expired replicas are reclaimed by sampling a large namespace rather than
+  visiting every entry each second with its lock held, which on kind at 1.35
+  million replicas a pod was a quarter of the pod's CPU and a stall of every
+  copy arriving meanwhile. A namespace under 4,096 replicas is still swept
+  whole; a larger one is visited a 32nd at a time in chunks of 1,024, and on
+  while a chunk finds more than a quarter expired. Every read already checks
+  the deadline, so this changes how soon memory comes back, never what is
+  served. `BenchmarkSweepExpired`: 19.2 ms to 0.6 ms at a million replicas.
+
 ### Added
 
 - `Stats.PromotionScans` and `peercache_promotion_scans_total`: passes that
