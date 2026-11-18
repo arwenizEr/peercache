@@ -92,7 +92,6 @@ func (fx *shedFixture) overfill(t *testing.T) peercache.Stats {
 // kill -9 of their owner lost 20 acknowledged orders.
 func TestAnUnflushedWriteSurvivesItsReplicaNodeShedding(t *testing.T) {
 	fx := newShedFixture(t)
-	ctx := context.Background()
 
 	// Every flush from here is lost, as an owner killed before its flush
 	// would lose it.
@@ -104,10 +103,10 @@ func TestAnUnflushedWriteSurvivesItsReplicaNodeShedding(t *testing.T) {
 	fx.overfill(t)
 
 	killAndSettle(t, fx.f, "n0")
-	ns := fx.f.caches["n1"].Namespace("durable")
+	durable := func(id string) peercache.Namespace { return fx.f.caches[id].Namespace("durable") }
 	lost := 0
 	for _, k := range fx.keys {
-		if _, err := ns.Get(ctx, k); err != nil {
+		if _, err := readWithRetryFrom(t, fx.f, durable, "n1", k); err != nil {
 			lost++
 		}
 	}
