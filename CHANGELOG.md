@@ -9,6 +9,13 @@ change the public API.
 
 ### Fixed
 
+- The L1 tier charges 192 bytes of overhead a copy, measured, instead of 128,
+  estimated. The library's node, hash slot and policy metadata took 150 to 179
+  bytes beyond key and value, so the tier's bytes gauge and the memory budget
+  read about four fifths of the heap it held. A namespace's `WithL1MaxBytes`
+  now holds about a fifth fewer small copies for the same bound, and holds
+  them in the memory it names. `TestAccountedBytesCoverTheLiveHeap` in
+  `internal/l1`.
 - A namespace this node holds no replicas of is now reconciled too. The
   promoter visited only the namespaces in the replica store, so an open
   namespace with nothing replicated here never had its owned store demoted:

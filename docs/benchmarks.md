@@ -1326,6 +1326,24 @@ first went to 718 ms: the kept logs are bounded in bytes, and counted by
 partitions read the logs for themselves again. The bound is 48 MiB now,
 counted in the budget, and keeps every log this benchmark writes.
 
+## L1 tier — the overhead a copy takes
+
+`TestAccountedBytesCoverTheLiveHeap` in `internal/l1`, Machine A, 2026-11-18,
+not under the race detector: a tier bounded at 1 GiB filled with 22-byte keys
+and 48-byte values, the live heap read after two collections. Heap is the
+whole tier's, the library's fixed structures included; overhead is heap less
+the 70 bytes of key and value. Five runs, all within a byte of each other.
+
+| Copies | heap a copy | overhead | charged before (128) | charged now (192) |
+|---|---|---|---|---|
+| 10,000 | 248 | 178 | 198 | 262 |
+| 100,000 | 230 | 160 | 198 | 262 |
+| 300,000 | 242 | 172 | 198 | 262 |
+
+The estimate read four fifths of the heap. The charge decides only what the
+bound admits and what the budget sees, not how fast a read or a fill runs, so
+the tier's benchmarks do not move.
+
 ## Invalidation hints under a burst of writes
 
 `BenchmarkHintsOverGRPC`, Machine A: three caches over real gRPC on

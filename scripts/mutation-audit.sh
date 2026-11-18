@@ -3367,6 +3367,12 @@ mutate "a replica is charged the old estimate" \
   'const EntryOverhead int64 = 128' \
   'TestAccountedBytesCoverTheLiveHeap$' ./internal/replication
 
+mutate "an L1 copy is charged the old estimate" \
+  internal/l1/l1.go \
+  'const EntryOverhead int64 = 192' \
+  'const EntryOverhead int64 = 128' \
+  'TestAccountedBytesCoverTheLiveHeap$' ./internal/l1
+
 # --- restored keys fan out from a backlog of their own, dropping none ---
 
 mutate "restored keys share the live replication queue" \
