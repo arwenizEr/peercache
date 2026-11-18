@@ -256,6 +256,15 @@ func TestShedKeysAreNeverReadAsAbsent(t *testing.T) {
 // stored over it. Whatever the interleaving, every key ends at the value its
 // acknowledged Set wrote.
 func TestALoadDoesNotStoreOverAShedWrite(t *testing.T) {
+	// Four independent rounds: the window is a shed landing between a Set
+	// and a load's store, and one round reaches it about four times in
+	// five. Four miss it together about once in six hundred.
+	for round := 0; round < 4; round++ {
+		loadRacesShedWrite(t)
+	}
+}
+
+func loadRacesShedWrite(t *testing.T) {
 	const (
 		budget = 128 << 10
 		keys   = 9000
