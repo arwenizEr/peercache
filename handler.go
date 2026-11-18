@@ -569,7 +569,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		Prev:       in.Prev,
 	})
 	if h.cache.traced(in.Namespace, in.Key) {
-		h.cache.recordCopy(in.Namespace, in.Key, accepted, conflict, in.Order, in.From, in.Stamp.Version, in.Value, "replicate")
+		h.cache.recordCopy(in.Namespace, in.Key, keytraceReplicaAccepted, accepted, conflict, in.Order, in.From, in.Stamp.Version, in.Value, "replicate")
 	}
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {

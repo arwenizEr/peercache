@@ -13,7 +13,7 @@ type KeyEvent struct {
 	At int64 `json:"at"`
 	// Kind is what happened: write, delete, replica-accepted,
 	// replica-refused, fork, promote, demote, hand-off, restore, shed,
-	// replica-shed or read-back.
+	// replica-shed, read-back or catch-up.
 	Kind string `json:"kind"`
 	// Order and Writer identify the write the value came from: the order
 	// decides which of two values is newer, the writer is the node that
@@ -59,6 +59,7 @@ const (
 	keytraceWrite           = keytrace.Write
 	keytraceDelete          = keytrace.Delete
 	keytraceReplicaAccepted = keytrace.ReplicaAccepted
+	keytraceCatchUp         = keytrace.CatchUp
 	keytraceReplicaRefused  = keytrace.ReplicaRefused
 	keytracePromote         = keytrace.Promote
 	keytraceDemote          = keytrace.Demote
@@ -69,15 +70,16 @@ const (
 	keytraceReadBack        = keytrace.ReadBack
 )
 
-// recordCopy records a replica copy's arrival: stored, refused as older, or
-// in conflict with the copy held, which is a fork.
-func (c *cache) recordCopy(namespace, key string, accepted, conflict bool, order uint64, from string, version uint64, val []byte, detail string) {
+// recordCopy records a replica copy's arrival: stored (as stored, which names
+// how it came: replicated or caught up), refused as older, or in conflict with
+// the copy held, which is a fork.
+func (c *cache) recordCopy(namespace, key, stored string, accepted, conflict bool, order uint64, from string, version uint64, val []byte, detail string) {
 	kind := keytrace.ReplicaRefused
 	switch {
 	case conflict:
 		kind = keytrace.Fork
 	case accepted:
-		kind = keytrace.ReplicaAccepted
+		kind = stored
 	}
 	c.record(namespace, key, kind, order, from, version, val, detail)
 }

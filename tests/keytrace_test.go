@@ -221,7 +221,7 @@ func TestARestoreAndACatchUpAreTraced(t *testing.T) {
 		h := f.caches[victim].KeyHistory("traced", key)
 		found := false
 		for _, e := range h {
-			if e.Kind == "replica-accepted" && len(e.Detail) > 8 && e.Detail[:8] == "catch-up" {
+			if e.Kind == "catch-up" {
 				found = true
 			}
 		}
