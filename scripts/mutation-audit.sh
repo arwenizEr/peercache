@@ -1149,10 +1149,11 @@ mutate "a hand-off claims to be the writer of what it forwards" \
 # demoting node may have adopted the key rather than written it.
 mutate "a demoted copy names the demoting node as its writer" \
   promote.go \
-  '			// carries no Prev either, so it was never judged one before.
+  '			From: e.Lineage.Writer,
+			Prev: e.Lineage.Prev,
 		})' \
-  '			// carries no Prev either, so it was never judged one before.
-			From: self,
+  '			From: self,
+			Prev: e.Lineage.Prev,
 		})' \
   'TestADemotedCopyNamesNoWriterItDidNotWrite$' ./tests
 
@@ -1246,7 +1247,7 @@ mutate "shedding no longer raises the version floor" \
 # The removal sent to a shed key's replicas, which frees their memory.
 mutate "a shed owned key sends its replicas no removal" \
   pressure.go \
-  '	if n.opts.ReplicationFactor < 2 {
+  '	if n.opts.ReplicationFactor < 2 || n.persister != nil {
 		return
 	}
 	targets' \
@@ -1717,8 +1718,8 @@ mutate "a remote Get unframes a value the owner already unframed" \
   'TestCompressedValuesSurviveEveryRemotePath$' ./tests
 
 # A load that raced a Set stored its older value over the newer one.
-mutate "a load overwrites a write that raced it"   internal/store/store.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
-		return old.val, false
+mutate "a load overwrites a write that raced it"   internal/store/guarded.go   '	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
+		return old.val, false, false
 	}'   ''   'TestALoadDoesNotOverwriteAWriteThatRacedIt$' ./tests
 
 # A replicated tombstone removed the replica's copy whatever its stamp.
@@ -2031,11 +2032,11 @@ mutate "a promoted value is given a new order" \
   '	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})' \
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: lin.Prev, writer: writer})' \
   '	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()})' \
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder(), prev: lin.Prev, writer: writer})' \
   'TestRestoreInstallsTheGivenOrder$' ./internal/store/
 
 mutate "an atomic update stores no order" \
@@ -2151,10 +2152,10 @@ mutate "a membership change does not trigger a restore" \
 
 mutate "a shed persistent key is not marked for restore" \
   pressure.go \
-  '				if ns.persister != nil {
-					ns.persister.noteShed(key)
-				}' \
-  '				_ = key' \
+  '			if ns.persister != nil {
+				mark = ns.persister.noteShed
+			}' \
+  '' \
   'TestAShedKeyIsRestoredNotLost$' ./tests
 
 # --- persistence: compaction (decision 0029) ---
@@ -2190,11 +2191,11 @@ mutate "promotion restarts the version sequence" \
   '	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})' \
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: lin.Prev, writer: writer})' \
   '	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: 1, order: order})' \
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: 1, order: order, prev: lin.Prev, writer: writer})' \
   'TestRestoreContinuesTheVersionSequence' ./internal/store/
 
 mutate "Restore overwrites a newer value" \
@@ -2219,20 +2220,20 @@ mutate "deletions are not replicated" \
 
 mutate "handed-off keys are not adopted by their new owner" \
   handler.go \
-  '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
-  '		if false {' \
+  '		adopted := ns.store.RestoreFrom(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,' \
+  '		adopted := false && ns.store.RestoreFrom(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,' \
   'TestDrainSavesDataWithoutReplication' ./tests
 
 mutate "promotion restarts a key's lifetime" \
   promote.go \
-  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {' \
-  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt+10_000_000_000, e.Stamp.Version, e.Order) {' \
+  '		if ns.store.RestoreAtFrom(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order, store.Lineage{Writer: e.From, Prev: e.Prev}) {' \
+  '		if ns.store.RestoreAtFrom(key, e.Value, e.ExpiresAt+10_000_000_000, e.Stamp.Version, e.Order, store.Lineage{Writer: e.From, Prev: e.Prev}) {' \
   'TestAPromotedKeyKeepsItsRemainingTTL$' ./tests
 
 mutate "an adopted hand-off is framed a second time" \
   handler.go \
-  '		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
-  '		if ns.store.Restore(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {' \
+  '		adopted := ns.store.RestoreFrom(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,' \
+  '		adopted := ns.store.RestoreFrom(in.Key, ns.encode(in.Value), time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,' \
   'TestACompressedHandOffIsNotFramedTwice$' ./tests
 
 mutate "atomic writes are not replicated" \
@@ -2279,8 +2280,8 @@ mutate "a restore keeps the first record it reads" \
 
 mutate "a promoted replica's order is not carried" \
   promote.go \
-  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order) {' \
-  '		if ns.store.RestoreAt(key, e.Value, e.ExpiresAt, e.Stamp.Version, 0) {' \
+  '		if ns.store.RestoreAtFrom(key, e.Value, e.ExpiresAt, e.Stamp.Version, e.Order, store.Lineage{Writer: e.From, Prev: e.Prev}) {' \
+  '		if ns.store.RestoreAtFrom(key, e.Value, e.ExpiresAt, e.Stamp.Version, 0, store.Lineage{Writer: e.From, Prev: e.Prev}) {' \
   'TestARestoreDoesNotUndoAPromotedWrite$' ./tests
 
 # --- persist.Dir (decision 0029, M14c) ---
@@ -2739,9 +2740,9 @@ mutate "a load request goes out without load" \
   'TestABatchLoadCostsOneLoaderCallPerOwner$' ./tests
 mutate "a batch load stores over a write that landed during it" \
   batchload.go \
-  '		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)' \
+  '		resident, stored, held := n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)' \
   '		n.store.Set(key, n.encode(val), ttl)
-		resident, stored := []byte(nil), true' \
+		resident, stored, held := []byte(nil), true, false' \
   'TestAWriteDuringTheBatchLoadWins$' ./tests
 mutate "a key the batch loader omitted is stored empty" \
   batchload.go \
@@ -3080,7 +3081,7 @@ mutate "hot-key tracking accepts any bound" \
 mutate "a restore past its deadline installs the key"   internal/store/store.go   '	if expiresAt != 0 && s.clk.Now().UnixNano() >= expiresAt {
 		return false
 	}
-	return s.restore(key, val, expiresAt, version, order)'   '	return s.restore(key, val, expiresAt, version, order)'   'TestRestoreAtInstallsTheDeadlineAsGiven$' ./internal/store
+	return s.restore(key, val, expiresAt, version, order, lin)'   '	return s.restore(key, val, expiresAt, version, order, lin)'   'TestRestoreAtInstallsTheDeadlineAsGiven$' ./internal/store
 
 # --- a restore does not hold up flushes (F13, open question 55) ---
 
@@ -3377,8 +3378,8 @@ mutate "a split round stops after one batch" \
 
 mutate "an owned entry is charged the old estimate" \
   internal/store/store.go \
+  'const EntryOverhead int64 = 192' \
   'const EntryOverhead int64 = 160' \
-  'const EntryOverhead int64 = 96' \
   'TestAccountedBytesCoverTheLiveHeap$' ./internal/store
 
 mutate "a replica is charged the old estimate" \
@@ -3469,7 +3470,7 @@ mutate "a namespace opened late is never scanned on a quiet cluster" \
 # memory that does not hold it (open question 61).
 mutate "a failed read-back of a shed key answers from memory" \
   persistence.go \
-  '		return errPartitionUnrestored
+  '		return p.settleFromOwnRecords(key, sm)
 	}
 	defer sc.release()' \
   '		return nil
@@ -3484,19 +3485,19 @@ mutate "a failed read-back of a shed key answers from memory" \
 mutate "the budget marks a shed key only after removing it" \
   internal/store/store.go \
   '			if mark != nil {
-				mark(key, e.order)
+				mark(key, ShedEntry{Order: e.order, ExpiresAt: e.expiresAt, Unrecorded: e.prev&unrecordedBit != 0})
 			}
 			s.deleteEntry(sh, key)' \
   '			s.deleteEntry(sh, key)
 			if mark != nil {
-				defer mark(key, e.order)
+				defer mark(key, ShedEntry{Order: e.order, ExpiresAt: e.expiresAt, Unrecorded: e.prev&unrecordedBit != 0})
 			}' \
   'TestShedCountersRacingTheirWritersLoseNoDecrement$' ./tests
 
 mutate "an update does not look at the shed mark under the shard lock" \
   atomic.go \
-  '		if !ok && n.persister != nil && n.persister.isShed(key) {' \
-  '		if false && !ok && n.persister != nil && n.persister.isShed(key) {' \
+  '		if !ok && n.shedHeld != nil && n.shedHeld(key) {' \
+  '		if false && !ok && n.shedHeld != nil && n.shedHeld(key) {' \
   'TestShedCountersRacingTheirWritersLoseNoDecrement$' ./tests
 
 mutate "a read checks the shed mark outside the shard lock" \
@@ -3513,7 +3514,7 @@ mutate "a load is stored over a write the budget shed" \
 
 mutate "a guarded lookup does not ask about a miss" \
   internal/store/guarded.go \
-  '	if !found {
+  '	if !found && held != nil {
 		isHeld = held(key)
 	}' \
   '	if false {
@@ -3523,8 +3524,8 @@ mutate "a guarded lookup does not ask about a miss" \
 
 mutate "a guarded SetIfAbsent stores over a held key" \
   internal/store/guarded.go \
-  '	if !had && held(key) {' \
-  '	if false && !had && held(key) {' \
+  '	if !had && held != nil && held(key) {' \
+  '	if false && !had && held != nil && held(key) {' \
   'TestSetIfAbsentGuardedStoresNothingOverAHeldKey$' ./internal/store/
 
 mutate "a failed shed read-back is retried by every access" \
@@ -3535,11 +3536,11 @@ mutate "a failed shed read-back is retried by every access" \
 
 mutate "a failed shed read-back leaves no retry interval" \
   persistence.go \
-  '		p.parts[part].failedAt = p.clk.Now().UnixNano()
-		p.rmu.Unlock()
-		p.restoreFailures.Add(1)' \
-  '		p.rmu.Unlock()
-		p.restoreFailures.Add(1)' \
+  '		p.rmu.Lock()
+		p.parts[part].shedFailedAt = p.clk.Now().UnixNano()
+		p.rmu.Unlock()' \
+  '		p.rmu.Lock()
+		p.rmu.Unlock()' \
   'TestAShedReadBackBacksOffWhileStorageIsDown$' ./tests
 
 # --- a key's history (decision 0043) ---
