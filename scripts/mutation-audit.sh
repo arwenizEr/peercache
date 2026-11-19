@@ -2499,10 +2499,30 @@ mutate "the dashboard answers any method" \
   '		if false {' \
   'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
 
+# Two handlers carry the same guard, and mutate replaces the first match, so
+# each entry anchors on the line after it.
 mutate "the debug handler accepts a key lookup without a key" \
   describe.go \
-  '			if namespace == "" || !q.Has("key") {' \
-  '			if namespace == "" {' \
+  '			if namespace == "" || !q.Has("key") {
+				return nil, http.StatusBadRequest, errors.New("namespace and key are required")
+			}
+			p, err := c.DescribeKey(namespace, key)' \
+  '			if namespace == "" {
+				return nil, http.StatusBadRequest, errors.New("namespace and key are required")
+			}
+			p, err := c.DescribeKey(namespace, key)' \
+  'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
+
+mutate "the debug handler accepts a key history lookup without a key" \
+  describe.go \
+  '			if namespace == "" || !q.Has("key") {
+				return nil, http.StatusBadRequest, errors.New("namespace and key are required")
+			}
+			return keyHistoryResponse' \
+  '			if namespace == "" {
+				return nil, http.StatusBadRequest, errors.New("namespace and key are required")
+			}
+			return keyHistoryResponse' \
   'TestTheDebugHandlerServesJSONAndRefusesTheRest$' ./tests
 
 mutate "an unknown namespace is not a 404" \
