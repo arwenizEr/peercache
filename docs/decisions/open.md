@@ -2049,3 +2049,220 @@ alone; that is the loss window persistence already documents for a store that
 does not answer. Reversible to 2 if a store's flushes are routinely slower than
 the timeout. `TestAnUnflushedWriteSurvivesItsReplicaNodeShedding` lost all 50
 of its writes before.
+
+## 61. A shed key was counted from zero when storage could not be read — found on kind, resolved
+
+**Found** on kind on 2026-11-18 (main dd77a5f): after the partition scenario,
+four stock counters stood 421 to 477 above what the order ledger allowed,
+with no order lost and no fork counted. The two pods on the cut-off worker were
+over their memory budget and could not reach the object store. A persistent
+namespace's owner under pressure sheds owned keys, which stay in storage and
+are read back on their next access (`restoreShed`). When that read failed, the
+access went on as if it had succeeded: the key was in neither memory nor
+anything this node knew, so it was reported absent, and an `Increment` counted
+from zero with a write whose order outranks the stored value. Open question 57
+closed exactly this for a failed partition restore; the shed path kept the
+old behaviour.
+
+**Options:**
+
+1. Refuse the access with `ErrActivationPending`, as a failed partition restore
+   does, and retry the read on the next access.
+2. Keep shed keys' records in memory until storage confirms them. That is what
+   the shed was meant to free.
+
+**Picked:** 1. The same answer for the same ignorance, and no memory kept.
+A caller sees "ask again" for as long as storage stays unreachable, for the
+keys it shed only; keys memory holds are served as before.
+`TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable` counted a shed
+counter from zero before.
+
+**Then:** a refusal had no retry interval, so during an outage every access to
+a shed key read a whole partition from a store that was not answering, held a
+restore slot doing it, with only the caller's context to bound it, and counted
+one more restore failure: 200 accesses, 200 listings, 200 failures. A failed
+read-back now marks its partition failed, as a failed partition restore does,
+and accesses within `restoreRetry` are refused without reading; the read is
+bounded by the flush timeout. `TestAShedReadBackBacksOffWhileStorageIsDown`.
+
+## 62. A shed key could be in neither memory nor the marks — found by review, resolved
+
+**Found** reviewing open question 61's fix: the memory budget's shed of a
+persistent namespace's owned key, and the read-back that brings it back, each
+left a moment when the key was neither in memory nor marked as shed, so an
+access found it absent, an `Increment` counted from zero, and its write
+outranked the stored value. With storage reachable. A stress test of four
+writers on eight counters under a 128 KiB budget applied 30 of 749
+acknowledged decrements. Four windows:
+
+1. The budget removed the key under its shard lock and marked it after
+   releasing it.
+2. The read-back cleared the mark before installing what it read.
+3. An update checked the mark in `awaitRestore` and wrote later; a shed in
+   between was not seen.
+4. A write records its value for flushing after releasing the store, so a
+   shed between the two left the previous value as the newest record, and the
+   read-back installed it.
+
+**Picked:** keep the mark and memory consistent under the key's shard lock.
+The budget marks a key there before removing it (`Store.ShedMarked`), with
+the order of the value memory held. An update checks the mark again under the
+lock and reads the key back first if it was shed since. The read-back decides,
+clears the mark and merges under the lock (`Store.MergeIfNewerGuarded`), and
+only once what it found is at least as new as the mark's order; until then it
+re-reads this node's own records, where a newer value must be, since this node
+wrote it. `TestShedCountersRacingTheirWritersLoseNoDecrement` and
+`TestShedFreshKeysLoseNoFirstWrite` lost decrements in every run before.
+
+**Not guarded by the audit:** the read-back's comparison with the mark's
+order. Its tests catch its removal in about seven runs of ten, and the
+first-write case in one of ten; a deterministic test needs a hook between a
+write's store and its record, which this code base does not use. Reads (`Get`,
+`BatchGet`, `Exists`, a loader's store) checked the mark only in
+`awaitRestore` at first, so a shed racing them reported a key absent that
+storage holds, and a loader's `SetIfAbsent` could lay a loaded value over a
+newer stored one. They now ask under the shard lock too, on a miss only
+(`Store.LookupGuarded`, `Store.SetIfAbsentGuarded`), and a namespace with
+nothing shed takes no lock for it. `TestShedKeysAreNeverReadAsAbsent` and
+`TestALoadDoesNotStoreOverAShedWrite` fail without them.
+
+## 63. One key that cannot be answered fails a whole batch — found by review, open
+
+`BatchGet` and `BatchGetOrLoad` on an owner return the first error a key's
+restore gives, so one key refused with `ErrActivationPending` fails the batch,
+including the keys memory holds. Before open question 61 that took a partition
+whose restore failed; now a shed key read during a store outage does it too,
+and under memory pressure shed keys are spread over every partition, so during
+an outage most batches against an over-budget owner fail.
+
+**Options:**
+
+1. Keep it: a batch is answered whole or refused, and a caller retries.
+2. Omit a refused key, as a miss is omitted. Wrong for `BatchGet`, whose
+   callers read an omitted key as absent: the lie questions 57 and 61 removed.
+3. Answer the keys that can be answered and name the refused ones, as the
+   wire's `Misrouted` already names keys of a load that moved. A new field in
+   the public result, so a v1 API addition.
+
+**Picked for now:** 1, the only one that cannot report a refused key as
+absent. 3 is the answer if batches during outages matter to someone; it is an
+addition, reversible in the sense that it breaks nobody.
+
+## 64. A refused shed key may be newer here than anything storage holds — found by review, resolved
+
+When a shed key's read-back fails, the access is refused even if this node's
+own unflushed records hold the key's newest write: during an outage flushes
+fail, pending grows, and the budget sheds keys written during it. Those keys
+are refused for the whole outage though the overlay would answer them.
+
+**Options:**
+
+1. Keep refusing.
+2. On a failed read, answer from this node's own records when they hold the
+   key. Correct only if no other node can have written the key since: true
+   while this node has owned it throughout, which is what a write recorded
+   here under the current ownership means, and false after a move this node
+   cannot see.
+
+**Picked:** 2, with the condition made exact by the shed's mark rather than by
+ownership history. The mark keeps the order of the value memory held when the
+key was shed, and memory was being served then. A record of this node's, still
+pending or being flushed, of at least that order is that value or a later
+write of its own; installing it is as right as serving memory was before the
+shed. Anything older, or nothing, and storage may hold what memory did, so the
+key is refused as before. The ownership worry is answered by the same order:
+a value this node held before losing the key and regaining it would have been
+replaced in memory by the restore that followed, and the mark would name the
+restored value's order, which an old pending record does not reach.
+`TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage` was refused on every
+key before; `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`
+still sees the refusals for keys whose records were flushed.
+
+## 65. An owner's shed dropped the only other copies of an unflushed write — found by the durable simulation, resolved
+
+**Found** by `TestDurableSimulation`, read from the key traces of decision
+0043: an owner wrote a counter during a store outage, the write reached its
+two replicas synchronously, and the owner's memory budget shed the key in the
+same moment. The shed told the replicas to drop their copies, as it does for a
+namespace without persistence, where a shed is a loss the replicas follow.
+The owner then died with its flush failing; the next owner had no copy to
+promote and restored the older stored value, and the replica that still held
+the write was not the owner and never promoted it. Open question 60 kept
+these copies from the replica node's own budget; the owner's shed reached them
+another way. `TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites` lost 40 of
+40 acknowledged decrements this way.
+
+**Picked:** a persistent namespace's shed leaves the replicas alone. Its key
+is not lost — it stays in storage and is read back — so the copies are still
+copies of it, and the version floor already makes the owner's next write
+outrank them. Nothing about a non-persistent namespace changes.
+
+## 66. A fork whose minority copy is demoted before the majority's arrives is not counted — found by the durable simulation, resolved
+
+**Found** by `TestDurableSimulation`: in a partition the cut-off node promoted
+its replica of a counter once its activation delay passed, as decision 5
+allows, and took a write there, while the majority's owner took two. The
+minority's write came later by the clock, so its order was higher. After the
+heal the minority's value was demoted into its replica store with no writer and
+no predecessor — the owned store records neither — and the majority's later
+copies arrived older by order and were refused as stale. The majority's
+acknowledged decrements were lost, which is the AP window decision 5 and the
+README describe, but `SplitBrainDetections` stayed at zero, and the README
+says conflicting writes are detected and counted.
+
+`replication.Forked` judges a fork from both copies' writers and predecessors.
+A demoted copy has neither: naming the demoting node as the writer invented
+forks (open question 50's follow-up, one run in twenty of
+`TestMajoritySideWritesSurviveAHeal`), so it names none, and an unnamed copy is
+never judged.
+
+**Options:**
+
+1. Keep each owned entry's writer and predecessor order, from the write or the
+   copy that installed it, and carry them through demotion and hand-off. About
+   24 bytes an entry, which the memory budget's measured per-entry cost must
+   then include.
+2. Judge at the owner instead: an incoming copy newer by order whose
+   predecessor is older than the value the owner holds was written without
+   seeing it. Needs the predecessor on the incoming copy, which a demoted copy
+   lacks too, so it is 1 for the predecessor alone (8 bytes an entry).
+3. Leave detection as it is and qualify the README: conflicting writes are
+   detected when both copies still name their writers.
+
+**Picked:** 1. Each owned entry keeps its writer and the order its write
+replaced: from the local write, this node; from a promoted, adopted or restored
+copy, the copy's own. Demotion carries them, so the minority's value reaches
+the majority's replicas naming its writer, and the fork is judged and counted
+there. The demoting node is still never named for a write it did not make,
+the false fork that made demotion name nobody. The cost is 16 bytes a slot, the writer
+interned as a four-byte index: `store.EntryOverhead` is 192, measured at 185
+(153 before).
+`TestAForkWrittenOnBothSidesOfAPartitionIsCounted` counted nothing before.
+The write that loses the heal is still lost — decision 5's window, now
+counted — so `TestDurableSimulation` holds such keys to the upper bound only.
+
+## 67. The shed mark lives beside the store, so every path must ask it — found by review, open
+
+Questions 61, 62 and 64 made the shed mark and the owned store agree under the
+store's shard lock, and every path that reads or writes an owned key now asks:
+`LookupGuarded`, `SetIfAbsentGuarded`, `MergeIfNewerGuarded`, `ShedMarked`,
+the check inside `localUpdate`, the retries in `lookupResident`. A new access
+path that forgets to ask reintroduces question 62, silently. The review that
+found the loaded-value and expired-value cases of the read-back (both fixed:
+the mark now keeps whether the value was recorded and when it expires) also
+found this shape the root of them.
+
+**Options:**
+
+1. Keep the mark in the persister, the guarded variants in the store.
+2. Keep a stub in the store's shard for a shed key — no value, the order, the
+   deadline, whether it was recorded — that every store operation reads as
+   "not resident, read it back". Absent and shed would then differ inside the
+   store itself, under the lock every operation already takes, and the guarded
+   variants, the mark map and its lock ordering would go. A stub costs a slot,
+   which shedding exists to free; a bounded number of stubs per shard, oldest
+   dropped to "unknown, read back", would bound it.
+
+**Picked for now:** 1, which is tested and audited as it stands. 2 is the
+better structure and the next thing to do in this area; it is a rewrite of the
+shed path, to be done with its own tests rather than folded into a fix.

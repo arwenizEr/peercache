@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/segment"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // Persistence defaults. See docs/decisions/0029-persistence-as-a-segment-log.md.
@@ -117,7 +119,10 @@ type persister struct {
 	// to one restores that key alone (see restoreShed). Restoring the whole
 	// partition instead would bring every shed key back at once and undo
 	// the shedding that made room. Bounded by the owned keys shed.
-	shed map[string]struct{}
+	shed map[string]shedMark
+	// marks is len(shed), read without the lock so a miss in a namespace
+	// with nothing shed costs no lock at all.
+	marks atomic.Int64
 
 	// inflight is the batch a flush has taken from pending and not yet
 	// finished writing; flushedDuring holds the batches flushes wrote while
@@ -213,7 +218,7 @@ func newPersister(ns *namespace, store core.BlobStore) *persister {
 		store:        store,
 		clk:          ns.cache.opts.Clock,
 		pending:      map[string]segment.Record{},
-		shed:         map[string]struct{}{},
+		shed:         map[string]shedMark{},
 		kick:         make(chan struct{}, 1),
 		done:         make(chan struct{}),
 	}
@@ -272,7 +277,23 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	}
 }
 
-// noteShed records that the memory budget dropped key from the owned store.
+// shedMark is one key's shed: what the value memory held when it left was.
+type shedMark struct {
+	order     uint64
+	expiresAt int64
+	// unrecorded is a value a loader or a refresh stored: no record will
+	// ever hold it, so a read-back has nothing of it to wait for.
+	unrecorded bool
+}
+
+// awaitsRecord reports whether the value the mark names is one storage or this
+// node's records must give back before the key can be answered: a recorded
+// value, live at now. A loaded value is loaded again, and an expired one is
+// absent whatever record of it storage still keeps or has compacted away.
+func (m shedMark) awaitsRecord(now int64) bool {
+	return m.order != 0 && !m.unrecorded && (m.expiresAt == 0 || now < m.expiresAt)
+}
+
 // flushInterval is how often this namespace flushes.
 func (p *persister) flushInterval() time.Duration {
 	if d := p.ns.opts.PersistFlushInterval; d > 0 {
@@ -289,10 +310,35 @@ func (p *persister) unflushedFor() time.Duration {
 	return p.flushInterval() + persistFlushTimeout
 }
 
-func (p *persister) noteShed(key string) {
+// noteShed records that the memory budget dropped key from the owned store,
+// and what it held. Called under the store's shard lock, before the key leaves.
+func (p *persister) noteShed(key string, e store.ShedEntry) {
 	p.mu.Lock()
-	p.shed[key] = struct{}{}
+	if _, ok := p.shed[key]; !ok {
+		p.marks.Add(1)
+	}
+	p.shed[key] = shedMark{order: e.Order, expiresAt: e.ExpiresAt, unrecorded: e.Unrecorded}
 	p.mu.Unlock()
+}
+
+// isShed reports whether key is marked as shed and not yet read back. Called
+// under the owned store's shard lock, which is the order noteShed takes them in.
+func (p *persister) isShed(key string) bool {
+	if p.marks.Load() == 0 {
+		return false
+	}
+	p.mu.Lock()
+	_, shed := p.shed[key]
+	p.mu.Unlock()
+	return shed
+}
+
+// unmark clears key's shed mark. Called with p.mu held.
+func (p *persister) unmark(key string) {
+	if _, ok := p.shed[key]; ok {
+		delete(p.shed, key)
+		p.marks.Add(-1)
+	}
 }
 
 // pendingBytes is what the dirty map holds, for the memory budget.
@@ -575,6 +621,10 @@ type partitionState struct {
 	running chan struct{}
 	// failedAt is when the last restore failed, in Unix nanoseconds.
 	failedAt int64
+	// shedFailedAt is when a shed key's read-back from this partition last
+	// failed. Its own field: one key's failed read must not refuse the
+	// partition's restore, and every key in it, for the retry interval.
+	shedFailedAt int64
 }
 
 // await blocks until the partition holding key has been restored since the
@@ -632,6 +682,15 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 	}
 }
 
+// failedRecently reports whether reading part from storage failed less than
+// restoreRetry ago.
+func (p *persister) failedRecently(part int) bool {
+	p.rmu.Lock()
+	defer p.rmu.Unlock()
+	at := p.parts[part].shedFailedAt
+	return at != 0 && p.clk.Now().UnixNano()-at < int64(restoreRetry)
+}
+
 // errPartitionUnrestored reports that a key's partition could not be restored
 // from storage and is answered from memory until the next attempt.
 //
@@ -651,6 +710,10 @@ func (p *persister) awaitPartition(ctx context.Context, key string) error {
 // and lose it. A test caught exactly that, the new write's order equal to the
 // record's, so the write is refused like the rest.
 var errPartitionUnrestored = errors.New("peercache: partition not restored from storage")
+
+// shedRecordWait bounds how long a read-back of a shed key yields to the write
+// that has stored a newer value and not recorded it yet.
+const shedRecordWait = 1_000
 
 // restorePartition runs one restore of part and publishes its outcome.
 func (p *persister) restorePartition(part int, gen uint64, done chan struct{}) {
@@ -1104,9 +1167,12 @@ func (p *persister) apply(newest map[string]*segment.Record) {
 		if !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt {
 			continue
 		}
-		_, merged := p.ns.store.MergeIfNewer(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone)
+		version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone, r.Writer, nil)
 		if !merged {
 			continue
+		}
+		if c.traced(p.ns.name, key) {
+			c.record(p.ns.name, key, keytraceRestore, r.Order, r.Writer, version, r.Value, "")
 		}
 		p.restored.Add(1)
 		p.replicateRestored(key, r)
@@ -1130,45 +1196,176 @@ func (p *persister) owns(key string) bool {
 //
 // It reads the key's partition and merges that key alone, preferring a record
 // still pending here — the newest write may not have been flushed when the key
-// was shed. A failure leaves the key marked, counted, and served from memory
-// as a miss; the next access tries again. Two accesses racing may both read
-// the partition; the merge makes that harmless.
+// was shed. A failure leaves the key marked and counted, and the access is
+// refused with errPartitionUnrestored; the next access tries again. Two
+// accesses racing may both read the partition; the merge makes that harmless.
 func (p *persister) restoreShed(ctx context.Context, key string) error {
 	p.mu.Lock()
-	_, shed := p.shed[key]
+	sm, shed := p.shed[key]
 	p.mu.Unlock()
 	if !shed {
 		return nil
 	}
 
+	// A partition storage just failed to give is not read again until the
+	// retry interval passes, as a failed partition restore is not: during an
+	// outage every access to a shed key would otherwise read a whole
+	// partition from a store that is not answering, holding a restore slot,
+	// and the failure count would measure the request rate.
+	part := persistPartition(p.ns.groupKeyFor(key))
+	if p.failedRecently(part) {
+		return p.settleFromOwnRecords(key, sm)
+	}
 	if err := p.takeRestoreSlot(ctx); err != nil {
 		return err
 	}
 	defer p.releaseRestoreSlot()
 	mark := p.beginRestore()
 	defer p.endRestore()
-	sc, err := p.scan(ctx, persistPartition(p.ns.groupKeyFor(key)))
+	// Bounded like a partition restore: a store that hangs rather than fails
+	// must not hold the slot for as long as the caller is willing to wait.
+	scanCtx, cancel := clock.WithTimeout(ctx, p.clk, persistFlushTimeout)
+	sc, err := p.scan(scanCtx, part)
+	cancel()
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.rmu.Lock()
+		p.parts[part].shedFailedAt = p.clk.Now().UnixNano()
+		p.rmu.Unlock()
 		p.restoreFailures.Add(1)
-		return nil
+		// Not nil: memory does not hold a shed key, so answering from it
+		// would report the key absent, and an Increment would count from
+		// zero with a write that outranks the stored value. The same
+		// refusal a failed partition restore gives (open question 61),
+		// unless this node's own records hold what memory did.
+		return p.settleFromOwnRecords(key, sm)
 	}
 	defer sc.release()
 	newest := sc.newest
+	if !p.owns(key) {
+		// Not this node's to answer any more; the mark means nothing here,
+		// and left, it would send every access to read the partition again.
+		p.mu.Lock()
+		p.unmark(key)
+		p.mu.Unlock()
+		return nil
+	}
 
+	// The mark keeps the order of the value memory held when it was shed.
+	// What storage and this node's own records give must be at least that
+	// new, or the value installed is the one before a write and the write is
+	// lost (open question 62). Two ways to be older: the write had stored its
+	// value and not yet recorded it — it records after releasing the store,
+	// so the budget can shed in between — or the key was installed and shed
+	// again, newer, while this ran. Either way the newer record is this
+	// node's own, so it arrives in the overlay and storage need not be read
+	// again: the writer is between two statements.
+	want := func(k string) bool { return k == key }
+	for i := 0; ; i++ {
+		p.overlay(newest, mark, want)
+		if p.settleShed(key, newest[key]) {
+			return nil
+		}
+		if i == shedRecordWait || ctx.Err() != nil {
+			return errPartitionUnrestored
+		}
+		runtime.Gosched()
+	}
+}
+
+// settleFromOwnRecords answers a shed key whose read-back failed from this
+// node's own unflushed records, or refuses it with errPartitionUnrestored.
+//
+// The mark keeps the order of the value memory held when the key was shed,
+// and memory was being served then. A record of this node's of at least that
+// order is that value or a later write of its own, so installing it is as
+// right as serving memory was before the shed; anything older, or nothing,
+// and storage may hold what memory did, so the key is refused (open question
+// 64). During an outage this keeps the keys written since it began available:
+// they are exactly the ones whose records stay pending.
+func (p *persister) settleFromOwnRecords(key string, sm shedMark) error {
+	if !sm.awaitsRecord(p.clk.Now().UnixNano()) {
+		// Nothing of it to give back: a loaded value is loaded again, and
+		// an expired one is absent. Settled as found nothing.
+		if !p.owns(key) || !p.settleShed(key, nil) {
+			return errPartitionUnrestored
+		}
+		return nil
+	}
 	p.mu.Lock()
-	delete(p.shed, key)
+	var r *segment.Record
+	for _, m := range []map[string]segment.Record{p.inflight, p.pending} {
+		if cur, ok := m[key]; ok && (r == nil || cur.Newer(r)) {
+			cur := cur
+			r = &cur
+		}
+	}
 	p.mu.Unlock()
-	// The newest write may not have been flushed when the key was shed.
-	p.overlay(newest, mark, func(k string) bool { return k == key })
-	r := newest[key]
-
-	if r != nil {
-		p.apply(map[string]*segment.Record{key: r})
+	if r == nil || r.Order < sm.order || !p.owns(key) {
+		return errPartitionUnrestored
+	}
+	if !p.settleShed(key, r) {
+		return errPartitionUnrestored
 	}
 	return nil
+}
+
+// settleShed installs r, the newest record found for the shed key, and clears
+// its mark, unless the mark names a newer value than r; then it reports false
+// and changes nothing.
+//
+// Decided and unmarked under the key's shard lock, where the budget marks a
+// key before removing it. Unmarked before the merge, or merged without
+// looking, and a shed between the two either left the key in neither memory
+// nor the marks, so an Increment counted from zero, or laid an older value over
+// the newer one that shed had just taken out.
+func (p *persister) settleShed(key string, r *segment.Record) bool {
+	now := p.clk.Now().UnixNano()
+	newer := func() bool {
+		cur, marked := p.shed[key]
+		return marked && cur.awaitsRecord(now) && (r == nil || cur.order > r.Order)
+	}
+	if r == nil {
+		// Nothing anywhere. A key absent from memory cannot be shed, so
+		// this needs no shard lock.
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if newer() {
+			return false
+		}
+		p.unmark(key)
+		return true
+	}
+	expired := !r.Tombstone && r.ExpiresAt != 0 && now >= r.ExpiresAt
+	settled := true
+	version, merged := p.ns.store.MergeIfNewerGuarded(key, r.Value, r.ExpiresAt, r.Order, r.Tombstone || expired, r.Writer, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if newer() {
+			settled = false
+			return false
+		}
+		p.unmark(key)
+		return true
+	})
+	if !settled {
+		return false
+	}
+	if p.ns.cache.traced(p.ns.name, key) {
+		detail := "memory held newer"
+		if merged {
+			detail = "installed"
+		}
+		p.ns.cache.record(p.ns.name, key, keytraceReadBack, r.Order, r.Writer, version, r.Value, detail)
+	}
+	p.ns.cache.observeOrder(r.Order)
+	if merged && !expired {
+		p.restored.Add(1)
+		p.replicateRestored(key, r)
+	}
+	return true
 }
 
 // compactOwned compacts every partition this node is the compactor for that

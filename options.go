@@ -224,6 +224,25 @@ func WithMemoryBudget(bytes int64) Option {
 	return func(o *core.Options) { o.MemoryBudget = bytes }
 }
 
+// WithKeyTrace records, on this node, the recent history of every key of
+// namespace that starts with prefix: each change to what the node holds for
+// it, with where the value came from, the write's order and writer, and a hash
+// of the value. Read it with [Cache.KeyHistory] or the debug handler's
+// "/keys?namespace=…&key=…". An empty prefix traces every key of the
+// namespace. Given more than once, every prefix given is traced.
+//
+// It is a diagnostic for a handful of keys: the newest 64 events per key are
+// kept, for at most 4,096 keys per node. Keys not traced cost one check per
+// change. See docs/decisions/0043-key-trace.md.
+func WithKeyTrace(namespace, prefix string) Option {
+	return func(o *core.Options) {
+		if o.KeyTrace == nil {
+			o.KeyTrace = map[string][]string{}
+		}
+		o.KeyTrace[namespace] = append(o.KeyTrace[namespace], prefix)
+	}
+}
+
 // WithJoinProbation keeps a node out of the ownership ranking until it has been
 // up for d. Zero, the default, ranks a node as soon as it joins.
 //

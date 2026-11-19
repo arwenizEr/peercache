@@ -114,6 +114,10 @@ func run(cfg config) error {
 		// 1 to 3 stock decrements on 5 of 50 counters (docs/api.md,
 		// "WithCatchUpGate").
 		peercache.WithCatchUpGate(),
+		// Every stock counter's history, on every pod: a wrong count after
+		// a scenario comes with the sequence of events that made it
+		// (decision 0043). Fifty counters a scenario, well inside the bound.
+		peercache.WithKeyTrace("stock", ""),
 	)
 	if err != nil {
 		return err

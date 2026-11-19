@@ -71,6 +71,9 @@ type Options struct {
 	// MemoryBudget is the number of bytes this node's owned, replica and L1
 	// tiers may hold before it sheds. Zero means no budget.
 	MemoryBudget int64
+	// KeyTrace names, per namespace, the key prefixes whose history this
+	// node records. Empty means no trace.
+	KeyTrace map[string][]string
 	// JoinProbation is how long a node must have been up before its peers
 	// rank it. Zero means no probation.
 	JoinProbation time.Duration

@@ -7,8 +7,56 @@ change the public API.
 
 ## [Unreleased]
 
+### Added
+
+- `WithKeyTrace(namespace, prefix)` and `Cache.KeyHistory`: a node records
+  the recent history of the keys it is told to, with where each value came
+  from — a write, a replica copy (stored, refused, or a fork), a promotion, a
+  demotion, a hand-off, a restore, a shed and its read-back, a catch-up — and
+  the write's order, writer and value hash. The debug handler serves it at
+  `/keys?namespace=…&key=…`. Decision 0043.
+
 ### Fixed
 
+- A key the memory budget shed from a persistent namespace is no longer
+  answered as absent when storage cannot be read back. The failed read was
+  ignored, so an `Increment` counted from zero and its write outranked the
+  stored value: on kind, four stock counters lost hundreds of decrements on
+  pods that were over budget and cut off from the object store. The access is
+  now refused with `ErrActivationPending`, as a failed partition restore
+  already was (open question 61).
+  `TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable`. Such a
+  refusal waits out the restore retry interval before storage is read again,
+  rather than reading a partition on every access during the outage and
+  counting a restore failure each time.
+  `TestAShedReadBackBacksOffWhileStorageIsDown`. A shed key whose newest
+  write this node still holds unflushed is answered from that record rather
+  than refused, which keeps keys written during an outage available (open
+  question 64). `TestAShedKeyThisNodeStillHoldsIsServedDuringAnOutage`.
+- A persistent counter under memory pressure no longer loses decrements with
+  storage reachable. Shedding a key and reading it back each left a moment
+  when the key was neither in memory nor marked as shed, so an `Increment`
+  counted from zero; a stress test applied 30 of 749 acknowledged decrements.
+  The mark and memory now change together under the key's shard lock (open
+  question 62). Reads no longer report such a key absent, and a loader's
+  result is no longer stored over a write the budget shed while it ran. A shed
+  key whose value was loaded rather than written, or has expired, is answered
+  rather than waited for: neither has a record to wait for
+  (`TestAShedLoadedOrExpiredKeyIsNotRefusedForever`).
+  `TestShedCountersRacingTheirWritersLoseNoDecrement`,
+  `TestShedFreshKeysLoseNoFirstWrite`, `TestShedKeysAreNeverReadAsAbsent`,
+  `TestALoadDoesNotStoreOverAShedWrite`.
+- An owner's memory-budget shed of a persistent key no longer tells the key's
+  replicas to drop their copies. While the owner had not flushed the key's
+  newest write those copies were its only other holders, and an owner dying
+  before its flush lost the write (open question 65).
+  `TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites`.
+- Conflicting writes on both sides of a partition are counted in
+  `SplitBrainDetections` when the minority's value is demoted at the heal. The
+  owned store kept no writer or predecessor for a value, so a demoted copy
+  named neither and was never judged a fork; each owned entry now keeps both
+  (open question 66). The memory budget charges 192 bytes an owned entry
+  rather than 160, measured at 185. `TestAForkWrittenOnBothSidesOfAPartitionIsCounted`.
 - A memory-budget relief round no longer stalls every copy arriving for a
   namespace. A shed rebuilds the map it removed from, which is what frees its
   slots, and with one map a namespace that copied the whole remaining

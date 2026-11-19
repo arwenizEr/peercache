@@ -149,6 +149,30 @@ func (n *namespace) routeWrite(ctx context.Context, key string, local func() err
 // then failed synchronous replication reports true with the error, for the
 // same reason localSet does not roll back.
 func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []byte, ok bool) (store.Mutation, bool, error)) (bool, error) {
+	if n.shedHeld == nil {
+		return n.localUpdateOnce(ctx, key, fn) // nothing shed to read back
+	}
+	for attempt := 0; ; attempt++ {
+		wrote, err := n.localUpdateOnce(ctx, key, fn)
+		if !errors.Is(err, errShedSinceRestore) {
+			return wrote, err
+		}
+		if attempt == shedRetries {
+			return false, n.shedSinceRestore(key)
+		}
+	}
+}
+
+// errShedSinceRestore reports that the memory budget shed key between the
+// wait for its restore and the update itself; the update reads it back and
+// tries again.
+var errShedSinceRestore = errors.New("peercache: key shed since its restore")
+
+// shedRetries bounds how often one update reads back a key the budget keeps
+// shedding. Each retry is a shed racing this very update, so a few suffice.
+const shedRetries = 8
+
+func (n *namespace) localUpdateOnce(ctx context.Context, key string, fn func(cur []byte, ok bool) (store.Mutation, bool, error)) (bool, error) {
 	if err := n.awaitRestore(ctx, key); err != nil {
 		return false, err
 	}
@@ -167,6 +191,14 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 		// owner with a newer order than the real count (open question 58).
 		if err := n.cache.stillOwner(groupKey); err != nil {
 			return store.Mutation{}, false, err
+		}
+		// And the shed mark, under the same lock for the same reason: the
+		// budget can shed the key after awaitRestore read it back, and it
+		// marks a key under this lock before removing it. Absent and
+		// marked is "not in memory", not "not there"; counted from zero,
+		// the write outranked the stored value (open question 62).
+		if !ok && n.shedHeld != nil && n.shedHeld(key) {
+			return store.Mutation{}, false, errShedSinceRestore
 		}
 		var cur []byte
 		if ok {
@@ -202,6 +234,9 @@ func (n *namespace) localUpdate(ctx context.Context, key string, fn func(cur []b
 		}
 	}
 	stamp := n.stamp(res.Version)
+	if n.cache.traced(n.name, key) {
+		n.cache.record(n.name, key, keytraceWrite, res.Order, n.cache.selfID(), res.Version, encoded, "update")
+	}
 	// Invalidated whether or not the fan-out succeeded; see localSet.
 	if n.persister != nil {
 		n.persister.record(key, encoded, res.ExpiresAt, res.Order, false)

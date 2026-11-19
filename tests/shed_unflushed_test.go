@@ -132,3 +132,85 @@ func TestAFlushedWritesReplicaIsShedAsBefore(t *testing.T) {
 			"replica must be shed before owned data is", shed, len(fx.keys))
 	}
 }
+
+// TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites is the owner's side of
+// open question 60, found by TestDurableSimulation. A persistent namespace's
+// owner shed a key it had written during a store outage, and the shed told
+// the key's replicas to drop their copies: for a namespace without
+// persistence a shed is a loss and the replicas follow it. Here the write was
+// still only in the owner's pending records and in those copies. The owner
+// then died with its flush failing, and the next owner, its copy gone,
+// restored the older stored value; the replica that still had the write was
+// not the owner and never promoted it.
+//
+// A persistent key is not lost when it is shed — it stays in storage and comes
+// back — so its replicas have nothing to follow and are left alone.
+func TestAnOwnersShedKeepsTheReplicasOfItsUnflushedWrites(t *testing.T) {
+	f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1,
+		withNodeOptions("n0", peercache.WithMemoryBudget(256<<10)))
+	stores := map[string]*cutOffStore{}
+	backing := persist.Memory()
+	for _, id := range f.ids {
+		stores[id] = &cutOffStore{BlobStore: backing}
+	}
+	open := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("stock", peercache.WithReplicationFactor(3),
+			peercache.WithSyncReplication(), peercache.WithPersistence(stores[id]))
+	}
+	for _, id := range f.ids {
+		open(id)
+		f.caches[id].Namespace("filler")
+	}
+	f.settle(t)
+	ctx := context.Background()
+
+	var keys []string
+	for i := 0; len(keys) < 40; i++ {
+		if k := fmt.Sprintf("item-%d", i); f.ownerOf(t, k) == "n0" {
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		if _, err := open("n0").Increment(ctx, k, -1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flushAll(t, f)
+
+	// The owner's store goes; the second decrements stay pending on it, and
+	// in the replicas the synchronous writes placed.
+	stores["n0"].cut.Store(true)
+	for _, k := range keys {
+		if _, err := open("n0").Increment(ctx, k, -1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filler := f.caches["n0"].Namespace("filler")
+	for i := 0; i < 2000; i++ {
+		_ = filler.Set(ctx, fmt.Sprintf("b%d", i), make([]byte, 1<<10), 0)
+	}
+	if f.caches["n0"].Stats().ShedOwned == 0 {
+		t.Fatal("the owner shed nothing")
+	}
+
+	// The owner dies before its store comes back.
+	f.dead["n0"] = true
+	_ = f.caches["n0"].Close(ctx)
+	f.memberships["n0"].Close()
+	f.net.Unregister("n0")
+	f.clk.Advance(2 * testkit.DefaultFailureTimeout)
+	f.convergeTo(t, 2)
+	f.settle(t)
+
+	var lost []string
+	for _, k := range keys {
+		v, err := readWithRetryFrom(t, f, open, "n1", k)
+		if err != nil || v != "-2" {
+			lost = append(lost, fmt.Sprintf("%s=%q (%v)", k, v, err))
+		}
+	}
+	if len(lost) > 0 {
+		t.Fatalf("%d of %d acknowledged decrements were lost after their owner shed them and died "+
+			"unflushed, though synchronous replication had placed them: %v", len(lost), len(keys), lost)
+	}
+}

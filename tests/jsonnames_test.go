@@ -25,6 +25,7 @@ func TestDebugHandlerJSONNamesAreCamelCase(t *testing.T) {
 		reflect.TypeOf(peercache.Description{}),
 		reflect.TypeOf(peercache.ClusterDescription{}),
 		reflect.TypeOf(peercache.KeyPlacement{}),
+		reflect.TypeOf(peercache.KeyEvent{}),
 	}
 	seen := map[reflect.Type]bool{}
 	for _, root := range roots {

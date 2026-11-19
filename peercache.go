@@ -18,6 +18,7 @@ import (
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/hlc"
 	"github.com/arwenizEr/peercache/internal/hotkeys"
+	"github.com/arwenizEr/peercache/internal/keytrace"
 	"github.com/arwenizEr/peercache/internal/l1"
 	"github.com/arwenizEr/peercache/internal/metrics"
 	"github.com/arwenizEr/peercache/internal/ownership"
@@ -146,6 +147,12 @@ type Cache interface {
 	// wraps ErrNotFound.
 	DescribeKey(namespace, key string) (KeyPlacement, error)
 
+	// KeyHistory returns this node's recorded history of key in namespace,
+	// oldest first: nil unless the key is traced with [WithKeyTrace]. A
+	// key's whole history is the union over the nodes that touched it,
+	// merged by time.
+	KeyHistory(namespace, key string) []KeyEvent
+
 	// DescribeCluster asks every member of this node's view for its
 	// Describe and reports them side by side, with whether their member
 	// sets agree; with digests, it also checks each owner's keys against
@@ -155,7 +162,8 @@ type Cache interface {
 	DescribeCluster(ctx context.Context, digests bool) ClusterDescription
 
 	// DebugHandler serves Describe at "/", its namespaces at "/namespaces",
-	// DescribeKey at "/key?namespace=…&key=…", DescribeCluster at
+	// DescribeKey at "/key?namespace=…&key=…", KeyHistory at
+	// "/keys?namespace=…&key=…", DescribeCluster at
 	// "/cluster" ("?digests=1" for the replica check) and Stats at
 	// "/stats", as JSON, and a live dashboard of all of them at "/ui". It has no
 	// authentication: mount it on an internal admin port, as one would
@@ -282,6 +290,7 @@ func New(opts ...Option) (Cache, error) {
 	c.catchup = newCatchUp(c)
 	c.readiness = &readiness{cache: c}
 	c.pressure = newPressure(c, resolved.MemoryBudget)
+	c.trace = keytrace.New(resolved.Clock, resolved.KeyTrace)
 	if resolved.MemoryBudget > 0 && debug.SetMemoryLimit(-1) == math.MaxInt64 {
 		// Said, not fixed: the memory limit is the process's to set, and a
 		// library that set it would override the application's choice.
@@ -374,7 +383,9 @@ func New(opts ...Option) (Cache, error) {
 
 // cache implements [Cache].
 type cache struct {
-	opts core.Options
+	// trace records traced keys' histories; nil without WithKeyTrace.
+	trace *keytrace.Tracer
+	opts  core.Options
 
 	// id is this node's ID, read once: see selfID.
 	id string
@@ -620,6 +631,7 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 		SweepInterval: 0,
 		Order:         order,
 		TTLJitter:     opts.TTLJitter,
+		Writer:        c.selfID(),
 	})
 	if err != nil {
 		ns.err = err
@@ -628,6 +640,7 @@ func (c *cache) newNamespaceLocked(name string, opts core.NamespaceOptions) *nam
 	ns.store = st
 	if opts.Persistence != nil {
 		ns.persister = newPersister(ns, opts.Persistence)
+		ns.shedHeld = ns.persister.isShed
 	}
 	if opts.HotKeys > 0 {
 		ns.hot = hotkeys.New(c.opts.Clock, opts.HotKeys)

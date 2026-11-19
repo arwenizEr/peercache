@@ -977,6 +977,37 @@ func ExampleWithMemoryBudget() {
 	// keys still held: true
 }
 
+// ExampleWithKeyTrace records a key's history: each change to what this node
+// holds for it, with the write's order and writer and a hash of the value.
+func ExampleWithKeyTrace() {
+	cache, err := peercache.New(peercache.WithNodeID("pod-0"), peercache.WithKeyTrace("stock", "item-"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = cache.Close(context.Background()) }()
+
+	stock := cache.Namespace("stock")
+	ctx := context.Background()
+	_, _ = stock.Increment(ctx, "item-7", -1, 0)
+	_, _ = stock.Increment(ctx, "item-7", -1, 0)
+	_ = stock.Set(ctx, "untraced", []byte("x"), 0)
+
+	h := cache.KeyHistory("stock", "item-7")
+	for _, e := range h {
+		fmt.Println(e.Kind, e.Writer, e.Len)
+	}
+	fmt.Println("orders increase:", h[1].Order > h[0].Order)
+	fmt.Println("values differ:", h[0].Hash != h[1].Hash)
+	fmt.Println("untraced history:", cache.KeyHistory("stock", "untraced"))
+	// Output:
+	// write pod-0 2
+	// write pod-0 2
+	// orders increase: true
+	// values differ: true
+	// untraced history: []
+}
+
 // ExampleWithJoinProbation shows the option's configuration and its two
 // boundaries. A cache without a membership authority is a cluster of one, so
 // there is nobody to keep waiting and the probation has nothing to do; a

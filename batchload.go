@@ -71,10 +71,11 @@ func (n *namespace) localBatchGetOrLoad(ctx context.Context, keys []string, out 
 				return err
 			}
 		}
-		if err := n.awaitRestore(ctx, key); err != nil {
+		stored, ok, err := n.getResident(ctx, key)
+		if err != nil {
 			return err
 		}
-		if stored, _, ok := n.store.Get(key); ok {
+		if ok {
 			val, err := n.decode(stored)
 			if err != nil {
 				return err
@@ -183,7 +184,13 @@ func (n *namespace) runBatchLoader(ctx context.Context, keys []string) (found ma
 			}
 			continue
 		}
-		resident, stored := n.store.SetIfAbsent(key, n.encode(val), ttl)
+		resident, stored, held := n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)
+		if held {
+			// Shed while the loader ran: storage holds something newer
+			// than the load. Left out, the batch would report it absent;
+			// the batch is refused, as a single load is.
+			return nil, n.shedSinceRestore(key)
+		}
 		if !stored {
 			current, err := n.decode(resident)
 			if err != nil {

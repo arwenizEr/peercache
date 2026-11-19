@@ -155,6 +155,10 @@ func TestTheDebugHandlerServesJSONAndRefusesTheRest(t *testing.T) {
 		{http.MethodGet, "/key?namespace=orders&key=", http.StatusOK}, // an empty key is a key
 		{http.MethodGet, "/key?namespace=orders", http.StatusBadRequest},
 		{http.MethodGet, "/key?namespace=never&key=k", http.StatusNotFound},
+		{http.MethodGet, "/keys?namespace=orders&key=o:1", http.StatusOK},
+		{http.MethodGet, "/keys?namespace=orders&key=", http.StatusOK}, // an empty key is a key
+		{http.MethodGet, "/keys?namespace=orders", http.StatusBadRequest},
+		{http.MethodGet, "/keys?key=o:1", http.StatusBadRequest},
 		{http.MethodGet, "/nowhere", http.StatusNotFound},
 		{http.MethodPost, "/", http.StatusMethodNotAllowed},
 		{http.MethodDelete, "/key?namespace=orders&key=k", http.StatusMethodNotAllowed},

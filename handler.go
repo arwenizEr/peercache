@@ -8,6 +8,7 @@ import (
 
 	"github.com/arwenizEr/peercache/internal/core"
 	"github.com/arwenizEr/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/store"
 	"github.com/arwenizEr/peercache/internal/wire"
 	"github.com/arwenizEr/peercache/transport"
 )
@@ -156,10 +157,10 @@ func (h *peerHandler) get(ctx context.Context, req []byte) ([]byte, error) {
 		return nil, h.misconfigured(ns)
 	}
 
-	if err := ns.awaitRestore(ctx, in.Key); err != nil {
+	stored, version, left, found, err := ns.lookupResident(ctx, in.Key)
+	if err != nil {
 		return nil, err
 	}
-	stored, version, left, found := ns.store.Lookup(in.Key)
 	if !found {
 		return wire.Encode(&wire.GetResponse{})
 	}
@@ -378,10 +379,10 @@ func (h *peerHandler) batchGet(ctx context.Context, req []byte) ([]byte, error) 
 			}
 			continue
 		}
-		if err := ns.awaitRestore(ctx, key); err != nil {
+		stored, version, left, found, err := ns.lookupResident(ctx, key)
+		if err != nil {
 			return nil, err
 		}
-		stored, version, left, found := ns.store.Lookup(key)
 		if !found {
 			if in.Load {
 				missing = append(missing, key)
@@ -538,7 +539,16 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// replicated copy is; framing it again stored a frame inside a
 		// frame and handed the header back to the next reader.
 		h.cache.observeOrder(in.Order)
-		if ns.store.Restore(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order) {
+		adopted := ns.store.RestoreFrom(in.Key, in.Value, time.Duration(in.TTLNanos), in.Stamp.Version, in.Order,
+			store.Lineage{Writer: in.From, Prev: in.Prev})
+		if h.cache.traced(in.Namespace, in.Key) {
+			kind := keytraceReplicaAccepted
+			if !adopted {
+				kind = keytraceReplicaRefused
+			}
+			h.cache.record(in.Namespace, in.Key, kind, in.Order, in.From, in.Stamp.Version, in.Value, "as owner")
+		}
+		if adopted {
 			h.cache.keysAdopted.Add(1)
 			if ns.persister != nil && in.Order != 0 {
 				ns.persister.record(in.Key, in.Value,
@@ -551,7 +561,7 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 
 	now := h.cache.opts.Clock.Now().UnixNano()
 	h.cache.observeOrder(in.Order)
-	_, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
+	accepted, conflict := h.cache.replicas.Put(in.Namespace, in.Key, replication.Entry{
 		Value:      in.Value,
 		Stamp:      in.Stamp,
 		ExpiresAt:  replication.DeadlineFrom(now, in.TTLNanos),
@@ -560,6 +570,9 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		From:       in.From,
 		Prev:       in.Prev,
 	})
+	if h.cache.traced(in.Namespace, in.Key) {
+		h.cache.recordCopy(in.Namespace, in.Key, keytraceReplicaAccepted, accepted, conflict, in.Order, in.From, in.Stamp.Version, in.Value, "replicate")
+	}
 	h.cache.pressure.noteWrite(len(in.Value))
 	if conflict {
 		h.cache.splitBrain.Add(1)

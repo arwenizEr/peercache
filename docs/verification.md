@@ -2349,6 +2349,40 @@ restore treat stored keys as absent.
 written `dir::pkg` runs `go test -C dir pkg`, inside that module's own
 `go.mod`; both mutations above are now ordinary entries and run with the rest.
 
+### The full audit on the shed read-back branch: 434, in three parts
+
+Every entry, on branch `fix-shed-restore-failure` before its merge, on
+Machine A. Not one end-to-end run, and recorded as it was: the first run died
+after 301 entries with its mutant still in the tree (reverted), and the other
+133 were run by a filter built from the names the first had not reached.
+Together: **caught: 413, vacuous: 2, skipped: 19, broken: 0.**
+
+**Skipped:** nineteen anchors this branch's own later commits had moved —
+owned values now carry their lineage through `RestoreFrom`, `RestoreAtFrom`
+and `putEntry`; the loads and lookups go through the guarded store calls; the
+shed mark takes a `ShedEntry`; a failed read-back settles from this node's own
+records and stamps `shedFailedAt`. Each was rewritten against the code as it is
+and run again: all nineteen caught.
+
+**Vacuous**, the two, and one more found by re-running the skipped:
+
+- *The debug handler accepts a key lookup without a key* — the key trace added
+  `/keys` with the same guard line as `/key`, the mutation replaced the first
+  match, and no test asked `/keys` without a key. Each entry anchors on the
+  line after the guard now, and the test asks both.
+- *A load is stored over a write the budget shed* — the racing test reaches
+  the window, but saw it about one round in twenty: a loaded value is recorded
+  nowhere, the budget sheds it again within moments, and the read-back then
+  answers with the write. `TestALoadIsNotStoredOverAWriteShedWhileItRan` holds
+  the load while the key is written and shed and releases it into a quiet
+  budget; it fails five runs in five under the mutation.
+- *A failed read-back of a shed key answers from memory* — returning nil left
+  the mark in place, and the checks under the shard lock that question 62 added
+  refused the key on their own. The mutation now also drops the mark, which is
+  what the original bug did.
+
+All three caught after. The next release still needs a full run end to end.
+
 ### The full audit before v1: 302 of 363, then 365 of 365
 
 Every entry run end to end on `main` after v0.3.0, on Machine A — the first

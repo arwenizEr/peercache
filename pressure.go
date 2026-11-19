@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 
 	"github.com/arwenizEr/peercache/internal/hlc"
+	"github.com/arwenizEr/peercache/internal/replication"
+	"github.com/arwenizEr/peercache/internal/store"
 )
 
 // pressureCheckInterval is how many writes pass between two inline checks of
@@ -175,11 +177,15 @@ func (p *pressure) relieve() {
 	if excess > 0 {
 		keep := p.keepFrom(namespaces)
 		before := c.replicas.ShedCount()
-		excess -= c.replicas.Shed(excess, func(name string) uint64 {
+		excess -= c.replicas.ShedVisit(excess, func(name string) uint64 {
 			if floor, ok := keep[name]; ok {
 				return floor
 			}
 			return math.MaxUint64
+		}, func(name, key string, e replication.Entry) {
+			if c.traced(name, key) {
+				c.record(name, key, keytraceReplicaShed, e.Order, e.From, e.Stamp.Version, nil, "")
+			}
 		})
 		p.shedReplicas.Add(c.replicas.ShedCount() - before)
 	}
@@ -199,14 +205,20 @@ func (p *pressure) relieve() {
 			if share < 1 {
 				share = excess
 			}
-			freed := ns.store.Shed(share, func(key string, _ uint64) {
+			// Shedding is memory relief, never a deletion: the key stays
+			// in storage and comes back on its next access. It is marked
+			// before it leaves memory, so no access finds it in neither
+			// (open question 62).
+			var mark func(string, store.ShedEntry)
+			if ns.persister != nil {
+				mark = ns.persister.noteShed
+			}
+			freed := ns.store.ShedMarked(share, mark, func(key string, version uint64) {
 				p.shedOwned.Add(1)
-				ns.replicateShed(key)
-				// Shedding is memory relief, never a deletion: the key
-				// stays in storage and comes back on its next access.
-				if ns.persister != nil {
-					ns.persister.noteShed(key)
+				if c.traced(ns.name, key) {
+					c.record(ns.name, key, keytraceShed, 0, "", version, nil, "")
 				}
+				ns.replicateShed(key)
 			})
 			if freed > 0 {
 				progress = true
@@ -264,8 +276,14 @@ func (p *pressure) keepFrom(namespaces []*namespace) map[string]uint64 {
 // is relieving memory pressure and must not wait on the network to do it. A
 // dropped message costs the replica's memory, not correctness: the version
 // floor in the owned store already guarantees a rewrite outranks the copy.
+//
+// Only where a shed loses the key. In a persistent namespace the key stays in
+// storage and comes back, so its copies are still copies of it — and while the
+// owner has not flushed the key's newest write they are its only other holders.
+// Dropping them then lost the write when the owner died before its flush, and
+// the next owner restored the older stored value (open question 65).
 func (n *namespace) replicateShed(key string) {
-	if n.opts.ReplicationFactor < 2 {
+	if n.opts.ReplicationFactor < 2 || n.persister != nil {
 		return
 	}
 	targets, _, err := n.cache.replicaTargets(n.groupKeyFor(key), n.opts.ReplicationFactor)

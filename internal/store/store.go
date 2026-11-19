@@ -38,18 +38,20 @@ const (
 //
 // Measured, at the worst point: a map that has just doubled, so that half its
 // slots are empty. One entry costs a map slot (the key's string header and the
-// entry struct, 64 bytes on 64-bit), that slot's share of the empty ones and
+// entry struct, 80 bytes on 64-bit), that slot's share of the empty ones and
 // of the group control words, and the key's and value's size-class rounding.
-// With 22-byte keys and 48-byte values, a million entries took 153 bytes each
-// beyond the key and value in live heap, and 128 at 300,000 between doublings;
+// With 22-byte keys and 48-byte values, a million entries took 185 bytes each
+// beyond the key and value in live heap, and 156 at 300,000 between doublings;
 // TestAccountedBytesCoverTheLiveHeap holds the figure to it. It was 96, an
 // estimate that called itself high and was a third too low, and on kind a
-// pod budgeted by it at half its container limit was OOM-killed.
+// pod budgeted by it at half its container limit was OOM-killed. It was 160,
+// measured at 153, until each entry kept its lineage — 16 bytes a slot, twice
+// that at the worst point — so that a fork can be judged (open question 66).
 //
 // It is charged per slot a shard's map keeps, which deleting does not give
 // back: one per entry, and one per entry removed since the map was last
 // rebuilt; see shard.shrink and [Store.Slots].
-const EntryOverhead int64 = 160
+const EntryOverhead int64 = 192
 
 // Options configures a [Store].
 type Options struct {
@@ -76,6 +78,9 @@ type Options struct {
 	// by up to that fraction, by an amount fixed per key. Zero assigns
 	// TTLs exactly. See [Store.deadline] and docs/decisions/0037.
 	TTLJitter float64
+	// Writer names this node in the lineage of the values it writes; see
+	// [Lineage]. Empty leaves local writes without a writer.
+	Writer string
 }
 
 // entry is one stored value.
@@ -91,6 +96,39 @@ type entry struct {
 	// order is the write's order from the hybrid logical clock, or zero
 	// in a store built without [Options.Order].
 	order uint64
+	// prev and writer are the value's lineage: the order of the value it
+	// replaced where it was written, and the node that wrote it. A copy of
+	// the entry that leaves this store carries them, so that two copies of
+	// one key can be told apart as a handover or a fork; see Lineage.
+	prev uint64
+	// writer indexes the store's writer names (see Store.intern): four
+	// bytes rather than a string's sixteen, since every slot pays for it
+	// and a store hears from a handful of nodes.
+	writer uint32
+}
+
+// unrecordedBit marks, in an entry's prev, a value no persistence record will
+// ever hold: one a loader or a refresh stored. Orders come from a hybrid
+// logical clock of milliseconds and are far below 1<<63, so the bit is free.
+const unrecordedBit = uint64(1) << 63
+
+// ShedEntry is what a shed's mark learns of the entry it removes.
+type ShedEntry struct {
+	// Order is the value's order.
+	Order uint64
+	// ExpiresAt is its deadline in Unix nanoseconds, zero for none.
+	ExpiresAt int64
+	// Unrecorded reports a value a loader or a refresh stored, which no
+	// persistence record holds.
+	Unrecorded bool
+}
+
+// Lineage is where a value came from: the node that wrote it and the order of
+// the value its write replaced there. Zero values mean unknown, and an unknown
+// lineage is never judged a fork (replication.Forked).
+type Lineage struct {
+	Writer string
+	Prev   uint64
 }
 
 // shard is one independently locked partition.
@@ -170,6 +208,13 @@ type Store struct {
 	done      chan struct{}
 	stopped   chan struct{}
 	ticker    clock.Ticker
+	// self is Options.Writer's index among the writer names.
+	self uint32
+	// writers names the nodes entries were written by, index 0 none:
+	// appended under writerMu, read without it. writerIDs is the reverse.
+	writers   atomic.Pointer[[]string]
+	writerMu  sync.Mutex
+	writerIDs map[string]uint32
 }
 
 // New returns a [Store].
@@ -202,10 +247,15 @@ func New(opts Options) (*Store, error) {
 		clk:          opts.Clock,
 		order:        opts.Order,
 		jitter:       opts.TTLJitter,
+		writerIDs:    map[string]uint32{},
 		sweepPerTick: opts.SweepShardsPerTick,
 		done:         make(chan struct{}),
 		stopped:      make(chan struct{}),
 	}
+	names := []string{""}
+	s.writers.Store(&names)
+	s.self = s.intern(opts.Writer)
+
 	for i := range s.shards {
 		s.shards[i] = &shard{entries: make(map[string]entry)}
 	}
@@ -385,7 +435,7 @@ func (s *Store) Put(key string, val []byte, ttl time.Duration) Write {
 		version = sh.floor + 1
 	}
 	order := s.nextOrder()
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: old.order &^ unrecordedBit, writer: s.self})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
@@ -443,34 +493,8 @@ func (s *Store) Peek(key string) (val []byte, version uint64, expiresAt int64, o
 // unconditional store would put the older value back over it. An expired entry
 // counts as absent, as it does to every reader.
 func (s *Store) SetIfAbsent(key string, val []byte, ttl time.Duration) ([]byte, bool) {
-	var expiresAt int64
-	now := s.clk.Now()
-	if ttl > 0 {
-		expiresAt = s.deadline(key, now, ttl)
-	}
-	stored := make([]byte, len(val))
-	copy(stored, val)
-
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	sh.forget(key)
-	old, had := sh.entries[key]
-	if had && (old.expiresAt == 0 || now.UnixNano() < old.expiresAt) {
-		return old.val, false
-	}
-	version := old.version + 1
-	if !had && version <= sh.floor {
-		version = sh.floor + 1
-	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: s.nextOrder()})
-	delta := size(key, stored)
-	if had {
-		delta -= size(key, old.val)
-	}
-	sh.bytes.Add(delta)
-	sh.sets.Add(1)
-	return stored, true
+	resident, stored, _ := s.SetIfAbsentGuarded(key, val, ttl, nil)
+	return resident, stored
 }
 
 // Snapshot returns up to limit unexpired entries whose keys sort after the
@@ -556,6 +580,9 @@ type SnapshotEntry struct {
 	// Order is the entry's persistence order, carried for the same reason
 	// as Version: a node that later owns the key must continue it.
 	Order uint64
+	// Lineage is where the value came from, carried so that a copy of it
+	// can be judged a handover or a fork.
+	Lineage Lineage
 }
 
 // Restore installs a value at a version chosen by the caller, reporting
@@ -576,11 +603,17 @@ type SnapshotEntry struct {
 // replica; it is installed as it is, never reissued, so that the promoted value
 // keeps its place in the key's history.
 func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, order uint64) bool {
+	return s.RestoreFrom(key, val, ttl, version, order, Lineage{})
+}
+
+// RestoreFrom is [Store.Restore] for a copy whose lineage is known: a replica
+// adopted or promoted keeps the writer and predecessor it was written with.
+func (s *Store) RestoreFrom(key string, val []byte, ttl time.Duration, version, order uint64, lin Lineage) bool {
 	var expiresAt int64
 	if ttl > 0 {
 		expiresAt = deadlineNanos(s.clk.Now(), ttl)
 	}
-	return s.restore(key, val, expiresAt, version, order)
+	return s.restore(key, val, expiresAt, version, order, lin)
 }
 
 // RestoreAt is [Store.Restore] with the deadline itself rather than the time
@@ -593,13 +626,56 @@ func (s *Store) Restore(key string, val []byte, ttl time.Duration, version, orde
 // the clock once and then restored its keys extended every one of them by
 // the time the loop had taken to reach it.
 func (s *Store) RestoreAt(key string, val []byte, expiresAt int64, version, order uint64) bool {
+	return s.RestoreAtFrom(key, val, expiresAt, version, order, Lineage{})
+}
+
+// RestoreAtFrom is [Store.RestoreAt] with the copy's lineage; see
+// [Store.RestoreFrom].
+func (s *Store) RestoreAtFrom(key string, val []byte, expiresAt int64, version, order uint64, lin Lineage) bool {
 	if expiresAt != 0 && s.clk.Now().UnixNano() >= expiresAt {
 		return false
 	}
-	return s.restore(key, val, expiresAt, version, order)
+	return s.restore(key, val, expiresAt, version, order, lin)
 }
 
-func (s *Store) restore(key string, val []byte, expiresAt int64, version, order uint64) bool {
+// intern returns name's index among the writer names, adding it if new.
+// The empty name is index 0.
+func (s *Store) intern(name string) uint32 {
+	if name == "" {
+		return 0
+	}
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	if id, ok := s.writerIDs[name]; ok {
+		return id
+	}
+	names := append(append([]string(nil), *s.writers.Load()...), name)
+	id := uint32(len(names) - 1)
+	s.writers.Store(&names)
+	s.writerIDs[name] = id
+	return id
+}
+
+// writerName is intern's inverse.
+func (s *Store) writerName(id uint32) string {
+	return (*s.writers.Load())[id]
+}
+
+// LineageOf returns the order and lineage of key's entry, live or expired, and
+// whether there is one.
+func (s *Store) LineageOf(key string) (order uint64, lin Lineage, ok bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, found := sh.entries[key]
+	sh.mu.RUnlock()
+	if !found {
+		return 0, Lineage{}, false
+	}
+	return e.order, Lineage{Writer: s.writerName(e.writer), Prev: e.prev &^ unrecordedBit}, true
+}
+
+func (s *Store) restore(key string, val []byte, expiresAt int64, version, order uint64, lin Lineage) bool {
+	writer := s.intern(lin.Writer)
 	stored := make([]byte, len(val))
 	copy(stored, val)
 
@@ -618,7 +694,7 @@ func (s *Store) restore(key string, val []byte, expiresAt int64, version, order 
 	} else if ok && existing.version >= version {
 		return false
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, prev: lin.Prev, writer: writer})
 	delta := size(key, stored)
 	if ok {
 		delta -= size(key, existing.val)
@@ -789,6 +865,15 @@ func (s *Store) Bytes() int64 {
 // Sweep does not, because an expiry happens on every holder
 // at the same deadline and leaves no copy for a rewrite to have to outrank.
 func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64 {
+	return s.ShedMarked(target, nil, visit)
+}
+
+// ShedMarked is [Store.Shed] with mark called for each entry under its shard's
+// lock, before the entry is removed, with the entry's order. A caller that must
+// be able to tell a shed key from an absent one records it there: marked after
+// the lock is released, as visit is, a reader in between finds the key neither
+// present nor marked. mark must not call into this store.
+func (s *Store) ShedMarked(target int64, mark func(key string, e ShedEntry), visit func(key string, version uint64)) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -806,6 +891,9 @@ func (s *Store) Shed(target int64, visit func(key string, version uint64)) int64
 		for key, e := range sh.entries {
 			if freed+before-sh.bytes.Load()+int64(sh.high-len(sh.entries))*EntryOverhead >= target {
 				break
+			}
+			if mark != nil {
+				mark(key, ShedEntry{Order: e.order, ExpiresAt: e.expiresAt, Unrecorded: e.prev&unrecordedBit != 0})
 			}
 			s.deleteEntry(sh, key)
 			if e.version > sh.floor {
@@ -912,6 +1000,19 @@ func (s *Store) Close() error {
 // write would be, above the shard's floor; a tombstone removes an older live
 // entry and does nothing otherwise. The caller drops expired records first.
 func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint64, tombstone bool) (uint64, bool) {
+	return s.MergeIfNewerGuarded(key, val, expiresAt, order, tombstone, "", nil)
+}
+
+// MergeIfNewerGuarded is [Store.MergeIfNewer] with guard called first, under
+// the key's shard lock; false applies nothing. A caller whose decision to merge
+// depends on state that [Store.ShedMarked] changes under the same lock decides
+// there, so no shed lands between the decision and the merge. guard must not
+// call into this store.
+//
+// writer is the node the record names as its writer, kept as the entry's
+// lineage; a record does not carry its predecessor.
+func (s *Store) MergeIfNewerGuarded(key string, val []byte, expiresAt int64, order uint64, tombstone bool, writerName string, guard func() bool) (uint64, bool) {
+	writer := s.intern(writerName)
 	var stored []byte
 	if !tombstone {
 		stored = make([]byte, len(val))
@@ -922,6 +1023,9 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	defer sh.shrink(false)
+	if guard != nil && !guard() {
+		return 0, false
+	}
 	sh.forget(key)
 
 	old, had := sh.entries[key]
@@ -946,7 +1050,7 @@ func (s *Store) MergeIfNewer(key string, val []byte, expiresAt int64, order uint
 	if !had && version <= sh.floor {
 		version = sh.floor + 1
 	}
-	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order})
+	s.putEntry(sh, key, entry{val: stored, expiresAt: expiresAt, version: version, order: order, writer: writer})
 	delta := size(key, stored)
 	if had {
 		delta -= size(key, old.val)
