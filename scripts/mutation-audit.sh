@@ -3467,13 +3467,18 @@ mutate "a namespace opened late is never scanned on a quiet cluster" \
   'TestANamespaceOpenedLateOnAQuietClusterPromotesItsReplicas$' ./tests
 
 # A shed key whose read-back failed must be refused, not answered from a
-# memory that does not hold it (open question 61).
+# memory that does not hold it (open question 61). The mark goes too: left in
+# place, the checks under the shard lock (open question 62) refuse the key on
+# their own, and returning nil alone no longer broke anything.
 mutate "a failed read-back of a shed key answers from memory" \
   persistence.go \
   '		return p.settleFromOwnRecords(key, sm)
 	}
 	defer sc.release()' \
-  '		return nil
+  '		p.mu.Lock()
+		p.unmark(key)
+		p.mu.Unlock()
+		return nil
 	}
 	defer sc.release()' \
   'TestAShedCounterIsNotCountedFromZeroWhenStorageIsUnreachable$' ./tests
@@ -3510,7 +3515,7 @@ mutate "a load is stored over a write the budget shed" \
   namespace.go \
   'n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, n.shedHeld)' \
   'n.store.SetIfAbsentGuarded(key, n.encode(val), ttl, nil)' \
-  'TestALoadDoesNotStoreOverAShedWrite$' ./tests
+  'TestALoadIsNotStoredOverAWriteShedWhileItRan$' ./tests
 
 mutate "a guarded lookup does not ask about a miss" \
   internal/store/guarded.go \

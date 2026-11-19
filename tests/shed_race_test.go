@@ -342,3 +342,62 @@ func loadRacesShedWrite(t *testing.T) {
 		}
 	}
 }
+
+// TestALoadIsNotStoredOverAWriteShedWhileItRan is the deterministic form of
+// the race above, which reaches the window but rarely sees it: a loaded value
+// is recorded nowhere, and a budget shedding constantly drops it again within
+// moments, after which the read-back answers with the write. Here the load is
+// held while the key is written and shed, and released into a quiet budget, so
+// a load stored over the shed write is still there to be read.
+func TestALoadIsNotStoredOverAWriteShedWhileItRan(t *testing.T) {
+	const budget = 128 << 10
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var once sync.Once
+	c, _ := newCache(t, peercache.WithMemoryBudget(budget), peercache.WithKeyTrace("profiles", "p"))
+	ns := c.Namespace("profiles",
+		peercache.WithPersistence(persist.Memory()),
+		peercache.WithLoader(func(context.Context, string) ([]byte, time.Duration, error) {
+			once.Do(func() { close(started) })
+			<-release
+			return []byte("loaded"), 0, nil
+		}))
+	bulk := c.Namespace("bulk")
+	ctx := context.Background()
+
+	loaded := make(chan error, 1)
+	go func() {
+		_, err := ns.GetOrLoad(ctx, "p")
+		loaded <- err
+	}()
+	<-started
+	if err := ns.Set(ctx, "p", []byte("real"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	for i := 0; i < 4000 && !wasShed(c, "p"); i++ {
+		if err := bulk.Set(ctx, fmt.Sprintf("b%05d", i), make([]byte, 1<<10), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if !wasShed(c, "p") {
+		t.Fatal("4 MB written into a 128 KB budget and p was never shed")
+	}
+	// Quiet from here: nothing more is written, so nothing more is shed.
+	close(release)
+	<-loaded // refused or answered; either way it must not have stored
+
+	got, err := ns.Get(ctx, "p")
+	if err != nil || string(got) != "real" {
+		t.Fatalf("p = %q, %v after an acknowledged Set of \"real\" the budget shed while a load ran; "+
+			"the load was stored over it", got, err)
+	}
+}
+
+func wasShed(c peercache.Cache, key string) bool {
+	for _, e := range c.KeyHistory("profiles", key) {
+		if e.Kind == "shed" {
+			return true
+		}
+	}
+	return false
+}
