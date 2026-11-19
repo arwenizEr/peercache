@@ -2477,8 +2477,8 @@ mutate "a failed flush's records replace newer writes" \
 			if !cur.Newer(&r) {
 				continue // the failed record is the newer one
 			}' \
-  '		if _, ok := batch[key]; ok {
-			if true {
+  '		if r, ok := batch[key]; ok {
+			if true || !cur.Newer(&r) {
 				continue // the failed record is the newer one
 			}' \
   'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
