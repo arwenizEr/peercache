@@ -60,3 +60,40 @@ func TestDecodedSizeCoversTheLiveHeap(t *testing.T) {
 		runtime.KeepAlive(data)
 	}
 }
+
+// TestPendingSizeCoversTheLiveHeap: what a record waiting for a flush is
+// charged is at least the heap it takes in a persister's map of the newest
+// record per key, including at the worst point, a map that has just doubled.
+// The budget charged 32 bytes for what took 265, and a pod whose flushes were
+// failing held a backlog the budget saw a fraction of.
+func TestPendingSizeCoversTheLiveHeap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates a million records")
+	}
+	for _, n := range []int{300_000, 1_000_000} {
+		base := liveHeap()
+		pending := make(map[string]segment.Record)
+		var charged int64
+		for i := 0; i < n; i++ {
+			// The strings a write carries are its own allocations, as
+			// they are in a persister.
+			r := segment.Record{
+				Namespace: string([]byte("orders")),
+				Key:       fmt.Sprintf("order:%016d", i),
+				Writer:    string([]byte("shop-1")),
+				Order:     uint64(i + 1),
+				Value:     make([]byte, 48),
+			}
+			pending[r.Key] = r
+			charged += int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + segment.PendingOverhead
+		}
+		used := int64(liveHeap() - base)
+		if charged < used {
+			t.Errorf("%d records: charged %d (%d each) for %d of live heap (%d each)",
+				n, charged, charged/int64(n), used, used/int64(n))
+		} else {
+			t.Logf("%d records: charged %d each, live heap %d each", n, charged/int64(n), used/int64(n))
+		}
+		runtime.KeepAlive(pending)
+	}
+}

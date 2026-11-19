@@ -2423,13 +2423,13 @@ mutate "a flush writes one object per partition" \
   persistence.go \
   '	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
-	// Counted' \
+	// The encoded' \
   '	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	for i := range records {
 		_ = p.store.Put(ctx, fmt.Sprintf("%s.%d", name, i), nil)
 	}
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
-	// Counted' \
+	// The encoded' \
   'TestAFlushWritesOneObject$' ./tests
 
 mutate "the persistence flush interval option is ignored" \
@@ -2465,20 +2465,38 @@ mutate "Close does not cancel restores in flight" \
 
 mutate "a failed flush drops its records" \
   persistence.go \
-  '		p.restorePending(records)
+  '		p.restoreBatch(batch, batchHigh)
 ' \
-  '' \
+  '		p.restoreBatch(map[string]segment.Record{}, 0)
+' \
   'TestAnUnavailableStoreLosesNothing$' ./tests
 
 mutate "a failed flush's records replace newer writes" \
   persistence.go \
-  '		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
-			continue
-		} else if ok {' \
-  '		if cur, ok := p.pending[r.Key]; false && !r.Newer(&cur) {
-			continue
-		} else if ok {' \
+  '		if r, ok := batch[key]; ok {
+			if !cur.Newer(&r) {
+				continue // the failed record is the newer one
+			}' \
+  '		if _, ok := batch[key]; ok {
+			if true {
+				continue // the failed record is the newer one
+			}' \
   'TestAFailedFlushDoesNotUndoAWriteMadeDuringIt$' ./tests
+
+# --- a flush's batch and segment are charged to the budget ---
+
+mutate "a flush's batch is charged to nothing while it writes" \
+  persistence.go \
+  '	n += p.inflightBytes + p.inflightHigh*pendingSlot
+' \
+  '' \
+  'TestAFlushThatCannotWriteIsStillChargedToTheBudget$' ./tests
+
+mutate "a pending record is charged its framing only" \
+  internal/segment/segment.go \
+  'const PendingOverhead = 288' \
+  'const PendingOverhead = 32' \
+  'TestPendingSizeCoversTheLiveHeap$' ./internal/segment
 
 mutate "a pending record is never replaced by a newer write" \
   persistence.go \
@@ -3158,6 +3176,7 @@ mutate "a restore ignores what was flushed while it read" \
 mutate "a flush during a restore keeps nothing for it" \
   persistence.go \
   '		p.flushedDuring = append(p.flushedDuring, batch)
+		p.duringBytes += p.inflightBytes + p.inflightHigh*pendingSlot
 		kept = true' \
   '		_ = batch' \
   'TestADeleteFlushedDuringARestoreIsNotUndone$' ./tests

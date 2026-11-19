@@ -65,6 +65,13 @@ func (r *Record) Newer(other *Record) bool {
 // builds. TestDecodedSizeCoversTheLiveHeap holds it to the live heap.
 const DecodedOverhead = 200
 
+// PendingOverhead is what a record waiting for a flush takes beyond its
+// strings and value: its slot in a map of the newest record per key, with the
+// key and value allocated apart, at the worst point, a map that has just
+// doubled. TestPendingSizeCoversTheLiveHeap holds it to the live heap; it
+// measured 265 at a million records.
+const PendingOverhead = 288
+
 // DecodedSize is what r is charged while a reader holds it.
 func (r *Record) DecodedSize() int64 {
 	return int64(len(r.Namespace)+len(r.Key)+len(r.Writer)+len(r.Value)) + DecodedOverhead

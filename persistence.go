@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cespare/xxhash/v2"
 
@@ -114,6 +115,16 @@ type persister struct {
 	// held since they were made: a cleared map keeps that many buckets.
 	pendingHigh, spareHigh int
 	bytes                  int
+	// inflightBytes and inflightHigh are bytes and pendingHigh of the batch a
+	// flush is writing, and duringBytes the charge of the batches kept in
+	// flushedDuring: the memory budget counts them all. Under mu. A flush's
+	// batch was counted by nothing from the moment it left pending, and
+	// during an outage that is the whole of the flush timeout, every attempt.
+	inflightBytes, inflightHigh int
+	duringBytes                 int
+	// spareCharge is what spare and recBuf hold, for the budget: a cleared
+	// map keeps its slots and a cleared slice its array. Set by flush.
+	spareCharge atomic.Int64
 	// shed holds keys the memory budget dropped from the owned store. Their
 	// records are still in storage, or still pending here; the first access
 	// to one restores that key alone (see restoreShed). Restoring the whole
@@ -389,11 +400,37 @@ func (p *persister) unmark(key string) {
 	}
 }
 
-// pendingBytes is what the dirty map holds, for the memory budget.
+// pendingSlot is what the budget charges for each slot of a map of records
+// beyond recordSize, which sizes a record as it will be written and decides
+// when a flush comes early. The two were one figure, 32 bytes a record, and
+// the map took 265 (segment.PendingOverhead).
+const pendingSlot = segment.PendingOverhead - recordFraming
+
+// recordSlot is a record's slot in a flush's slice.
+const recordSlot = int64(unsafe.Sizeof(segment.Record{}))
+
+// pendingBytes is what records waiting to be written hold, for the memory
+// budget: the pending map, the batch a flush is writing, the written batches
+// kept for restores, and the map and slice kept for the next flush. Each map
+// is charged by the slots it has, which a cleared map keeps, not by the
+// records left in it.
 func (p *persister) pendingBytes() int64 {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return int64(p.bytes)
+	n := p.bytes + max(len(p.pending), p.pendingHigh)*pendingSlot
+	n += p.inflightBytes + p.inflightHigh*pendingSlot
+	n += p.duringBytes
+	p.mu.Unlock()
+	return int64(n) + p.spareCharge.Load()
+}
+
+// chargeSpare sets what spare and a record slice of capacity recs hold. Called
+// by flush, under flushMu.
+func (p *persister) chargeSpare(recs int) {
+	n := int64(recs) * recordSlot
+	if p.spare != nil {
+		n += int64(p.spareHigh) * pendingSlot
+	}
+	p.spareCharge.Store(n)
 }
 
 // flushSoon asks the flusher to run now rather than at its next tick.
@@ -429,8 +466,11 @@ func (p *persister) transientBytes() int64 {
 }
 
 func recordSize(r *segment.Record) int {
-	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + 32
+	return len(r.Namespace) + len(r.Key) + len(r.Writer) + len(r.Value) + recordFraming
 }
+
+// recordFraming is recordSize's allowance for a record's fixed fields.
+const recordFraming = 32
 
 // run is the flusher. It does nothing else: whatever shares its goroutine
 // delays every flush behind it, and a delayed flush is a longer loss window.
@@ -501,6 +541,7 @@ func (p *persister) flush(ctx context.Context) error {
 	} else {
 		p.pending, p.pendingHigh = make(map[string]segment.Record, len(batch)), 0
 	}
+	p.inflightBytes, p.inflightHigh = p.bytes, batchHigh
 	p.bytes = 0
 	p.inflight = batch
 	p.inflightMin, p.pendingMin = p.pendingMin, 0
@@ -514,15 +555,17 @@ func (p *persister) flush(ctx context.Context) error {
 			maxOrder = r.Order
 		}
 	}
+	p.chargeSpare(cap(records)) // the spare map is pending now
 	// Recycled while the workload still fills it. clear keeps a map's
 	// buckets, so a map that once held a burst of a million keys would hold
-	// that memory — unaccounted for by the memory budget — for the life of
-	// the namespace. A batch under a quarter of the map's high-water mark
-	// lets it go instead. Measured on Machine A, recycling took a persistent
-	// Set from 705 to 421 bytes and 4 to 3 allocations.
-	kept := false // handed to flushedDuring, so not ours to recycle
+	// that memory for the life of the namespace. A batch under a quarter of
+	// the map's high-water mark lets it go instead. Measured on Machine A,
+	// recycling took a persistent Set from 705 to 421 bytes and 4 to 3
+	// allocations. What is kept is charged to the budget (chargeSpare).
+	kept := false // handed to flushedDuring or back to pending, so not ours to recycle
 	defer func() {
 		clear(records) // drop the values the slice still points at
+		defer func() { p.chargeSpare(cap(p.recBuf)) }()
 		if kept {
 			p.recBuf = records[:0]
 			return
@@ -538,6 +581,10 @@ func (p *persister) flush(ctx context.Context) error {
 	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
 	name := logName(p.ns.name, maxOrder, p.ns.cache.selfID())
 	data := segment.Encode(&segment.File{Kind: segment.KindSegment, Records: records})
+	// The encoded segment is as large as the batch again, and is held for
+	// as long as the write takes: during an outage, the whole timeout.
+	p.transient.Add(int64(len(data)))
+	defer p.transient.Add(-int64(len(data)))
 	// Counted whether or not the write succeeded: PersistFlushes is flush
 	// attempts, and a waiter on it is waiting for the attempt to be over.
 	// A failure is counted last, after the attempt and after its records are
@@ -547,7 +594,8 @@ func (p *persister) flush(ctx context.Context) error {
 	// attempt was added, and take that late addition for the next flush.
 	// TestAFailedFlushDoesNotUndoAWriteMadeDuringIt did, under the race gate.
 	if err := p.store.Put(ctx, name, data); err != nil {
-		p.restorePending(records)
+		p.restoreBatch(batch, batchHigh)
+		kept = true
 		p.flushes.Add(1)
 		p.failures.Add(1)
 		return fmt.Errorf("peercache: persisting %s: %w", name, err)
@@ -556,34 +604,50 @@ func (p *persister) flush(ctx context.Context) error {
 	p.mu.Lock()
 	if p.restoring > 0 {
 		p.flushedDuring = append(p.flushedDuring, batch)
+		p.duringBytes += p.inflightBytes + p.inflightHigh*pendingSlot
 		kept = true
 	}
 	p.inflight = nil
+	p.inflightBytes, p.inflightHigh = 0, 0
 	p.inflightMin = 0
 	p.mu.Unlock()
 	p.written.Add(int64(len(records)))
 	return nil
 }
 
-// restorePending puts records from a failed segment back, keeping any newer
-// record that arrived while the flush ran.
-func (p *persister) restorePending(records []segment.Record) {
+// restoreBatch makes a failed flush's batch the pending map again, with what
+// was recorded while the flush ran merged into it, newest per key. Called by
+// flush, under flushMu.
+//
+// The records once went back one by one into the map the flush had swapped
+// in, while the batch's own map was cleared and kept as the spare: during an
+// outage every failed attempt rebuilt the whole backlog in a second map
+// beside the first. On kind a pod cut off from storage held 219 MB that way
+// at the moment it was OOM-killed. What arrived during the flush is usually
+// far smaller, so it is the part that moves.
+func (p *persister) restoreBatch(batch map[string]segment.Record, high int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	// In the same critical section as the records going back: a restore
 	// overlaying in between would otherwise find them in neither place.
 	p.inflight = nil
 	p.pendingMin, p.inflightMin = minOrder(p.pendingMin, p.inflightMin), 0
-	for i := range records {
-		r := records[i]
-		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {
-			continue
-		} else if ok {
-			p.bytes -= recordSize(&cur)
+	bytes := p.inflightBytes
+	p.inflightBytes, p.inflightHigh = 0, 0
+	for key, cur := range p.pending {
+		if r, ok := batch[key]; ok {
+			if !cur.Newer(&r) {
+				continue // the failed record is the newer one
+			}
+			bytes -= recordSize(&r)
 		}
-		p.pending[r.Key] = r
-		p.bytes += recordSize(&r)
+		batch[key] = cur
+		bytes += recordSize(&cur)
 	}
+	arrived, arrivedHigh := p.pending, max(p.pendingHigh, len(p.pending))
+	p.pending, p.pendingHigh, p.bytes = batch, max(high, len(batch)), bytes
+	clear(arrived)
+	p.spare, p.spareHigh = arrived, arrivedHigh
 }
 
 // Close stops the flusher and flushes what is pending, under ctx.
@@ -870,7 +934,7 @@ func (p *persister) endRestore() {
 	defer p.mu.Unlock()
 	p.restoring--
 	if p.restoring == 0 {
-		p.flushedDuring = nil
+		p.flushedDuring, p.duringBytes = nil, 0
 	}
 }
 
