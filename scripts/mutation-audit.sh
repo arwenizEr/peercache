@@ -1421,6 +1421,12 @@ mutate "the window is the flush interval alone, not its timeout too" \
   '	return p.flushInterval()' \
   'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
 
+mutate "the budget does not count the key lists of passes it serves" \
+  pressure.go \
+  '	total += c.pages.Bytes()' \
+  '	total += 0' \
+  'TestACatchUpPassServedHereIsChargedToTheBudget$' ./tests
+
 # L1 before everything.
 mutate "the L1 tier is never shed" \
   pressure.go \
@@ -3080,7 +3086,7 @@ mutate "every page rebuilds and re-sorts the key list" \
 mutate "a finished pass keeps its key list" \
   internal/pager/pager.go \
   '		if p.passes[id] == ps {
-			delete(p.passes, id)
+			p.deleteLocked(id)
 		}' \
   '		_ = ps' \
   'TestAPassSortsOnceAndCoversEveryKey$' ./internal/pager

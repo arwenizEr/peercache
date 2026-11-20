@@ -4,6 +4,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/arwenizEr/peercache/internal/clock"
 )
@@ -26,7 +27,12 @@ type Pager struct {
 
 	mu     sync.Mutex
 	passes map[string]*pass
+	bytes  int64 // what the kept lists hold; under mu
 }
+
+// headerSize is what a kept list holds per key: a string header. The keys'
+// bytes are the store's.
+const headerSize = int64(unsafe.Sizeof(""))
 
 type pass struct {
 	keys []string
@@ -69,7 +75,7 @@ func (p *Pager) Page(id, after string, limit int, build func() []string) ([]stri
 		sort.Strings(keys)
 		ps = &pass{keys: keys}
 		p.mu.Lock()
-		p.passes[id] = ps
+		p.setLocked(id, ps)
 		p.evictLocked(now, id)
 	}
 	ps.used = now
@@ -84,12 +90,46 @@ func (p *Pager) Page(id, after string, limit int, build func() []string) ([]stri
 	if end >= len(keys) {
 		p.mu.Lock()
 		if p.passes[id] == ps {
-			delete(p.passes, id)
+			p.deleteLocked(id)
 		}
 		p.mu.Unlock()
 		return keys[i:], false
 	}
 	return keys[i:end], true
+}
+
+// Bytes returns what the kept key lists hold, for a memory budget.
+func (p *Pager) Bytes() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.bytes
+}
+
+// Drop discards every kept list and returns what they held. A pass that asks
+// for its next page builds its list again, searched from its cursor, so this
+// costs a rebuild per pass and loses nothing.
+func (p *Pager) Drop() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	freed := p.bytes
+	clear(p.passes)
+	p.bytes = 0
+	return freed
+}
+
+// setLocked keeps ps as id's list, replacing any it had.
+func (p *Pager) setLocked(id string, ps *pass) {
+	p.deleteLocked(id)
+	p.passes[id] = ps
+	p.bytes += int64(cap(ps.keys)) * headerSize
+}
+
+// deleteLocked drops id's list.
+func (p *Pager) deleteLocked(id string) {
+	if old, ok := p.passes[id]; ok {
+		p.bytes -= int64(cap(old.keys)) * headerSize
+		delete(p.passes, id)
+	}
 }
 
 // Passes returns how many passes hold a key list.
@@ -104,7 +144,7 @@ func (p *Pager) Passes() int {
 func (p *Pager) evictLocked(now time.Time, keep string) {
 	for id, ps := range p.passes {
 		if id != keep && now.Sub(ps.used) >= p.idle {
-			delete(p.passes, id)
+			p.deleteLocked(id)
 		}
 	}
 	for len(p.passes) > p.max {
@@ -121,6 +161,6 @@ func (p *Pager) evictLocked(now time.Time, keep string) {
 		if oldest == "" {
 			return
 		}
-		delete(p.passes, oldest)
+		p.deleteLocked(oldest)
 	}
 }

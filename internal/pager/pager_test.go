@@ -86,3 +86,48 @@ func TestPassesAreBounded(t *testing.T) {
 		t.Fatalf("%d passes held, bound is 3", got)
 	}
 }
+
+// TestBytesCountsKeptListsAndDropGivesThemBack: a pass in progress is charged
+// for its list until its last page; Drop frees every list, and a pass resumed
+// after it rebuilds its list and still covers every key once.
+func TestBytesCountsKeptListsAndDropGivesThemBack(t *testing.T) {
+	p := pager.New(clock.NewFake(clock.Epoch), 0, 0)
+	all := keys(1000)
+	build := func() []string { return append([]string(nil), all...) }
+
+	first, more := p.Page("a", "", 100, build)
+	if !more || len(first) != 100 {
+		t.Fatalf("first page: %d keys, more=%v", len(first), more)
+	}
+	p.Page("b", "", 100, build)
+	if got, want := p.Bytes(), int64(2*1000*16); got < want {
+		t.Fatalf("two passes of 1,000 keys charged %d bytes, want at least %d", got, want)
+	}
+
+	if freed := p.Drop(); freed == 0 || p.Bytes() != 0 || p.Passes() != 0 {
+		t.Fatalf("Drop freed %d, left %d bytes in %d passes", freed, p.Bytes(), p.Passes())
+	}
+
+	got := append([]string(nil), first...)
+	after := first[len(first)-1]
+	builds := 0
+	for {
+		page, more := p.Page("a", after, 100, func() []string { builds++; return build() })
+		got = append(got, page...)
+		if !more {
+			break
+		}
+		after = page[len(page)-1]
+	}
+	if builds != 1 {
+		t.Fatalf("the resumed pass built its list %d times, want once", builds)
+	}
+	want := append([]string(nil), all...)
+	sort.Strings(want)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("the pass resumed after Drop returned %d keys, want the %d, each once", len(got), len(want))
+	}
+	if p.Bytes() != 0 {
+		t.Fatalf("a finished pass is still charged %d bytes", p.Bytes())
+	}
+}

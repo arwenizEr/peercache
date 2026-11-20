@@ -1184,7 +1184,10 @@ OOM-killed once its replicas were complete. Run with `GOMEMLIMIT` at about nine
 tenths of the container limit and the budget at about half of it. `New` logs a
 warning when a budget is set and the process has no memory limit.
 
-Over budget, the node sheds down to nine tenths of it, cheapest first:
+Over budget, the node sheds down to nine tenths of it, cheapest first. Before
+any tier it drops the sorted key lists it keeps for the catch-up and hand-off
+passes it serves, which are counted too (16 bytes a key) and which each pass's
+next page rebuilds:
 
 | Tier | What shedding costs | Counted in |
 |---|---|---|
