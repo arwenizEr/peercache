@@ -3,4 +3,4 @@ m16-run*
 m16-fresh/
 m16-solo/
 m16-reset.log
-m16-up.log
+m16-up*.log
