@@ -241,6 +241,14 @@ func (h *handoff) place(ctx context.Context, w handoffWork) {
 		From:      from,
 		Order:     w.entry.Order,
 		Prev:      w.entry.Prev,
+		// The writer's word on what it has stored, as far as this node has
+		// heard it. The receiver may never hear from the writer itself: a
+		// copy that reached it only by hand-off was held to the flush window
+		// alone there, and shed past it while its writer, cut off from the
+		// store, had not stored it (TestDurableSimulation, open question
+		// 68). A bound is the writer's statement and only rises, so passing
+		// it on cannot make it claim more than the writer did.
+		Durable: c.durable.bound(w.namespace, from),
 	}
 
 	placed := false

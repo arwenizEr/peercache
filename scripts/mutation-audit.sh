@@ -1409,6 +1409,12 @@ mutate "a failed flush forgets the lowest order of the batch it puts back" \
   '	p.inflightMin = 0' \
   'TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite$' ./tests
 
+mutate "a hand-off drops the writer's bound" \
+  handoff.go \
+  '		Durable: c.durable.bound(w.namespace, from),' \
+  '		Durable: 0,' \
+  'TestAHandedOffCopyIsKeptUntilItsWriterHasStoredIt$' ./tests
+
 mutate "the window is the flush interval alone, not its timeout too" \
   persistence.go \
   '	return p.flushInterval() + persistFlushTimeout' \

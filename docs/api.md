@@ -1203,7 +1203,8 @@ own budget holds it back. A restarted node gives no bound until a catch-up has
 completed without a failure, since until then its previous run's unflushed
 writes are on its replicas alone. What this keeps beyond the window is a
 dead writer's last unflushed writes, until it returns or they are written
-again. A writer on an earlier release, or one whose application never calls
+again. A copy handed from one replica to another carries the bound its sender
+has heard. A writer on an earlier release, or one whose application never calls
 `CatchUp`, gives no bound and is held to the window
 (`TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`, open
 question 68).

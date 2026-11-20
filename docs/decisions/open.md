@@ -2322,6 +2322,30 @@ interval of its writes, which is what question 60 already keeps.
 
 The bound is read from a lock the write path takes too, once per copy sent.
 
+**Then, from `TestDurableSimulation`.** It failed 10 of 200 schedules, on
+`main` as often as here (4 of 60 against 3 of 60 from one base seed). Three
+causes, in order of count:
+
+- 8 were the judge: a carts key (no persistence, a shed is a loss by design)
+  shed during the final repair, when a revived node's catch-up takes it over
+  its budget, was never noted as shed. The judge now notes sheds after the
+  repair too.
+- 1 was this question's loss: an owner cut off from the store past the window,
+  its replicas shedding the decrement it had not stored. The simulation's
+  nodes never called `CatchUp` before the first revival, so they gave no
+  bound; they now do, as the shop does.
+- 1 was a copy that reached its replica only by hand-off. The replica had never
+  heard from the writer, so it had no bound for it and held the copy to the
+  window. A hand-off now passes on the bound its sender has heard from the
+  writer. A bound is the writer's own statement and only rises, so relaying
+  it claims nothing the writer did not
+  (`TestAHandedOffCopyIsKeptUntilItsWriterHasStoredIt`, 30 of 30 lost
+  without it).
+
+With all three, 200 schedules from the same base seed: see the PR. A catch-up's
+copies still arrive without a bound; the receiver hears one with the writer's
+next write or hand-off.
+
 Tests: `TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`,
 `TestARestartedOwnersCaughtUpWritesAreShedOnceStored`,
 `TestAnOwnerWhoseCatchUpFailedDoesNotReleaseItsReplicas`,

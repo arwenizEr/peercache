@@ -45,6 +45,13 @@ func (w *writerDurability) note(namespace, writer string, bound uint64) {
 	}
 }
 
+// bound returns the bound writer has given for namespace, zero if none.
+func (w *writerDurability) bound(namespace, writer string) uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.by[namespace][writer]
+}
+
 // snapshot returns a copy of namespace's bounds, nil if no writer has sent one.
 func (w *writerDurability) snapshot(namespace string) map[string]uint64 {
 	w.mu.RLock()

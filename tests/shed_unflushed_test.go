@@ -237,23 +237,7 @@ func (fx *shedFixture) restartOwner(t *testing.T) {
 	fx.f.caches["n0"].Namespace("durable", peercache.WithPersistence(fx.store),
 		peercache.WithReplicationFactor(2), peercache.WithSyncReplication())
 	fx.f.caches["n0"].Namespace("filler")
-	// In rounds: the rejoin's timer may be armed after a single advance has
-	// passed, and then waits for the next one (1 run in about 100 did).
-	for round := 0; ; round++ {
-		if round == 10 {
-			t.Fatalf("n0 sees %d members after %d join delays, want 2", fx.f.caches["n0"].Stats().Members, round)
-		}
-		fx.f.clk.Advance(testkit.DefaultJoinDelay)
-		joined := false
-		for i := 0; i < 100_000 && !joined; i++ {
-			joined = fx.f.caches["n0"].Stats().Members == 2 && fx.f.caches["n1"].Stats().Members == 2
-			runtime.Gosched()
-		}
-		if joined {
-			break
-		}
-	}
-	fx.f.convergeTo(t, 2)
+	joinInRounds(t, fx.f)
 }
 
 // catchUp runs CatchUp on id, as the shop's catchUpLoop does before it serves.
@@ -442,5 +426,140 @@ func TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite(t *testing.T) {
 	if lost := fx.lostFrom(t, "n0"); lost > 0 {
 		t.Fatalf("%d of %d acknowledged writes lost: their owner's bound passed them while its flushes failed",
 			lost, len(fx.keys))
+	}
+}
+
+// joinInRounds advances the clock a join delay at a time until every live
+// node sees every other, then waits for the view to settle. In rounds: a
+// rejoin's timer may be armed after a single advance has passed, and then
+// waits for the next one (1 run in about 100 did).
+func joinInRounds(t *testing.T, f *fabric) {
+	t.Helper()
+	n := len(f.live())
+	for round := 0; ; round++ {
+		if round == 10 {
+			t.Fatalf("the fabric has not joined to %d members after %d join delays", n, round)
+		}
+		f.clk.Advance(testkit.DefaultJoinDelay)
+		joined := false
+		for i := 0; i < 100_000 && !joined; i++ {
+			joined = true
+			for _, id := range f.live() {
+				if f.caches[id].Stats().Members != n {
+					joined = false
+					break
+				}
+			}
+			runtime.Gosched()
+		}
+		if joined {
+			break
+		}
+	}
+	f.convergeTo(t, n)
+}
+
+// TestAHandedOffCopyIsKeptUntilItsWriterHasStoredIt: a replica that receives
+// a copy only by hand-off, and never hears from the writer itself, still keeps
+// it until the writer says it is stored. The hand-off passes on the writer's
+// bound; without it the receiver held the copy to the flush window alone and
+// shed it while the writer, cut off from the store, had not stored it. Found by
+// TestDurableSimulation: a promised decrement lost in 1 schedule of 200.
+func TestAHandedOffCopyIsKeptUntilItsWriterHasStoredIt(t *testing.T) {
+	f := newFabricFull(t, 4, false, testkit.MembershipConfig{}, -1,
+		withNodeOptions("n3", peercache.WithMemoryBudget(1<<20)))
+	store := &blackholeStore{BlobStore: persist.Memory()}
+	opts := []peercache.NamespaceOption{peercache.WithPersistence(store),
+		peercache.WithReplicationFactor(2), peercache.WithSyncReplication()}
+	open := func(id string) {
+		f.caches[id].Namespace("durable", opts...)
+		f.caches[id].Namespace("filler")
+	}
+	for _, id := range f.ids {
+		open(id)
+	}
+	f.settle(t)
+	ctx := context.Background()
+	for _, id := range f.ids {
+		if err := f.caches[id].CatchUp(ctx); err != nil {
+			t.Fatalf("CatchUp(%s): %v", id, err)
+		}
+	}
+
+	// Keys n0 owns whether or not n3 is up, whose second holder is n3 when
+	// it is: written while it is down, their copies reach it only by
+	// hand-off when it returns.
+	var keys []string
+	for i := 0; len(keys) < 30; i++ {
+		k := fmt.Sprintf("order-%d", i)
+		if h := holdersAmong(t, f, k, 2); h[0] == "n0" && h[1] == "n3" {
+			keys = append(keys, k)
+		}
+	}
+	f.hardKill(t, "n3")
+	f.clk.Advance(2 * testkit.DefaultFailureTimeout)
+	f.convergeTo(t, 3)
+	f.settle(t)
+	for _, k := range keys {
+		if h := holdersAmong(t, f, k, 1); h[0] != "n0" {
+			t.Fatalf("%s is owned by %s without n3; the keys under test were badly chosen", k, h[0])
+		}
+	}
+
+	store.refusing.Store(true)
+	durable := f.caches["n0"].Namespace("durable")
+	for _, k := range keys {
+		if err := durable.Set(ctx, k, []byte("placed"), 0); err != nil {
+			t.Fatalf("Set(%s): %v", k, err)
+		}
+	}
+	f.revive(t, "n3")
+	open("n3")
+	joinInRounds(t, f)
+	f.settle(t)
+	// Hand-offs drain from a queue after the reconciliation that queued them.
+	waitFor(t, "n3 to receive the copies handed to it", func() bool {
+		return f.caches["n3"].Stats().ReplicaKeys >= int64(len(keys))
+	})
+
+	// Past the window, n3 over its budget.
+	f.clk.Advance(unflushedFor + time.Second)
+	filler := f.caches["n3"].Namespace("filler")
+	for i, written := 0, 0; written < 32; i++ {
+		k := fmt.Sprintf("filler-%d", i)
+		if f.ownerOf(t, k) != "n3" {
+			continue
+		}
+		if err := filler.Set(ctx, k, make([]byte, 64<<10), 0); err != nil {
+			t.Fatalf("Set(%s): %v", k, err)
+		}
+		written++
+	}
+	if f.caches["n3"].Stats().ShedOwned == 0 {
+		t.Fatal("n3 shed no owned data; the pressure this test is about was not constructed")
+	}
+
+	// The writer dies with its flush refused and comes back at once.
+	f.dead["n0"] = true
+	_ = f.caches["n0"].Close(ctx)
+	f.memberships["n0"].Close()
+	f.net.Unregister("n0")
+	store.refusing.Store(false)
+	f.revive(t, "n0")
+	open("n0")
+	joinInRounds(t, f)
+	if err := f.caches["n0"].CatchUp(ctx); err != nil {
+		t.Fatalf("CatchUp(n0): %v", err)
+	}
+	lost := 0
+	ns := func(id string) peercache.Namespace { return f.caches[id].Namespace("durable") }
+	for _, k := range keys {
+		if _, err := readWithRetryFrom(t, f, ns, "n0", k); err != nil {
+			lost++
+		}
+	}
+	if lost > 0 {
+		t.Fatalf("%d of %d acknowledged writes lost: their only other copy came by hand-off, "+
+			"and its holder shed it past the window though the writer had not stored it", lost, len(keys))
 	}
 }
