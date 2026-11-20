@@ -30,7 +30,8 @@ const pressureLargeWrite = 64 << 10
 // # The order of the tiers
 //
 // Over budget, it sheds down to nine tenths of the budget, taking from the
-// cheapest tier first:
+// cheapest tier first, after dropping the key lists of the catch-up and
+// hand-off passes it serves, which the next page of each rebuilds:
 //
 //  1. L1, whole. Copies of keys owned elsewhere, bounded by a TTL of seconds;
 //     losing them costs round trips and never data.
@@ -86,6 +87,8 @@ func (p *pressure) used() int64 {
 	total := c.replicas.Bytes()
 	// Restored keys waiting to be sent to their replicas.
 	total += c.replicator.restored.bytes.Load()
+	// The sorted key lists of catch-up and hand-off passes this node serves.
+	total += c.pages.Bytes()
 	for _, ns := range namespaces {
 		if ns.store != nil {
 			total += ns.store.Bytes()
@@ -159,6 +162,12 @@ func (p *pressure) relieve() {
 			ns.persister.flushSoon()
 		}
 	}
+
+	// 0. The key lists of passes in progress. Cheaper than any tier: a pass
+	// that asks for its next page rebuilds its list from its cursor, and
+	// nothing is lost. On kind a node serving a partition heal's catch-ups
+	// held 33 MB of them, uncounted.
+	excess -= c.pages.Drop()
 
 	// 1. L1.
 	for _, ns := range namespaces {

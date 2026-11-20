@@ -11,5 +11,7 @@
 // The cost is memory: a kept list is one string header per key, 16 bytes,
 // sharing the keys' bytes with the store — 16 MB for a million-key pass — and
 // at most [DefaultMaxPasses] are kept, each dropped at its last page or after
-// [DefaultIdle] without one.
+// [DefaultIdle] without one. [Pager.Bytes] reports it for the memory budget,
+// and [Pager.Drop] gives it back: on kind a node serving a partition heal's
+// catch-ups held 33 MB of them, charged to nothing.
 package pager

@@ -2266,3 +2266,22 @@ found this shape the root of them.
 **Picked for now:** 1, which is tested and audited as it stands. 2 is the
 better structure and the next thing to do in this area; it is a rewrite of the
 shed path, to be done with its own tests rather than folded into a fix.
+
+## 70. The key lists of catch-up passes a node serves were charged to nothing — found on kind, resolved
+
+**Found** in the heap profiles of kind run v114's partition scenario. On the
+pod OOM-killed first, the live heap grew from 309 to 567 MB while the budget's
+count went from 357 to 461 MB. Of what it missed, 33 MB was `pager.Page`: the
+sorted key list a node keeps for each catch-up and hand-off pass it serves, one
+string header per key the asker is entitled to, up to 16 passes at once. A heal
+starts several at once on every node.
+
+**Picked:** the budget counts them, and a relief round drops them before
+shedding any tier. A pass whose list is gone rebuilds it at its next page,
+searched from its cursor, so dropping one costs a rebuild and nothing else.
+What else the profile showed outside the count — gRPC's response buffers and
+a marshalled page per response in flight, 26 MB each — is transport memory per
+request, bounded by the page size and the number of peers, and left uncounted.
+
+`TestACatchUpPassServedHereIsChargedToTheBudget`,
+`TestBytesCountsKeptListsAndDropGivesThemBack`.
