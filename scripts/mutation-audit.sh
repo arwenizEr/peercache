@@ -1271,7 +1271,7 @@ mutate "owned data is shed while replicas could have been" \
 mutate "the budget sheds replicas of unflushed persistent writes" \
   pressure.go \
   '			return keep[name]' \
-  '			return nil' \
+  '			return keep[""]' \
   'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
 
 mutate "a replica map is never rebuilt, so it keeps the slots of what left" \
