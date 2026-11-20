@@ -4,6 +4,7 @@
 //	shopload check -target URL -ledger dir
 //	shopload stale -pods URL,URL,... -rounds 50
 //	shopload limit -target URL
+//	shopload preload -target URL -orders N
 //
 // run writes every checkout's outcome to the ledger: acknowledged (201 or a
 // retry's 200), refused (409, out of stock), or uncertain (never answered
@@ -11,7 +12,8 @@
 // acknowledged order is lost and that stock agrees with the ledger, counting
 // the uncertain ones as the only slack. stale measures how long a catalog
 // update takes to reach every pod. limit checks that a rate limit admits
-// exactly its quota across all pods.
+// exactly its quota across all pods. preload writes a fixed number of placed
+// orders, so a run starts from a known amount of data.
 package main
 
 import (
@@ -39,11 +41,12 @@ import (
 const (
 	initialStock = 20_000
 	rateLimit    = 6000
+	tracedOrders = "t."
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: shopload run|check|stale|limit [flags]")
+		fmt.Fprintln(os.Stderr, "usage: shopload run|check|stale|limit|preload [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -56,6 +59,8 @@ func main() {
 		err = stale(os.Args[2:])
 	case "limit":
 		err = limit(os.Args[2:])
+	case "preload":
+		err = preload(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -162,6 +167,7 @@ func run(args []string) error {
 	items := fs.Int("items", 50, "distinct stock items")
 	prefix := fs.String("prefix", "", "stock item name prefix; a fresh one per scenario keeps each run's stock its own")
 	ledgerDir := fs.String("ledger", "ledger", "directory for the checkout ledger")
+	traceEvery := fs.Int("trace-every", 0, "give every Nth order an ID the shop traces when TRACE_ORDERS is set (0: none)")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(*ledgerDir, 0o755); err != nil {
@@ -230,7 +236,11 @@ func run(args []string) error {
 					st.add("cart-get", code, took, err)
 				default:
 					item := fmt.Sprintf("%si%d", *prefix, r.IntN(*items))
-					order := fmt.Sprintf("%s-%d", runID, seq.Add(1))
+					n := seq.Add(1)
+					order := fmt.Sprintf("%s-%d", runID, n)
+					if *traceEvery > 0 && n%int64(*traceEvery) == 0 {
+						order = tracedOrders + order
+					}
 					write(attempted, order+" "+item)
 					outcome := checkout(st, *target, order, item, user)
 					switch outcome {
@@ -301,7 +311,7 @@ func check(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	target := fs.String("target", "http://localhost:8080", "shop service URL")
 	ledgerDir := fs.String("ledger", "ledger", "the run's ledger")
-	pods := fs.String("pods", "", "comma-separated pod URLs; with it, each wrong count prints its key's history from every pod")
+	pods := fs.String("pods", "", "comma-separated pod URLs; with it, each wrong count and each lost traced order prints its key's history from every pod")
 	_ = fs.Parse(args)
 
 	acked, err := readLedger(*ledgerDir, "acknowledged")
@@ -334,13 +344,16 @@ func check(args []string) error {
 	}
 
 	// 1. No acknowledged order is lost.
-	var lost []string
+	var lost, lostTraced []string
 	perItem := map[string]int{}
 	for _, o := range acked {
 		perItem[o[1]]++
 		code, body, _, err := retryGet(*target + "/order/" + o[0])
 		if err != nil || code != http.StatusOK || !strings.HasPrefix(body, "placed ") {
 			lost = append(lost, fmt.Sprintf("%s(%d,%q,%v)", o[0], code, body, err))
+			if strings.HasPrefix(o[0], tracedOrders) {
+				lostTraced = append(lostTraced, o[0])
+			}
 		}
 	}
 	slack := map[string]int{}
@@ -392,6 +405,15 @@ func check(args []string) error {
 	if *pods != "" {
 		for _, it := range wrongItems {
 			printHistory(strings.Split(*pods, ","), "stock", it)
+		}
+		// Ten are enough to see a pattern; a run that lost hundreds lost
+		// them the same way.
+		fmt.Println("lost traced orders:", len(lostTraced))
+		for i, o := range lostTraced {
+			if i == 10 {
+				break
+			}
+			printHistory(strings.Split(*pods, ","), "orders", o)
 		}
 	}
 	if len(lost) > 0 || len(wrong) > 0 {
@@ -545,5 +567,71 @@ func limit(args []string) error {
 	if ok.Load()+other.Load() < rateLimit || ok.Load() > rateLimit {
 		return fmt.Errorf("admitted %d of a %d quota", ok.Load(), rateLimit)
 	}
+	return nil
+}
+
+// preload writes -orders placed orders through the shop's preload endpoint,
+// in chunks spread over the service's pods, and reports how long it took.
+// The orders are named prefix+i and belong to no ledger: check never reads
+// them, they are only there to be held, flushed, shed and restored.
+func preload(args []string) error {
+	fs := flag.NewFlagSet("preload", flag.ExitOnError)
+	target := fs.String("target", "http://localhost:8080", "shop service URL")
+	orders := fs.Int("orders", 100_000, "how many orders to write")
+	prefix := fs.String("prefix", "preload-", "order ID prefix")
+	chunk := fs.Int("chunk", 5000, "orders per request")
+	workers := fs.Int("workers", 8, "concurrent requests")
+	_ = fs.Parse(args)
+
+	// A chunk is written with synchronous replication and can take longer
+	// than the shared client's five seconds.
+	c := &http.Client{Timeout: 2 * time.Minute}
+	start := time.Now()
+	var next atomic.Int64
+	var done atomic.Int64
+	errs := make(chan error, *workers)
+	var wg sync.WaitGroup
+	for w := 0; w < *workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				from := int(next.Add(int64(*chunk))) - *chunk
+				if from >= *orders {
+					return
+				}
+				n := min(*chunk, *orders-from)
+				u := fmt.Sprintf("%s/admin/preload?prefix=%s&from=%d&n=%d", *target, url.QueryEscape(*prefix), from, n)
+				var err error
+				// A chunk is idempotent: retry it through a failover's 503.
+				for attempt := 0; attempt < 10; attempt++ {
+					var resp *http.Response
+					resp, err = c.Post(u, "", nil)
+					if err == nil {
+						body, _ := io.ReadAll(resp.Body)
+						resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							break
+						}
+						err = fmt.Errorf("chunk %d: %d %s", from, resp.StatusCode, strings.TrimSpace(string(body)))
+					}
+					<-time.After(time.Second)
+				}
+				if err != nil {
+					errs <- err
+					return
+				}
+				if d := done.Add(int64(n)); d%100_000 < int64(n) {
+					fmt.Println("preload:", d, "orders,", time.Since(start).Round(time.Second))
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	if err := <-errs; err != nil {
+		return err
+	}
+	fmt.Println("preload:", done.Load(), "orders in", time.Since(start).Round(time.Millisecond))
 	return nil
 }
