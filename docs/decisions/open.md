@@ -2267,6 +2267,109 @@ found this shape the root of them.
 better structure and the next thing to do in this area; it is a rewrite of the
 shed path, to be done with its own tests rather than folded into a fix.
 
+## 68. A replica shed the only copies of a restarted owner's unflushed writes — found on kind, resolved
+
+**Found** on kind, run v115 (branch `count-flush-in-budget`), kill -9
+scenario: 15 acknowledged orders returned 404 from every pod. All 15 were owned
+by the pod killed, `shop-2`, and were written in the second before its SIGKILL
+(the checkouts in flight at the kill were 400 sequence numbers later). The pod
+was back under its name within a second, before failure detection, so nobody
+was promoted in its place, and its catch-up failed "over memory budget" for
+minutes. Its replicas held the writes, but question 60's window — keep a
+persistent write's copy for one flush interval and the flush timeout — assumes
+the owner lives to flush. Past it, both replicas, under pressure, shed the
+copies; the catch-up that finally ran found nothing to pull. Question 60's own
+loss came back through the case its fix did not cover. The branch did not
+cause it: it charged more to the budget, which put the cluster into owned and
+replica shedding hard enough to reach it.
+
+A second hole sat beside it: `CatchUp` marks the node caught up even when a
+peer failed, so that readiness opens. The catch-up gate (question 49) then lets
+writes in on a node whose previous run's writes are not back. That is the
+gate's documented trade, left as it is here; it is why "caught up" could not be
+the condition below.
+
+`TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding` lost 50 of
+50 acknowledged writes this way; without the replica's pressure it lost none.
+
+**Options:**
+
+1. A longer window. Any length is a guess at how long a restarted owner's
+   catch-up takes, and kind's took minutes.
+2. Never shed replicas of persistent namespaces. Correct, and it removes the
+   tier the budget sheds second, which is most of what it frees under a
+   failover.
+3. The owner says what it has stored. Each copy carries `Durable`: every
+   record the writer has made in the namespace at or below that order is in
+   storage. It is the lowest order still pending or being flushed, less one,
+   and never later than a second ago, which covers a write ordered in the
+   store and not yet recorded. A replica keeps, per writer, the highest bound
+   it has received, and keeps a writer's copies above it as well as the
+   window's. A restarted node sends no bound until a catch-up has completed
+   with no failure, which is when its previous run's unflushed writes are back
+   in its pending records; until then the bound its previous run sent stands,
+   and covers none of them.
+
+**Picked:** 3. It never sheds more than before: the floor is the lower of the
+window and the bound. A writer that sends no bound — v1.1 and earlier, or a
+node whose application never calls `CatchUp` — is held to the window as before,
+so a rolling upgrade protects each writer's copies once both it and the replica
+run this. The cost
+is what a dead writer's replicas keep: its last unflushed interval's copies,
+until it comes back or the keys are written again. A writer that never comes
+back under its name leaves those copies held; they are bounded by one flush
+interval of its writes, which is what question 60 already keeps.
+
+The bound is read from a lock the write path takes too, once per copy sent.
+
+**Then, from `TestDurableSimulation`.** It failed 10 of 200 schedules, on
+`main` as often as here (4 of 60 against 3 of 60 from one base seed). Three
+causes, in order of count:
+
+- 8 were the judge: a carts key (no persistence, a shed is a loss by design)
+  shed during the final repair, when a revived node's catch-up takes it over
+  its budget, was never noted as shed. The judge now notes sheds after the
+  repair too.
+- 1 was this question's loss: an owner cut off from the store past the window,
+  its replicas shedding the decrement it had not stored. The simulation's
+  nodes never called `CatchUp` before the first revival, so they gave no
+  bound; they now do, as the shop does.
+- 1 was a copy that reached its replica only by hand-off. The replica had never
+  heard from the writer, so it had no bound for it and held the copy to the
+  window. A hand-off now passes on the bound its sender has heard from the
+  writer. A bound is the writer's own statement and only rises, so relaying
+  it claims nothing the writer did not
+  (`TestAHandedOffCopyIsKeptUntilItsWriterHasStoredIt`, 30 of 30 lost
+  without it).
+
+With all three, 200 schedules from the same base seed: see the PR. A catch-up's
+copies still arrive without a bound; the receiver hears one with the writer's
+next write or hand-off.
+
+Tests: `TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`,
+`TestARestartedOwnersCaughtUpWritesAreShedOnceStored`,
+`TestAnOwnerWhoseCatchUpFailedDoesNotReleaseItsReplicas`,
+`TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite`,
+`TestShedVisitKeepsEachWritersCopiesFromItsOwnFloor`,
+`TestAReplicateRequestsDurableBoundCrossesARollingUpgrade`.
+
+## 69. A replica copy could leave without an event, and the simulation's judge missed sheds — found by the durable simulation, resolved
+
+**Found** after question 68's fixes, in 1 of 200 schedules: a carts key
+(replicated, no persistence) unreadable, with one replica's acceptance the
+last event any node recorded. Two replica paths removed a copy without a
+trace: a deletion from the writer, which is also how an owner's shed tells
+its replicas to drop their copies, and the eviction of copies a node no longer
+holds at replication factor 1. Traced (`replica-deleted`, `replica-evicted`),
+the replay showed the cause: `kill` heals a partition before it picks its
+victim; the healed owner took the key back, went over its budget, and shed it
+— a loss by design in a namespace without persistence — and was then killed
+in the same step, before the judge's per-step look for sheds. The judge now
+also looks just before a kill or a drain.
+
+No library behaviour changed; the two trace kinds are new.
+`TestAReplicaCopyRemovedByADeleteIsTraced` holds the deletion's.
+
 ## 70. The key lists of catch-up passes a node serves were charged to nothing — found on kind, resolved
 
 **Found** in the heap profiles of kind run v114's partition scenario. On the

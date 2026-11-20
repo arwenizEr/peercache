@@ -86,6 +86,7 @@ func (c *cache) CatchUp(ctx context.Context) error {
 		// Nothing to catch up from. A single node holds everything it
 		// owns and replicates to nobody.
 		c.readiness.markCaughtUp()
+		c.readiness.markPulled()
 		if c.guard != nil {
 			c.readiness.markCurrent(c.guard.Stats().Epoch)
 		}
@@ -99,6 +100,7 @@ func (c *cache) CatchUp(ctx context.Context) error {
 	err := c.catchup.run(ctx)
 	if err == nil {
 		c.readiness.markCurrent(epoch)
+		c.readiness.markPulled()
 	}
 	// Marked even when individual peers failed. Catching up from three of
 	// four owners leaves this node far better placed than never trying, and

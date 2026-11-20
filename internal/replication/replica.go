@@ -2,7 +2,6 @@ package replication
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -738,12 +737,22 @@ func (s *Store) ShedCount() int64 { return s.shed.Load() }
 // docs/decisions/open.md question 60. A namespace it returns math.MaxUint64
 // for keeps nothing.
 func (s *Store) Shed(target int64, keepFrom func(namespace string) uint64) int64 {
-	return s.ShedVisit(target, keepFrom, nil)
+	if keepFrom == nil {
+		return s.ShedVisit(target, nil, nil)
+	}
+	return s.ShedVisit(target, func(namespace string) func(writer string) uint64 {
+		floor := keepFrom(namespace)
+		return func(string) uint64 { return floor }
+	}, nil)
 }
 
 // ShedVisit is [Store.Shed] with visit called for each copy shed, under its
 // shard's lock: it must be quick and must not call into this store.
-func (s *Store) ShedVisit(target int64, keepFrom func(namespace string) uint64, visit func(namespace, key string, e Entry)) int64 {
+//
+// keepFrom here names the floor per writer: called once per namespace, it
+// returns the function that gives, for a copy's Entry.From, the order from
+// which that writer's copies are kept. A nil function keeps nothing.
+func (s *Store) ShedVisit(target int64, keepFrom func(namespace string) func(writer string) uint64, visit func(namespace, key string, e Entry)) int64 {
 	if target <= 0 {
 		return 0
 	}
@@ -769,9 +778,9 @@ func (s *Store) ShedVisit(target int64, keepFrom func(namespace string) uint64, 
 		if nr == nil {
 			continue
 		}
-		floor := uint64(math.MaxUint64)
+		var floorOf func(string) uint64
 		if keepFrom != nil {
-			floor = keepFrom(name)
+			floorOf = keepFrom(name)
 		}
 		first := nr.start()
 		for j := 0; j < replicaShards && freed < target; j++ {
@@ -785,7 +794,7 @@ func (s *Store) ShedVisit(target int64, keepFrom func(namespace string) uint64, 
 				if freed+data+slots >= target {
 					break
 				}
-				if e.Order >= floor {
+				if floorOf != nil && e.Order >= floorOf(e.From) {
 					continue
 				}
 				data += dataSize(key, e)

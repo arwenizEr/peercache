@@ -1335,6 +1335,26 @@ outside the timer leaves more collection inside it across 64 maps than one:
 Evict and Drain run once per reconciliation, Sweep once a second; none is on a
 request's path, and what a request waits for behind them is now a 64th.
 
+### Each writer's durable bound (open question 68)
+
+A replica's floor is now chosen per writer, and every copy of a persistent
+write carries its owner's bound, read under the persister's lock as it is
+sent. Machine A, 2026-11-20, `main` (0cbd367) against the branch, five runs of
+the shed and six of the write, medians:
+
+| Benchmark | main | with bounds |
+|---|---|---|
+| `BenchmarkReplicaShed/no-floor`, ns/op, `-benchtime 20x` | 1,013,440 | 1,020,730 |
+| `BenchmarkReplicaShed/youngest-tenth-kept`, ns/op | 1,243,235 | 1,237,960 |
+| `BenchmarkPersistentReplicatedSet`, ns/op, `-benchtime 20000x` | 16,130 | 16,598 |
+| `BenchmarkPersistentReplicatedSet`, B/op and allocs/op | 17,377, 233.5 | 17,411, 234 |
+
+The write's 3 % is inside its own spread (main's six runs span 15,410 to
+19,180), and the bytes and allocations are the same: the bound is a lock and
+two loads. `BenchmarkPersistentReplicatedSet` is new: a synchronous write at
+replication factor 3 in a persistent namespace, on an owner that has caught
+up, so the bound is read on every copy.
+
 ## Owned store and restores — counting what the budget missed
 
 Machine A, median of five runs. The owned store charges spare map slots and
@@ -1398,6 +1418,25 @@ update, is the larger entry.
 `TestAccountedBytesCoverTheLiveHeap` in `internal/store`, 22-byte keys and
 48-byte values: 185 bytes an entry beyond key and value at a million entries
 (153 before), 156 at 300,000. `store.EntryOverhead` is 192 (160 before).
+
+## Unwritten records — what the budget charges a flush
+
+Machine A (i7-12700K), 2026-11-19, not under the race detector. Test binaries
+of main and this branch run alternately, four rounds of three runs each.
+
+| Benchmark | main | this branch |
+|---|---|---|
+| `BenchmarkPersistentSet` | 926 ns | 926 ns |
+| `BenchmarkPersistFlushSpread` | 100.6 ms, 4096 records a flush | 100.5 ms, 4096 records a flush |
+
+A write records exactly as before; a flush adds two atomic stores and a
+charge for its segment, and a failed flush now merges what arrived during it
+into its batch instead of copying the batch.
+
+`TestPendingSizeCoversTheLiveHeap` in `internal/segment`, 22-byte keys,
+48-byte values, the namespace and writer strings allocated per record: 265
+bytes a record beyond its strings and value at a million records, 223 at
+300,000. `segment.PendingOverhead` is 288; it was 32.
 
 ## Invalidation hints under a burst of writes
 

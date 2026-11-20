@@ -1165,7 +1165,14 @@ pages in flight. What a persistent namespace's restores and compactions have
 read from storage and not yet applied, the logs kept for them, and restored
 keys waiting to be sent to their replicas are counted: on kind a failover's
 restores held 150 to 200 MB of them, and the restore backlog 80 MB, outside a
-budget that read 440 MB of 512 when its pods were OOM-killed. Off by default.
+budget that read 440 MB of 512 when its pods were OOM-killed. So are a
+persistent namespace's records waiting to be written — 288 bytes of overhead
+a record beyond its key and value (`TestPendingSizeCoversTheLiveHeap`) — and,
+while a flush writes, its batch and the segment encoded from it: before 1.1.3
+a record cost 32 bytes, and a flush's batch nothing from the moment it left the
+pending set, and on kind a pod cut off from storage by a partition held 426 MB
+in its flush when it was OOM-killed with the budget reading 575 MB of 512
+(`TestAFlushThatCannotWriteIsStillChargedToTheBudget`). Off by default.
 
 It bounds the data, not the process. Without a memory limit the Go runtime
 lets the heap reach twice its live size before collecting: a pod budgeted at
@@ -1196,6 +1203,21 @@ an owner killed in the window take an acknowledged write with it. Copies of
 older writes, which catch-up and restores bring, are shed as before. What this
 keeps is bounded by the write rate: one window's writes
 (`TestAnUnflushedWriteSurvivesItsReplicaNodeShedding`, open question 60).
+
+The window assumes the owner lives to flush. Each copy therefore also carries
+its writer's word on what it has stored: every record up to some order. A
+replica keeps a writer's copies above that bound however old they are, so an
+owner killed before its flush and restarted under the same name finds its
+writes on its replicas when its catch-up finally runs, minutes later if its
+own budget holds it back. A restarted node gives no bound until a catch-up has
+completed without a failure, since until then its previous run's unflushed
+writes are on its replicas alone. What this keeps beyond the window is a
+dead writer's last unflushed writes, until it returns or they are written
+again. A copy handed from one replica to another carries the bound its sender
+has heard. A writer on an earlier release, or one whose application never calls
+`CatchUp`, gives no bound and is held to the window
+(`TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`, open
+question 68).
 
 The budget is checked every 64 writes, on any write of
 64 KiB or more, and once a second, so the accounted size can run past it by
@@ -1593,7 +1615,9 @@ across several nodes. `WithKeyTrace` records, for the keys of a namespace that
 start with a prefix, every change to what this node holds: a write or delete
 the owner applied, a replica copy stored, refused or in conflict (a fork), a
 promotion, a demotion, a hand-off, a restore from storage, a shed of the owned
-value or of a replica copy, a read-back, a catch-up install. Each `KeyEvent` carries this node's clock time,
+value or of a replica copy, a read-back, a catch-up install, a replica copy
+removed by its writer's deletion or evicted as no longer this node's. Each
+`KeyEvent` carries this node's clock time,
 the write's order and writer, the stored version, and the value's length and a
 hash — never the value (`docs/decisions/0043-key-trace.md`).
 

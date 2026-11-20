@@ -351,6 +351,16 @@ func newFabricFull(t testing.TB, n int, counting bool, mcfg testkit.MembershipCo
 	// inside peercache.New — so advancing before they all exist would admit
 	// a partial view and arm timers for intermediate ones.
 	clk.Advance(2 * testkit.DefaultJoinDelay)
+	// Another join delay at a time while it has not converged: a join's
+	// timer can be armed after the advance has passed and then waits for
+	// the next one. About 1 fabric in 600 did, under -count=100. A fabric
+	// that converges on the first advance, nearly all, sees no other.
+	for round := 0; !f.convergedWithin(1_000_000); round++ {
+		if round == 5 {
+			break // converge below reports what each node sees
+		}
+		clk.Advance(testkit.DefaultJoinDelay)
+	}
 	f.converge(t)
 
 	t.Cleanup(func() {
@@ -365,6 +375,25 @@ func newFabricFull(t testing.TB, n int, counting bool, mcfg testkit.MembershipCo
 		f.net.Close()
 	})
 	return f
+}
+
+// convergedWithin reports whether every cache's view holds the full membership
+// within yields scheduler yields.
+func (f *fabric) convergedWithin(yields int) bool {
+	for i := 0; i < yields; i++ {
+		settled := true
+		for _, id := range f.ids {
+			if f.caches[id].Stats().Members != len(f.ids) {
+				settled = false
+				break
+			}
+		}
+		if settled {
+			return true
+		}
+		runtime.Gosched()
+	}
+	return false
 }
 
 // converge waits until every cache's ownership table holds the full membership.

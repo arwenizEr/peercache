@@ -18,6 +18,18 @@ change the public API.
 
 ### Fixed
 
+- The memory budget counts a persistent namespace's unwritten records at what
+  they take. A pending record was charged 32 bytes of overhead for 265
+  measured, now 288; a flush's batch was charged nothing from the moment it
+  left the pending set until its write ended, which during an outage is the
+  whole flush timeout, every attempt, and the segment encoded from it nothing
+  at all; and a failed flush copied its batch back into a second map while the
+  first was kept, cleared, for reuse. On kind, a pod cut off from the object
+  store by a partition was OOM-killed at 1 GiB with its budget reading 575 MB
+  of 512 and 426 MB of its heap in the flush. The batch is now charged while it
+  is written, the segment while it is held, the reused map and slice by what
+  they keep, and a failed batch becomes the pending set again, with what
+  arrived during the attempt merged into it.
 - A key the memory budget shed from a persistent namespace is no longer
   answered as absent when storage cannot be read back. The failed read was
   ignored, so an `Increment` counted from zero and its write outranked the

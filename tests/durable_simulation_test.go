@@ -206,6 +206,16 @@ func runDurableSimulation(t *testing.T, seed int64) {
 	}
 	f.clk.Advance(2 * ownership.DefaultActivationDelay)
 	f.settle(t)
+	// Every node catches up before it serves, as the shop does and as a
+	// revived one does below. Until then a node gives no durable bound, and
+	// its replicas keep its copies for the flush window alone (open question
+	// 68): an owner cut off from the store past that window lost a promised
+	// decrement to its replicas' budget, 2 of 200 schedules.
+	for _, id := range f.ids {
+		if err := f.caches[id].CatchUp(context.Background()); err != nil {
+			t.Fatalf("CatchUp(%s): %v", id, err)
+		}
+	}
 
 	for step := 0; step < durSteps; step++ {
 		s.step()
@@ -234,6 +244,11 @@ func runDurableSimulation(t *testing.T, seed int64) {
 		}
 	}
 	f.settle(t)
+	// The repair sheds too: a revived node's catch-up can take it over its
+	// budget, and a carts key it then sheds is lost by design, as during the
+	// schedule. Unnoted, that loss was judged a disagreement: 8 of the 10
+	// failures of a 200-schedule run on 2026-11-20 ended in a shed here.
+	s.noteCartsShed()
 
 	wrong := append([]string(nil), s.violations...)
 	checked := 0
@@ -340,10 +355,15 @@ func (s *durableSim) keyHistory(namespace, key string) string {
 // key, before killing it takes that memory: a failure's history is otherwise
 // only what the survivors saw.
 func (s *durableSim) keepHistories(victim string) {
-	for key := range s.ledger {
-		for _, e := range s.f.caches[victim].KeyHistory("stock", key) {
-			s.logf("  [%s stock/%s] %d %s order=%d writer=%s v=%d hash=%s %s",
-				victim, key, e.At, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+	for _, l := range []struct {
+		name   string
+		ledger map[string]*durLedger
+	}{{"stock", s.ledger}, {"carts", s.carts}} {
+		for key := range l.ledger {
+			for _, e := range s.f.caches[victim].KeyHistory(l.name, key) {
+				s.logf("  [%s %s/%s] %d %s order=%d writer=%s v=%d hash=%s %s",
+					victim, l.name, key, e.At, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+			}
 		}
 	}
 }
@@ -534,6 +554,9 @@ func (s *durableSim) drain() {
 	err := s.f.caches[victim].Drain(context.Background())
 	cut := s.stores[victim].cut.Load()
 	s.keepHistories(victim)
+	// A shed earlier in this step, on the victim, goes with it: kill and drain
+	// heal a partition first, and the owner the heal restores can shed at once.
+	s.noteCartsShed()
 	s.f.dead[victim] = true
 	_ = s.f.caches[victim].Close(context.Background())
 	s.f.memberships[victim].Close()
@@ -585,6 +608,9 @@ func (s *durableSim) kill() {
 		cut = true
 	}
 	s.keepHistories(victim)
+	// A shed earlier in this step, on the victim, goes with it: kill and drain
+	// heal a partition first, and the owner the heal restores can shed at once.
+	s.noteCartsShed()
 	s.f.dead[victim] = true
 	_ = s.f.caches[victim].Close(context.Background())
 	s.f.memberships[victim].Close()

@@ -52,6 +52,8 @@ const (
 	ReplicaShed     = "replica-shed"     // the memory budget dropped a replica copy
 	ReadBack        = "read-back"        // a shed key was read back from storage
 	CatchUp         = "catch-up"         // catch-up installed a copy
+	ReplicaDeleted  = "replica-deleted"  // a deletion from the key's writer removed the copy here
+	ReplicaEvicted  = "replica-evicted"  // a copy was dropped here as no longer this node's to hold
 )
 
 // Hash is the hash events carry for a value.
