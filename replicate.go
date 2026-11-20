@@ -199,6 +199,9 @@ type replicaWork struct {
 	// prev is the order of the value the write replaced.
 	prev    uint64
 	targets []core.Node
+	// persister is set for this node's own writes to a persistent
+	// namespace: the copy carries its durableThrough, read as it is sent.
+	persister *persister
 }
 
 func newReplicator(c *cache) *replicator {
@@ -404,6 +407,9 @@ func (r *replicator) fanOut(ctx context.Context, w replicaWork) error {
 		Deleted:   w.deleted,
 		Order:     w.order,
 		Prev:      w.prev,
+	}
+	if w.persister != nil {
+		req.Durable = w.persister.durableThrough()
 	}
 
 	// Every target at once. One after another, a synchronous write at

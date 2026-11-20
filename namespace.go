@@ -693,6 +693,7 @@ func (n *namespace) fanOut(ctx context.Context, key string, encoded []byte, ttl 
 		prev:      prev,
 		deleted:   deleted,
 		targets:   targets,
+		persister: n.persister,
 	}); err != nil {
 		// Only synchronous replication fails here, and by then the write is
 		// applied on this node: there is no rollback. So it is reported as

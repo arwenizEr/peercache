@@ -140,6 +140,12 @@ type persister struct {
 	inflight      map[string]segment.Record
 	flushedDuring []map[string]segment.Record
 	restoring     int
+	// pendingMin and inflightMin are the lowest order recorded in pending
+	// and in inflight, zero when there is none: what durableThrough must
+	// stay below. Lower bounds, not exact: a record replaced by a newer
+	// write leaves pendingMin where it was, which only errs towards
+	// claiming less. Under mu.
+	pendingMin, inflightMin uint64
 
 	kick chan struct{}
 	done chan struct{}
@@ -269,6 +275,9 @@ func (p *persister) record(key string, value []byte, expiresAt int64, order uint
 	}
 	p.pending[key] = r
 	p.bytes += recordSize(&r)
+	// An order of zero would be below every bound, so it is counted as one:
+	// nothing is vouched for until it is written.
+	p.pendingMin = minOrder(p.pendingMin, max(order, 1))
 	full := p.bytes >= persistFlushBytes
 	p.mu.Unlock()
 
@@ -308,6 +317,45 @@ func (p *persister) flushInterval() time.Duration {
 // writes this young (docs/decisions/open.md question 60).
 func (p *persister) unflushedFor() time.Duration {
 	return p.flushInterval() + persistFlushTimeout
+}
+
+// durableLag is how far behind the wall clock durableThrough stays when
+// nothing is pending. A write takes its order in the owned store and is
+// recorded here a moment later; a bound read in between, from the clock alone,
+// would cover a write this node has not recorded yet. A second is that moment
+// many times over, and the replica's own window (keepFrom) covers longer.
+const durableLag = time.Second
+
+// durableThrough is the order at or below which every record this node has
+// made in this namespace is in storage: wire.ReplicateRequest.Durable. Zero
+// until this node has completed a catch-up without a failure. A node that
+// restarted under the same name owns its previous run's writes, and those its
+// previous run had not flushed are on its replicas alone until catch-up brings
+// them back here, into pending; vouching for them before then would let the
+// replicas shed the last copies (docs/decisions/open.md question 68).
+func (p *persister) durableThrough() uint64 {
+	if !p.ns.cache.readiness.pulled.Load() {
+		return 0
+	}
+	p.mu.Lock()
+	low := minOrder(p.pendingMin, p.inflightMin)
+	p.mu.Unlock()
+	d := uint64(hlc.FromMillis(p.clk.Now().Add(-durableLag).UnixMilli()))
+	if low != 0 && low-1 < d {
+		d = low - 1
+	}
+	return d
+}
+
+// minOrder is the lower of two orders, zero meaning none.
+func minOrder(a, b uint64) uint64 {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	}
+	return min(a, b)
 }
 
 // noteShed records that the memory budget dropped key from the owned store,
@@ -455,6 +503,7 @@ func (p *persister) flush(ctx context.Context) error {
 	}
 	p.bytes = 0
 	p.inflight = batch
+	p.inflightMin, p.pendingMin = p.pendingMin, 0
 	p.mu.Unlock()
 
 	records := p.recBuf[:0]
@@ -510,6 +559,7 @@ func (p *persister) flush(ctx context.Context) error {
 		kept = true
 	}
 	p.inflight = nil
+	p.inflightMin = 0
 	p.mu.Unlock()
 	p.written.Add(int64(len(records)))
 	return nil
@@ -523,6 +573,7 @@ func (p *persister) restorePending(records []segment.Record) {
 	// In the same critical section as the records going back: a restore
 	// overlaying in between would otherwise find them in neither place.
 	p.inflight = nil
+	p.pendingMin, p.inflightMin = minOrder(p.pendingMin, p.inflightMin), 0
 	for i := range records {
 		r := records[i]
 		if cur, ok := p.pending[r.Key]; ok && !r.Newer(&cur) {

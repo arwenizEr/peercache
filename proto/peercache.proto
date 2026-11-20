@@ -314,6 +314,9 @@ message ReplicateRequest {
   uint64 order = 8;
   // The order of the value this write replaced; zero if none or unknown.
   uint64 prev = 9;
+  // The sender's word that its records in this namespace up to this order
+  // are in storage; zero says nothing. See docs/decisions/open.md question 68.
+  uint64 durable = 10;
 }
 
 message ReplicateResponse {

@@ -35,6 +35,12 @@ type readiness struct {
 	// caughtUp is set once CatchUp has completed at least once, or
 	// immediately when there is nothing to catch up from.
 	caughtUp atomic.Bool
+	// pulled is set once a catch-up has completed with no failure, or
+	// immediately when there is nothing to catch up from. caughtUp is set
+	// after a failed one too, for readiness; pulled is what lets this node
+	// vouch for its writes being in storage (persister.durableThrough),
+	// which a catch-up that missed a peer's copies cannot.
+	pulled atomic.Bool
 	// draining is set by Drain, and clears nothing: a draining node never
 	// becomes ready again.
 	draining atomic.Bool
@@ -155,6 +161,9 @@ func (c *cache) Ready() ReadyState {
 
 // markCaughtUp records that catch-up has completed.
 func (r *readiness) markCaughtUp() { r.caughtUp.Store(true) }
+
+// markPulled records that a catch-up has completed with no failure.
+func (r *readiness) markPulled() { r.pulled.Store(true) }
 
 // markCurrent records that a catch-up which began under epoch completed with no
 // failure.

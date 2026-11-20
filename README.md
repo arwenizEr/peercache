@@ -474,6 +474,8 @@ ready.go          Readiness, its three conditions, and whether
 observe.go        Stats and the metric series they export
 describe.go       Describe, DescribeKey and the debug handler
 pressure.go       The memory budget and the order it sheds in
+durable.go        What each writer says it has stored, which decides
+                  the replicas the budget may shed
 probation.go      Keeps young nodes out of the ranking
 persistence.go    Write-behind flush of persistent namespaces to a blob store
 
