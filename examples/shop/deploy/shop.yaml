@@ -71,6 +71,9 @@ spec:
             - {name: S3_BUCKET, value: peercache}
             - {name: S3_ACCESS_KEY, value: m16access}
             - {name: S3_SECRET_KEY, value: m16secret}
+            # Orders whose IDs start with "t." keep a history on every pod;
+            # only scenarios.sh's TRACE_EVERY makes any.
+            - {name: TRACE_ORDERS, value: "1"}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 2

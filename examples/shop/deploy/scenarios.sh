@@ -10,11 +10,18 @@
 # Usage: scenarios.sh [name...]   names: steady kill9 rolling partition
 #                                        coldstart minio   (default: all)
 # Output goes to $OUT (default ./m16-out), one directory per scenario.
+#
+# PRELOAD=N writes N placed orders before the first scenario, so runs started
+# from an empty store hold the same data (orders persist; a store kept across
+# runs grows with every pass). TRACE_EVERY=N gives every Nth checkout an order
+# ID the shop traces: a lost one prints its history from every pod.
 set -uo pipefail
 K="kubectl --context kind-m16"
 OUT=${OUT:-m16-out}
 mkdir -p "$OUT"
 WORKERS=${WORKERS:-32}
+PRELOAD=${PRELOAD:-0}
+TRACE_EVERY=${TRACE_EVERY:-0}
 # A fresh stock prefix per invocation: stock persists across runs, so a
 # repeated scenario name would otherwise start from the last run's counts.
 RUN=$(date +%s)
@@ -59,7 +66,7 @@ load() {
   oom_counts > "$OUT/$1/oom-before.txt"
   $K exec loadgen -- rm -rf "/tmp/$1"
   $K exec loadgen -- shopload run -target http://shop -duration "${2}s" \
-    -workers "$WORKERS" -prefix "$1-$RUN-" -ledger "/tmp/$1" > "$OUT/$1/load.txt" 2>&1 &
+    -workers "$WORKERS" -prefix "$1-$RUN-" -ledger "/tmp/$1" -trace-every "$TRACE_EVERY" > "$OUT/$1/load.txt" 2>&1 &
   LOADPID=$!
 }
 
@@ -184,6 +191,12 @@ minio() {
   echo "check exit $?" >> "$OUT/minio/check-after-coldstart.txt"
   log "minio after cold start: $(grep -E '^(acknowledged|stock items)' "$OUT/minio/check-after-coldstart.txt" | tr '\n' ' ')"
 }
+
+if [ "$PRELOAD" -gt 0 ]; then
+  log "=== preload $PRELOAD orders"
+  $K exec loadgen -- shopload preload -target http://shop -orders "$PRELOAD" > "$OUT/preload.txt" 2>&1
+  log "preload: $(tail -1 "$OUT/preload.txt")"
+fi
 
 names=("$@")
 [ ${#names[@]} -eq 0 ] && names=(steady kill9 rolling partition coldstart minio)

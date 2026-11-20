@@ -12,6 +12,7 @@
 //	POST /checkout/{order}?item=I  idempotent order, stock by Increment; see checkout
 //	GET  /order/{order}
 //	GET  /stock/{item}
+//	POST /admin/preload?prefix=P&from=N&n=N  write N placed orders at once
 //	GET  /metrics, /debug/peercache/, /healthz
 //
 // Every request also passes a per-user rate limit, an Increment with a TTL.
@@ -47,12 +48,18 @@ import (
 const (
 	InitialStock = 20_000
 	RateLimit    = 6000 // requests per user per minute
+	// TracedOrders starts the IDs of the orders the shop traces when
+	// TRACE_ORDERS is set: the load generator gives it to a sample of its
+	// orders, so the 4,096 keys a node traces are spread over a whole run
+	// instead of spent on its first seconds.
+	TracedOrders = "t."
 )
 
 type config struct {
 	nodeID, podIP, seedDNS                string
 	s3Endpoint, s3Bucket, s3Key, s3Secret string
 	httpAddr                              string
+	traceOrders                           bool
 }
 
 func env(name, def string) string {
@@ -72,6 +79,9 @@ func main() {
 		s3Key:      env("S3_ACCESS_KEY", ""),
 		s3Secret:   env("S3_SECRET_KEY", ""),
 		httpAddr:   env("HTTP_ADDR", ":8080"),
+		// An order an acknowledged checkout lost comes with its history
+		// from every pod (decision 0043), as a wrong stock count does.
+		traceOrders: env("TRACE_ORDERS", "") != "",
 	}
 	if err := run(cfg); err != nil {
 		fatal(err)
@@ -102,12 +112,12 @@ func run(cfg config) error {
 		return err
 	}
 
-	cache, err := peercache.New(
+	opts := []peercache.Option{
 		peercache.WithNodeID(cfg.nodeID),
 		peercache.WithMembership(gossip),
 		peercache.WithTransport(tr),
 		peercache.WithListener(l),
-		peercache.WithMemoryBudget(512<<20),
+		peercache.WithMemoryBudget(512 << 20),
 		peercache.WithLogger(stderrLogger{}),
 		// The shop calls CatchUp before it is ready (catchUpLoop), so peers'
 		// writes to keys it owns can wait for it: without this, kill -9 lost
@@ -118,7 +128,11 @@ func run(cfg config) error {
 		// a scenario comes with the sequence of events that made it
 		// (decision 0043). Fifty counters a scenario, well inside the bound.
 		peercache.WithKeyTrace("stock", ""),
-	)
+	}
+	if cfg.traceOrders {
+		opts = append(opts, peercache.WithKeyTrace("orders", TracedOrders))
+	}
+	cache, err := peercache.New(opts...)
 	if err != nil {
 		return err
 	}
@@ -352,6 +366,36 @@ func (s *shop) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /checkout/{order}", s.limited(s.checkout))
 	mux.HandleFunc("GET /order/{order}", s.getOrder)
 	mux.HandleFunc("GET /stock/{item}", s.getStock)
+	mux.HandleFunc("POST /admin/preload", s.preload)
+}
+
+// preload writes n placed orders, prefix+from to prefix+(from+n-1), in
+// batches: a scenario can start from a known amount of data instead of
+// whatever earlier runs left in the store. Kind runs of 2026-11-19 grew from
+// 3.9M to 5.5M orders between two passes, and the second pass's losses could
+// not be told apart from the growth.
+func (s *shop) preload(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	prefix := q.Get("prefix")
+	from, err1 := strconv.Atoi(q.Get("from"))
+	n, err2 := strconv.Atoi(q.Get("n"))
+	if prefix == "" || err1 != nil || err2 != nil || from < 0 || n <= 0 || n > 100_000 {
+		http.Error(w, "prefix, from >= 0 and 0 < n <= 100000 are required", http.StatusBadRequest)
+		return
+	}
+	const batch = 500
+	val := []byte(statePlaced + " " + prefix + "item")
+	for i := 0; i < n; i += batch {
+		kv := make(map[string][]byte, batch)
+		for j := i; j < i+batch && j < n; j++ {
+			kv[prefix+strconv.Itoa(from+j)] = val
+		}
+		if err := s.orders.BatchSet(r.Context(), kv, 0); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	_, _ = fmt.Fprintln(w, n)
 }
 
 // limited applies the per-user rate limit: one Increment per request on a key
