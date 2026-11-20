@@ -300,7 +300,11 @@ func (p *promoter) reconcileWith(full bool) {
 				if err != nil {
 					return true
 				}
-				return owner.ID == self || (e.From != "" && owner.ID == e.From)
+				keep := owner.ID == self || (e.From != "" && owner.ID == e.From)
+				if !keep && c.traced(name, key) {
+					c.record(name, key, keytraceReplicaEvicted, e.Order, e.From, e.Stamp.Version, nil, "")
+				}
+				return keep
 			})))
 			if len(c.replicas.Keys(name)) > 0 {
 				// Kept: hand-offs in flight, or copies that arrived

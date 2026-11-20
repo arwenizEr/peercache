@@ -2352,3 +2352,20 @@ Tests: `TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`,
 `TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite`,
 `TestShedVisitKeepsEachWritersCopiesFromItsOwnFloor`,
 `TestAReplicateRequestsDurableBoundCrossesARollingUpgrade`.
+
+## 69. A replica copy could leave without an event, and the simulation's judge missed sheds — found by the durable simulation, resolved
+
+**Found** after question 68's fixes, in 1 of 200 schedules: a carts key
+(replicated, no persistence) unreadable, with one replica's acceptance the
+last event any node recorded. Two replica paths removed a copy without a
+trace: a deletion from the writer, which is also how an owner's shed tells
+its replicas to drop their copies, and the eviction of copies a node no longer
+holds at replication factor 1. Traced (`replica-deleted`, `replica-evicted`),
+the replay showed the cause: `kill` heals a partition before it picks its
+victim; the healed owner took the key back, went over its budget, and shed it
+— a loss by design in a namespace without persistence — and was then killed
+in the same step, before the judge's per-step look for sheds. The judge now
+also looks just before a kill or a drain.
+
+No library behaviour changed; the two trace kinds are new.
+`TestAReplicaCopyRemovedByADeleteIsTraced` holds the deletion's.

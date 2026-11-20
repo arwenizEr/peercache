@@ -355,10 +355,15 @@ func (s *durableSim) keyHistory(namespace, key string) string {
 // key, before killing it takes that memory: a failure's history is otherwise
 // only what the survivors saw.
 func (s *durableSim) keepHistories(victim string) {
-	for key := range s.ledger {
-		for _, e := range s.f.caches[victim].KeyHistory("stock", key) {
-			s.logf("  [%s stock/%s] %d %s order=%d writer=%s v=%d hash=%s %s",
-				victim, key, e.At, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+	for _, l := range []struct {
+		name   string
+		ledger map[string]*durLedger
+	}{{"stock", s.ledger}, {"carts", s.carts}} {
+		for key := range l.ledger {
+			for _, e := range s.f.caches[victim].KeyHistory(l.name, key) {
+				s.logf("  [%s %s/%s] %d %s order=%d writer=%s v=%d hash=%s %s",
+					victim, l.name, key, e.At, e.Kind, e.Order, e.Writer, e.Version, e.Hash, e.Detail)
+			}
 		}
 	}
 }
@@ -549,6 +554,9 @@ func (s *durableSim) drain() {
 	err := s.f.caches[victim].Drain(context.Background())
 	cut := s.stores[victim].cut.Load()
 	s.keepHistories(victim)
+	// A shed earlier in this step, on the victim, goes with it: kill and drain
+	// heal a partition first, and the owner the heal restores can shed at once.
+	s.noteCartsShed()
 	s.f.dead[victim] = true
 	_ = s.f.caches[victim].Close(context.Background())
 	s.f.memberships[victim].Close()
@@ -600,6 +608,9 @@ func (s *durableSim) kill() {
 		cut = true
 	}
 	s.keepHistories(victim)
+	// A shed earlier in this step, on the victim, goes with it: kill and drain
+	// heal a partition first, and the owner the heal restores can shed at once.
+	s.noteCartsShed()
 	s.f.dead[victim] = true
 	_ = s.f.caches[victim].Close(context.Background())
 	s.f.memberships[victim].Close()

@@ -522,7 +522,10 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// once ordered: a replica that is promoted rebuilds from what it
 		// holds, and an absent key and a key marked absent are the same
 		// answer.
-		h.cache.replicas.DeleteUnlessNewer(in.Namespace, in.Key, in.Stamp, in.Order)
+		if h.cache.replicas.DeleteUnlessNewer(in.Namespace, in.Key, in.Stamp, in.Order) &&
+			h.cache.traced(in.Namespace, in.Key) {
+			h.cache.record(in.Namespace, in.Key, keytraceReplicaDeleted, in.Order, in.From, in.Stamp.Version, nil, "")
+		}
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
 

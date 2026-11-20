@@ -1605,7 +1605,9 @@ across several nodes. `WithKeyTrace` records, for the keys of a namespace that
 start with a prefix, every change to what this node holds: a write or delete
 the owner applied, a replica copy stored, refused or in conflict (a fork), a
 promotion, a demotion, a hand-off, a restore from storage, a shed of the owned
-value or of a replica copy, a read-back, a catch-up install. Each `KeyEvent` carries this node's clock time,
+value or of a replica copy, a read-back, a catch-up install, a replica copy
+removed by its writer's deletion or evicted as no longer this node's. Each
+`KeyEvent` carries this node's clock time,
 the write's order and writer, the stored version, and the value's length and a
 hash — never the value (`docs/decisions/0043-key-trace.md`).
 

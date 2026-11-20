@@ -68,6 +68,8 @@ const (
 	keytraceShed            = keytrace.Shed
 	keytraceReplicaShed     = keytrace.ReplicaShed
 	keytraceReadBack        = keytrace.ReadBack
+	keytraceReplicaDeleted  = keytrace.ReplicaDeleted
+	keytraceReplicaEvicted  = keytrace.ReplicaEvicted
 )
 
 // recordCopy records a replica copy's arrival: stored (as stored, which names

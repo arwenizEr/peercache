@@ -230,3 +230,43 @@ func TestARestoreAndACatchUpAreTraced(t *testing.T) {
 		}
 	})
 }
+
+// TestAReplicaCopyRemovedByADeleteIsTraced: a replica copy that leaves because
+// its writer deleted the key says so. Untraced, a copy that vanished from a
+// replica left no event at all, and a durable-simulation loss of a carts key
+// (open question 69) could not be told from a drop with no cause.
+func TestAReplicaCopyRemovedByADeleteIsTraced(t *testing.T) {
+	f := newFabricFull(t, 3, false, testkit.MembershipConfig{}, -1,
+		withCacheOptions(peercache.WithKeyTrace("traced", "")))
+	open := func(id string) peercache.Namespace {
+		return f.caches[id].Namespace("traced", peercache.WithReplicationFactor(3), peercache.WithSyncReplication())
+	}
+	for _, id := range f.ids {
+		open(id)
+	}
+	f.settle(t)
+	const key = "k"
+	owner := f.ownerOf(t, key)
+	ctx := context.Background()
+	if err := open(owner).Set(ctx, key, []byte("v1"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := open(owner).Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	deleted := 0
+	for _, id := range f.ids {
+		if id == owner {
+			continue
+		}
+		if e, ok := lastOf(f.caches[id].KeyHistory("traced", key), "replica-deleted"); ok {
+			deleted++
+			if e.Writer != owner {
+				t.Errorf("%s recorded the deletion as by %q, want %s", id, e.Writer, owner)
+			}
+		}
+	}
+	if deleted != len(f.ids)-1 {
+		t.Fatalf("%d replicas recorded the deletion that removed their copy, want %d", deleted, len(f.ids)-1)
+	}
+}
