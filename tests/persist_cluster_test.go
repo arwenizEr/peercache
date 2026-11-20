@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -205,13 +206,18 @@ func TestAPromotedReplicasWriteOutranksItsOldOwner(t *testing.T) {
 }
 
 // blackholeStore silently drops every Put once dropping is set, as a store
-// would whose writes were lost after being acknowledged.
+// would whose writes were lost after being acknowledged, and refuses every Put
+// while refusing is set, as an unreachable one would.
 type blackholeStore struct {
 	persist.BlobStore
 	dropping atomic.Bool
+	refusing atomic.Bool
 }
 
 func (s *blackholeStore) Put(ctx context.Context, name string, data []byte) error {
+	if s.refusing.Load() {
+		return errors.New("store unreachable")
+	}
 	if s.dropping.Load() {
 		return nil
 	}

@@ -308,6 +308,7 @@ func New(opts ...Option) (Cache, error) {
 	if resolved.Membership == nil {
 		// Nothing to catch up from, so that condition is met at birth.
 		c.readiness.markCaughtUp()
+		c.readiness.markPulled()
 	}
 	c.promoter.start(guard)
 
@@ -413,6 +414,11 @@ type cache struct {
 	// the owned store because ownership moves and the two have different
 	// lifetimes. See internal/replication.
 	replicas *replication.Store
+
+	// durable is what each writer has said about its persistent records
+	// being in storage, which decides which of their copies the memory
+	// budget may shed. See durable.go.
+	durable writerDurability
 
 	// replicator fans owned writes out to those replicas.
 	replicator *replicator

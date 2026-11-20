@@ -296,6 +296,15 @@ type ReplicateRequest struct {
 	// compares the two to tell a handover — this write descends from the
 	// copy — from a fork, two writers each unaware of the other's write.
 	Prev uint64 `msgpack:"prev"`
+	// Durable is the sender's word, for this namespace, that every record it
+	// has made with an order at or below Durable is in storage: a replica may
+	// shed its copies of the sender's writes up to there, and must keep the
+	// rest, which may be their only holder besides the sender's memory. Zero
+	// says nothing: a release before it, a namespace without persistence, or
+	// a sender that has restarted and not yet caught up, which cannot vouch
+	// for the records its previous run left unflushed. See
+	// docs/decisions/open.md question 68.
+	Durable uint64 `msgpack:"durable"`
 }
 
 // ReplicateResponse reports whether the copy collided with another writer's.

@@ -1270,8 +1270,8 @@ mutate "owned data is shed while replicas could have been" \
 # flushes it; the budget must not shed it then (open question 60).
 mutate "the budget sheds replicas of unflushed persistent writes" \
   pressure.go \
-  '			if floor, ok := keep[name]; ok {' \
-  '			if floor, ok := keep[name]; ok && false {' \
+  '			return keep[name]' \
+  '			return nil' \
   'TestAnUnflushedWriteSurvivesItsReplicaNodeShedding$' ./tests
 
 mutate "a replica map is never rebuilt, so it keeps the slots of what left" \
@@ -1347,19 +1347,67 @@ mutate "a demotion never rebuilds the shards it took from" \
 
 mutate "the replica store ignores the floor it is given" \
   internal/replication/replica.go \
-  '				if e.Order >= floor {
+  '				if floorOf != nil && e.Order >= floorOf(e.From) {
 					continue
 				}' \
-  '				if e.Order >= floor && false {
+  '				if floorOf != nil && e.Order >= floorOf(e.From) && false {
 					continue
 				}' \
   'TestShedKeepsCopiesFromTheFloor$' ./internal/replication/
 
+mutate "the replica store reads one writer's floor for every copy" \
+  internal/replication/replica.go \
+  '				if floorOf != nil && e.Order >= floorOf(e.From) {' \
+  '				if floorOf != nil && e.Order >= floorOf("") {' \
+  'TestShedVisitKeepsEachWritersCopiesFromItsOwnFloor$' ./internal/replication/
+
 mutate "the budget keeps every replica of a persistent namespace" \
   pressure.go \
-  '		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))' \
-  '		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli())) * 0' \
+  '		window := uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))' \
+  '		window := uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli())) * 0' \
   'TestAFlushedWritesReplicaIsShedAsBefore$' ./tests
+
+mutate "the budget holds a writer that sent a bound to the window alone" \
+  pressure.go \
+  '			if b, ok := bounds[writer]; ok && b < window {' \
+  '			if b, ok := bounds[writer]; ok && b < window && false {' \
+  'TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding$' ./tests
+
+mutate "a replica ignores the bounds its writers send" \
+  handler.go \
+  '	h.cache.durable.note(in.Namespace, in.From, in.Durable)' \
+  '	_ = in.Durable' \
+  'TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding$' ./tests
+
+mutate "an owner's copies never carry its bound" \
+  replicate.go \
+  '		req.Durable = w.persister.durableThrough()' \
+  '		req.Durable = 0' \
+  'TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding$' ./tests
+
+mutate "a restarted owner vouches after a catch-up that failed" \
+  persistence.go \
+  '	if !p.ns.cache.readiness.pulled.Load() {' \
+  '	if !p.ns.cache.readiness.caughtUp.Load() {' \
+  'TestAnOwnerWhoseCatchUpFailedDoesNotReleaseItsReplicas$' ./tests
+
+mutate "the bound passes the oldest unflushed write" \
+  persistence.go \
+  '	if low != 0 && low-1 < d {' \
+  '	if false && low != 0 && low-1 < d {' \
+  'TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite$' ./tests
+
+mutate "a flush forgets the lowest order of the batch it takes" \
+  persistence.go \
+  '	p.inflightMin, p.pendingMin = p.pendingMin, 0' \
+  '	p.pendingMin = 0' \
+  'TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite$' ./tests
+
+mutate "a failed flush forgets the lowest order of the batch it puts back" \
+  persistence.go \
+  '	p.pendingMin, p.inflightMin = minOrder(p.pendingMin, p.inflightMin), 0' \
+  '	p.inflightMin = 0' \
+  'TestAnOwnersBoundStaysBelowItsOldestUnflushedWrite$' ./tests
 
 mutate "the window is the flush interval alone, not its timeout too" \
   persistence.go \

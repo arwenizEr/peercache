@@ -88,6 +88,7 @@ func TestEveryMessageRoundTrips(t *testing.T) {
 		{"ReplicateRequest", &wire.ReplicateRequest{
 			Namespace: "n", Key: "k", Value: []byte{1, 2}, TTLNanos: 500,
 			Stamp: wire.Stamp{Epoch: 3, Version: 8}, From: "node-a",
+			Order: 41, Prev: 40, Durable: 39,
 		}, func() any { return new(wire.ReplicateRequest) }},
 		{"ReplicateRequest deletion", &wire.ReplicateRequest{
 			Namespace: "n", Key: "k", Deleted: true,

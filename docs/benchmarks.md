@@ -1335,6 +1335,26 @@ outside the timer leaves more collection inside it across 64 maps than one:
 Evict and Drain run once per reconciliation, Sweep once a second; none is on a
 request's path, and what a request waits for behind them is now a 64th.
 
+### Each writer's durable bound (open question 68)
+
+A replica's floor is now chosen per writer, and every copy of a persistent
+write carries its owner's bound, read under the persister's lock as it is
+sent. Machine A, 2026-11-20, `main` (0cbd367) against the branch, five runs of
+the shed and six of the write, medians:
+
+| Benchmark | main | with bounds |
+|---|---|---|
+| `BenchmarkReplicaShed/no-floor`, ns/op, `-benchtime 20x` | 1,013,440 | 1,020,730 |
+| `BenchmarkReplicaShed/youngest-tenth-kept`, ns/op | 1,243,235 | 1,237,960 |
+| `BenchmarkPersistentReplicatedSet`, ns/op, `-benchtime 20000x` | 16,130 | 16,598 |
+| `BenchmarkPersistentReplicatedSet`, B/op and allocs/op | 17,377, 233.5 | 17,411, 234 |
+
+The write's 3 % is inside its own spread (main's six runs span 15,410 to
+19,180), and the bytes and allocations are the same: the bound is a lock and
+two loads. `BenchmarkPersistentReplicatedSet` is new: a synchronous write at
+replication factor 3 in a persistent namespace, on an owner that has caught
+up, so the bound is read on every copy.
+
 ## Owned store and restores — counting what the budget missed
 
 Machine A, median of five runs. The owned store charges spare map slots and

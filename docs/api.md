@@ -1194,6 +1194,20 @@ older writes, which catch-up and restores bring, are shed as before. What this
 keeps is bounded by the write rate: one window's writes
 (`TestAnUnflushedWriteSurvivesItsReplicaNodeShedding`, open question 60).
 
+The window assumes the owner lives to flush. Each copy therefore also carries
+its writer's word on what it has stored: every record up to some order. A
+replica keeps a writer's copies above that bound however old they are, so an
+owner killed before its flush and restarted under the same name finds its
+writes on its replicas when its catch-up finally runs, minutes later if its
+own budget holds it back. A restarted node gives no bound until a catch-up has
+completed without a failure, since until then its previous run's unflushed
+writes are on its replicas alone. What this keeps beyond the window is a
+dead writer's last unflushed writes, until it returns or they are written
+again. A writer on an earlier release, or one whose application never calls
+`CatchUp`, gives no bound and is held to the window
+(`TestAnUnflushedWriteSurvivesItsOwnersRestartAndItsReplicaShedding`, open
+question 68).
+
 The budget is checked every 64 writes, on any write of
 64 KiB or more, and once a second, so the accounted size can run past it by
 about 64 entries between checks. `Stats().MemoryUsed` and

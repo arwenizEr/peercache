@@ -177,11 +177,8 @@ func (p *pressure) relieve() {
 	if excess > 0 {
 		keep := p.keepFrom(namespaces)
 		before := c.replicas.ShedCount()
-		excess -= c.replicas.ShedVisit(excess, func(name string) uint64 {
-			if floor, ok := keep[name]; ok {
-				return floor
-			}
-			return math.MaxUint64
+		excess -= c.replicas.ShedVisit(excess, func(name string) func(string) uint64 {
+			return keep[name]
 		}, func(name, key string, e replication.Entry) {
 			if c.traced(name, key) {
 				c.record(name, key, keytraceReplicaShed, e.Order, e.From, e.Stamp.Version, nil, "")
@@ -242,7 +239,9 @@ func (p *pressure) relieve() {
 }
 
 // keepFrom returns, for each persistent namespace, the order from which its
-// replicas are not shed: that of a write made [persister.unflushedFor] ago.
+// replicas are not shed, per writer: that of a write made
+// [persister.unflushedFor] ago, and lower still for a writer that has not said
+// it has stored its writes up to there (writerDurability).
 //
 // A replica of a persistent write is the write's only other holder until the
 // owner flushes it. Shed then, and an owner killed before its flush takes the
@@ -255,17 +254,36 @@ func (p *pressure) relieve() {
 // arrived, so the copies catch-up and restores bring, of writes long since
 // flushed, are shed as before. What it keeps is bounded by the write rate:
 // the copies of one window's writes.
-func (p *pressure) keepFrom(namespaces []*namespace) map[string]uint64 {
-	var keep map[string]uint64
+//
+// The window alone assumes the owner lives to flush. On kind (run v115) one
+// was killed in the second after acknowledging 15 orders, came back under its
+// name within a second, and could not finish its catch-up for minutes, over
+// its own budget; past the window its replicas shed the copies, the writes'
+// only holders, and the orders were gone. So a writer that has sent a bound
+// (wire.ReplicateRequest.Durable) keeps everything above it too, however old:
+// its unflushed writes are kept until it says they are stored, which a
+// restarted writer says only once it has caught up. What that keeps is a dead
+// writer's last unflushed interval, until it returns or the keys are written
+// again. A writer that has sent none — a release before it, a node that never
+// calls CatchUp — is held to the window, as before. Open question 68.
+func (p *pressure) keepFrom(namespaces []*namespace) map[string]func(writer string) uint64 {
+	var keep map[string]func(string) uint64
 	now := p.c.opts.Clock.Now()
 	for _, ns := range namespaces {
 		if ns.persister == nil {
 			continue
 		}
 		if keep == nil {
-			keep = map[string]uint64{}
+			keep = map[string]func(string) uint64{}
 		}
-		keep[ns.name] = uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))
+		window := uint64(hlc.FromMillis(now.Add(-ns.persister.unflushedFor()).UnixMilli()))
+		bounds := p.c.durable.snapshot(ns.name)
+		keep[ns.name] = func(writer string) uint64 {
+			if b, ok := bounds[writer]; ok && b < window {
+				return b + 1
+			}
+			return window
+		}
 	}
 	return keep
 }

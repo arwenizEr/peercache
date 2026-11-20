@@ -508,6 +508,9 @@ func (h *peerHandler) replicate(ctx context.Context, req []byte) ([]byte, error)
 		// this is the receiver not trusting them to.
 		return wire.Encode(&wire.ReplicateResponse{})
 	}
+	// The sender recorded this write before reading its bound, so the bound
+	// is below the copy it arrives with and never releases it.
+	h.cache.durable.note(in.Namespace, in.From, in.Durable)
 
 	if in.Deleted {
 		// A tombstone, ordered like any copy: it removes what is held only
